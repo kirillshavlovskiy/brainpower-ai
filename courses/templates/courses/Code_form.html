@@ -1,0 +1,6 @@
+<form method="post">
+    {% csrf_token %}
+    <textarea name="code_input" id="code_input" cols="30" rows="10" placeholder="Enter Python code here"></textarea>
+    <button type="submit">Execute</button>
+</form>
+<textarea id="code_output" cols="30" rows="10" placeholder="Output will appear here" readonly></textarea>

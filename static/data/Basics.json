@@ -1,0 +1,448 @@
+[
+    {
+        "number": 1,
+        "title": "Basics",
+        "lessons": [
+                        {
+                "number": 1,
+                "title": "Python Basics",
+                "tasks": [
+                    {
+                        "task_title": "Task 1: Hello World Program",
+                        "description": "Write a Python program to print 'Hello, World!' to the console. This task introduces the print function, a built-in Python function used for displaying output.",
+                        "example_code": "print('Hello, World!')"
+                    },
+                    {
+                        "task_title": "Task 2: Basic Arithmetic Operations",
+                        "description": "Perform addition, subtraction, multiplication, and division on two numbers. Explore basic arithmetic operators such as +, -, *, and / in Python.",
+                        "example_code": "a = 5\nb = 3\nprint('Sum:', a + b)\nprint('Difference:', a - b)\nprint('Product:', a * b)\nprint('Division:', a / b)"
+                    },
+                    {
+                        "task_title": "Task 3: String Manipulation",
+                        "description": "Manipulate strings by concatenating and formatting. Learn how to combine and format strings using f-strings in Python.",
+                        "example_code": "name = 'Alice'\nage = 30\nprint(f'My name is {name} and I am {age} years old.')"
+                    },
+                    {
+                        "task_title": "Task 4: Conditional Statements",
+                        "description": "Write a program to check if a number is positive, negative, or zero. Understand the usage of if-elif-else statements for decision-making in Python.",
+                        "example_code": "num = 4\nif num > 0:\n    print('Positive')\nelif num < 0:\n    print('Negative')\nelse:\n    print('Zero')"
+                    },
+                    {
+                        "task_title": "Task 5: Loops Practice",
+                        "description": "Use loops to print numbers from 1 to 5. Practice iterating over a range of values using a for loop in Python.",
+                        "example_code": "for i in range(1, 6):\n    print(i)"
+                    }
+                ]
+            },
+                        {
+                "number": 2,
+                "title": "Control Structures",
+                "tasks": [
+                    {
+                        "task_title": "Task 1: Conditional Statements",
+                        "description": "Write a program to check if a number is even or odd. This task focuses on using conditional statements in Python for decision-making.",
+                        "example_code": "num = 7\nif num % 2 == 0:\n    print('Even')\nelse:\n    print('Odd')"
+                    },
+                    {
+                        "task_title": "Task 2: Loop Practice",
+                        "description": "Create a program to calculate the sum of numbers from 1 to 10 using a loop. Explore the concept of loops for repetitive tasks in Python.",
+                        "example_code": "total = 0\nfor i in range(1, 11):\n    total += i\nprint('Sum:', total)"
+                    },
+                    {
+                        "task_title": "Task 3: List Manipulation",
+                        "description": "Manipulate a list by removing duplicates and sorting it. Learn how to work with lists and perform common operations like deduplication and sorting.",
+                        "example_code": "my_list = [3, 1, 2, 3, 5, 1]\nunique_list = list(set(my_list))\nunique_list.sort()\nprint('Unique Sorted List:', unique_list)"
+                    },
+                    {
+                        "task_title": "Task 4: Dictionary Operations",
+                        "description": "Work with dictionary key-value pairs and perform updates. Understand the dictionary data structure and how to modify its contents in Python.",
+                        "example_code": "my_dict = {'name': 'Alice', 'age': 30}\nmy_dict['age'] = 32\nprint('Modified Dictionary:', my_dict)"
+                    },
+                    {
+                        "task_title": "Task 5: Advanced Conditional Logic",
+                        "description": "Implement a program to determine the highest of three numbers. Extend your understanding of if-elif-else statements for complex conditions.",
+                        "example_code": "a, b, c = 5, 8, 2\nif a >= b and a >= c:\n    print('Highest:', a)\nelif b >= a and b >= c:\n    print('Highest:', b)\nelse:\n    print('Highest:', c)"
+                    }
+                ]
+            },
+                        {
+                "number": 3,
+                "title": "Functions",
+                "tasks": [
+                    {
+                        "task_title": "Task 1: Function Basics",
+                        "description": "Define and call functions with parameters. Learn the basics of creating functions with input parameters and how to call them.",
+                        "example_code": "\n# Example: Define a function to add two numbers\ndef add_numbers(num1, num2):\n    result = num1 + num2\n    return result\n\n# Call the function\nsum_result = add_numbers(3, 5)\nprint('The sum is:', sum_result)\n                "
+                    },
+                    {
+                        "task_title": "Task 2: Return Statements",
+                        "description": "Learn how functions can return values. Understand how to define functions that return specific results.",
+                        "example_code": "\n# Example: Define a function with a return statement\ndef multiply(a, b):\n    result = a * b\n    return result\n\n# Call the function\nproduct_result = multiply(4, 6)\nprint('The product is:', product_result)\n                "
+                    },
+                    {
+                        "task_title": "Task 3: Scope and Lambda",
+                        "description": "Explore variable scope within functions and demonstrate lambda functions. Understand how variables are scoped and lambda expressions.",
+                        "example_code": "\n# Example: Working with variable scope and lambda function\nx = 10\ny = 5\n\ndef my_function():\n    x = 20\n    y = 10\n    result = x * y\n    return result\n\nlambda_square = lambda a: a ** 2\nlambda_result = lambda_square(3)\n\nprint('The result is:', my_function())\nprint('The lambda squared result is:', lambda_result)\n                "
+                    },
+                    {
+                        "task_title": "Task 4: Tuples and Sets",
+                        "description": "Learn to work with tuples and sets data structures. Explore the characteristics and usage of tuples and sets.",
+                        "example_code": "\n# Example: Working with tuples and sets\n# Tuple example\nmy_tuple = (1, 2, 3, 4)\nfor item in my_tuple:\n    if item % 2 == 0:\n        print('Even number:', item)\n    else:\n        print('Odd number:', item)\n\n# Set example\nmy_set = {1, 2, 3, 4}\nif 4 in my_set:\n    print('4 is in the set')\n                "
+                    },
+                    {
+                        "task_title": "Task 5: Regular Expressions",
+                        "description": "Use regular expressions to search and match patterns in text. Apply regular expressions to identify specific patterns in text data.",
+                        "example_code": "\n# Example: Using regular expressions\nimport re\n\ntext = 'The quick brown fox jumps over the lazy dog'\npattern = r'\\b[A-Za-z]+' # Match words starting with alphabet\nmatches = re.findall(pattern, text)\nprint('Matching words:', matches)\n                "
+                    }
+                ]
+            },
+            {
+                "number": 4,
+                "title": "Data Structures",
+                "tasks": [
+                    {
+                        "task_title": "Task 1: Lists and Dictionaries",
+                        "description": "Manipulate and iterate over lists and dictionaries. Exercise various operations on lists and dictionaries.",
+                        "example_code": "\n# Example: Working with lists and dictionaries\n# List example\nnumbers = [1, 2, 3, 4, 5]\nfor num in numbers:\n    if num % 2 == 0:\n        print('Even number:', num)\n    else:\n        print('Odd number:', num)\n\n# Dictionary example\nmy_dict = {'name': 'Alice', 'age': 30, 'city': 'New York'}\nif 'age' in my_dict:\n    print('Age is present in dictionary')\n                "
+                    },
+                    {
+                        "task_title": "Task 2: Iteration and Comprehensions",
+                        "description": "Use iterative techniques and list comprehensions to process data effectively. Work with loops and comprehensions.",
+                        "example_code": "\n# Example: Iteration and list comprehension\n# Iteration example\nfor i in range(5, 10):\n    print('Number:', i)\n\n# List comprehension example\nsquares = [x**2 for x in range(1, 6)]\nprint('Squares:', squares)\n                "
+                    },
+                    {
+                        "task_title": "Task 3: Complex Data Structures",
+                        "description": "Explore more complex data structures like sets and tuples. Understand the usage and manipulation of sets and tuples.",
+                        "example_code": "\n# Example: Working with sets and tuples\n# Set example\nplayer_scores = {10, 20, 15, 30, 25}\navg_score = sum(player_scores) / len(player_scores)\nprint('Average score:', avg_score)\n\n# Tuple example\ncoordinates = (3, 4, 5)\nx, y, z = coordinates\nprint('Coordinate sum:', x + y + z)\n                "
+                    },
+                    {
+                        "task_title": "Task 4: Nested Data Structures",
+                        "description": "Demonstrate nested data structures like lists of dictionaries. Implement hierarchical structures.",
+                        "example_code": "\n# Example: Nested data structures\n# List of dictionaries example\nemployees = [{'name': 'Alice', 'age': 30}, {'name': 'Bob', 'age': 28}]\nfor emp in employees:\n    print(emp['name'], 'is', emp['age'], 'years old.')\n\n# Dictionary of lists example\nuser_records = {'John': [25, 'USA'], 'Emma': [28, 'Canada']}\nfor user, details in user_records.items():\n    print(user, 'is', details[0], 'years old and lives in', details[1])\n                "
+                    },
+                    {
+                        "task_title": "Task 5: Advanced Data Manipulation",
+                        "description": "Perform advanced data manipulation on data structures. Utilize advanced techniques for handling complex data.",
+                        "example_code": "\n# Example: Advanced data manipulation\nimport itertools\n\n# Combine lists using permutations and combinations\nnumbers = [1, 2, 3]\nperm = list(itertools.permutations(numbers))\ncomb = list(itertools.combinations(numbers, 2))\nprint('Permutations:', perm)\nprint('Combinations:', comb)\n                "
+                    }
+                ]
+            },
+                        {
+                "number": 5,
+                "title": "String Manipulation",
+                "tasks": [
+                    {
+                        "task_title": "Task 1: String Methods",
+                        "description": "Explore different string methods and manipulate string data.",
+                        "example_code": "\n# Multiple string method examples\nmy_string = \"Hello, World!\"\nupper_case = my_string.upper()\nlower_case = my_string.lower()\nsplit_text = my_string.split()\njoined_text = \" \".join(split_text)\n\nprint(f\"Original String: {my_string}\")\nprint(f\"Uppercase: {upper_case}\")\nprint(f\"Lowercase: {lower_case}\")\nprint(f\"Split Text: {split_text}\")\nprint(f\"Joined Text: {joined_text}\")\n            "
+                    },
+                    {
+                        "task_title": "Task 2: String Formatting",
+                        "description": "Use various string formatting techniques for text manipulation.",
+                        "example_code": "\n# String formatting examples\nname = \"Alice\"\n...\nprint(formatted_string)\n            "
+                    },
+                    {
+                        "task_title": "Task 3: Regex Operations",
+                        "description": "Utilize regular expressions for pattern matching and text extraction.",
+                        "example_code": "\n# Regular expressions for text extraction\nimport re\n#\nprint(f\"Original Text: {text}\")\nprint(f\"Extracted Numbers: {numbers}\")\n            "
+                    },
+                    {
+                        "task_title": "Task 4: Join and Replace",
+                        "description": "Practice string joining and text replacement operations for data transformation.",
+                        "example_code": "\n# String join and replace examples\nmy_list = ['Hello', 'World']\nsentence = ' '.join(my_list)\n...\nprint(f\"Original List: {my_list}\")\nprint(f\"Joined Sentence: {sentence}\")\nprint(f\"Replaced Sentence: {new_sentence}\")\n            "
+                    },
+                    {
+                        "task_title": "Task 5: Palindrome Check",
+                        "description": "Check if a given string is a palindrome using string manipulation techniques.",
+                        "example_code": "\n# Palindrome check function using string manipulation\ndef is_palindrome(s):\n...\nprint(f\"Original String: {test_string}\")\nprint(f\"Is the String a Palindrome? {is_test_string_palindrome}\")\n            "
+                    }
+                ]
+            },
+                        {
+                "number": 6,
+                "title": "File I/O: Opening, Reading, Writing, and Closing Files",
+                "tasks": [
+                    {
+                        "task_title": "Task 1: File Read",
+                        "description": "Read data from a file and store it in memory.",
+                        "example_code": "\n# Read data from a file in Python\nwith open('data.txt', 'r') as file:\n    data = file.read()\nprint(data)"
+                    },
+                    {
+                        "task_title": "Task 2: File Write",
+                        "description": "Write a specific message to a new file using Python.",
+                        "example_code": "\n# Write data to a file in Python\nwith open('output.txt', 'w') as file:\n    file.write('Hello, File I/O!')"
+                    },
+                    {
+                        "task_title": "Task 3: File Append",
+                        "description": "Add new content to an existing file in Python.",
+                        "example_code": "\n# Append data to an existing file in Python\nwith open('output.txt', 'a') as file:\n    file.write('\\nAppending new data')"
+                    },
+                    {
+                        "task_title": "Task 4: File Handling",
+                        "description": "Handle file operations by reading, writing, and appending data in Python.",
+                        "example_code": "\n# Perform file operations in Python\nwith open('data.txt', 'r') as file:\n    data = file.read()\n\nwith open('output.txt', 'a') as file_out:\n    file_out.write(data)"
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "number": 2,
+        "title": "Intermediate",
+        "lessons": [
+            {
+                "number": 7,
+                "title": "Error Handling",
+                "tasks": [
+                    {
+                        "task_title": "Task 1: Try-Except Clause",
+                        "description": "Handling exceptions using try-except blocks in Python",
+                        "example_code": "try:\n    x = 1 / 0\nexcept ZeroDivisionError as e:\n    print('Error:', e)"
+                    },
+                    {
+                        "task_title": "Task 2: Raising Exceptions",
+                        "description": "Raising custom exceptions in Python programs",
+                        "example_code": "x = 'hello'\nif not isinstance(x, int):\n    raise TypeError('Input must be an integer')"
+                    },
+                    {
+                        "task_title": "Task 3: Finally Clause",
+                        "description": "Using the finally block in exception handling",
+                        "example_code": "try:\n    x = 10 / 0\nexcept ZeroDivisionError as e:\n    print('Error:', e)\nfinally:\n    print('Execution completed')"
+                    },
+                    {
+                        "task_title": "Task 4: Multiple Exceptions",
+                        "description": "Handling multiple exception types in a program",
+                        "example_code": "try:\n    x = 1 / 0\nexcept ZeroDivisionError as e:\n    print('Divide by zero error:', e)\nexcept ValueError as e:\n    print('Value error:', e)"
+                    },
+                    {
+                        "task_title": "Task 5: Else Clause in Exceptions",
+                        "description": "Utilizing the else clause in exception handling",
+                        "example_code": "try:\n    x = 10 / 2\nexcept ZeroDivisionError as e:\n    print('Divide by zero error:', e)\nelse:\n    print('No exception occurred')"
+                    }
+                ]
+            },
+            {
+                "number": 8,
+                "title": "Modules and Packages",
+                "tasks": [
+                    {
+                        "task_title": "Task 1: Importing Modules",
+                        "description": "Importing and using external modules in Python code",
+                        "example_code": "import math\nx = math.sqrt(25)\nprint(x)"
+                    },
+                    {
+                        "task_title": "Task 2: Using Pip for Package Management",
+                        "description": "Installing and managing packages with pip tool",
+                        "example_code": "# Run this command in the terminal: pip install package_name"
+                    },
+                    {
+                        "task_title": "Task 3: Creating Custom Modules",
+                        "description": "Developing your own modules for reusable code",
+                        "example_code": "# Create a Python file with functions and import it in another script"
+                    },
+                    {
+                        "task_title": "Task 4: Exploring Standard Libraries",
+                        "description": "Discovering and utilizing Python's standard library functions",
+                        "example_code": "import random\nx = random.randint(1, 10)\nprint(x)"
+                    },
+                    {
+                        "task_title": "Task 5: Dependency Management",
+                        "description": "Handling project dependencies and using virtual environments",
+                        "example_code": "# Create a virtual environment: python -m venv myenv"
+                    }
+                ]
+            },
+
+
+
+
+            {
+                "number": 9,
+                "title": "Object-Oriented Programming",
+                "tasks": [
+                    {
+                        "task_title": "Task 1: Classes and Objects",
+                        "description": "Defining classes and creating objects in Python",
+                        "example_code": "class Car:\n    def __init__(self, make, model):\n        self.make = make\n        self.model = model\n\nmy_car = Car('Toyota', 'Camry')"
+                    },
+                    {
+                        "task_title": "Task 2: Inheritance",
+                        "description": "Working with class inheritance in Python",
+                        "example_code": "class Animal:\n    def __init__(self, species):\n        self.species = species\n\nclass Dog(Animal):\n    def __init__(self, breed):\n        super().__init__('Dog')\n        self.breed = breed"
+                    },
+                    {
+                        "task_title": "Task 3: Encapsulation",
+                        "description": "Implementing encapsulation using classes in Python",
+                        "example_code": "class BankAccount:\n    def __init__(self, balance):\n        self._balance = balance\n\n    def get_balance(self):\n        return self._balance"
+                    },
+                    {
+                        "task_title": "Task 4: Polymorphism",
+                        "description": "Utilizing polymorphism with class methods in Python",
+                        "example_code": "class Animal:\n    def speak(self):\n        pass\n\nclass Dog(Animal):\n    def speak(self):\n        return 'Woof!'\n\nclass Cat(Animal):\n    def speak(self):\n        return 'Meow'"
+                    }
+                ]
+            },
+            {
+                "number": 10,
+                "title": "Functional Programming",
+                "tasks": [
+                    {
+                        "task_title": "Task 1: Map Function",
+                        "description": "Using the map function for iterable transformations",
+                        "example_code": "numbers = [1, 2, 3, 4]\ndoubled = list(map(lambda x: x * 2, numbers))\nprint(doubled)"
+                    },
+                    {
+                        "task_title": "Task 2: Filter Function",
+                        "description": "Filtering elements of an iterable using the filter function",
+                        "example_code": "numbers = [1, 2, 3, 4]\neven_numbers = list(filter(lambda x: x % 2 == 0, numbers))\nprint(even_numbers)"
+                    },
+                    {
+                        "task_title": "Task 3: Reduce Function",
+                        "description": "Performing reduction operations using the reduce function",
+                        "example_code": "from functools import reduce\nnumbers = [1, 2, 3, 4]\nsum_result = reduce(lambda x, y: x + y, numbers)\nprint(sum_result)"
+                    },
+                    {
+                        "task_title": "Task 4: List Comprehensions",
+                        "description": "Creating and using list comprehensions in Python",
+                        "example_code": "numbers = [1, 2, 3, 4]\nsquared = [x**2 for x in numbers]\nprint(squared)"
+                    },
+                    {
+                        "task_title": "Task 5: Lambda Expressions",
+                        "description": "Understanding and utilizing lambda expressions for concise functions",
+                        "example_code": "add = lambda x, y: x + y\nprint(add(2, 3))"
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "number": 3,
+        "title": "Advanced",
+        "lessons": [
+                        {
+                "number": 11,
+                "title": "Advanced Data Structures",
+                "tasks": [
+                    {
+                        "task_title": "Task 1: Stack Operations",
+                        "description": "Implement stack data structure operations in Python. Understand how to push, pop, and check the top element in a stack.",
+                        "correct_code": "\n# Implement stack operations in Python\nstack = []\n\n# Push operation\nstack.append(5)\nstack.append(10)\nstack.append(20)\n\n# Pop operation\npopped_item = stack.pop()\nprint(popped_item)\n\n# Check top element\ntop_element = stack[-1]\nprint(top_element)\n"
+                    },
+                    {
+                        "task_title": "Task 2: Queue Implementation",
+                        "description": "Create a queue implementation and perform enqueue and dequeue operations. Learn how to manage the front and rear of the queue.",
+                        "correct_code": "\n# Create a queue in Python\nfrom collections import deque\n\n# Enqueue operation\nqueue = deque([])\nqueue.append(10)\nqueue.append(20)\n\n# Dequeue operation\nvalue = queue.popleft()\nprint(value)\n"
+                    },
+                    {
+                        "task_title": "Task 3: Tree Traversal",
+                        "description": "Explore tree traversal algorithms like inorder, preorder, and postorder traversal. Implement these traversal methods on a binary tree in Python.",
+                        "correct_code": "\n# Perform inorder tree traversal in Python\n# Define a TreeNode class and tree structure\n# Implement inorder traversal method\n"
+                    },
+                    {
+                        "task_title": "Task 4: Graph Representation",
+                        "description": "Understand graph representation using adjacency lists or matrices. Create a graph structure and perform operations like adding edges in Python.",
+                        "correct_code": "\n# Graph representation in Python\ngraph = {}\n\n# Add an edge between two nodes\ngraph['A'] = ['B', 'C']\ngraph['B'] = ['A', 'D']\ngraph['C'] = ['A', 'D']\ngraph['D'] = ['B', 'C']\n"
+                    },
+                    {
+                        "task_title": "Task 5: Heap Operations",
+                        "description": "Learn about heap data structures and implement operations like heapify, insert, and delete on a min or max heap in Python.",
+                        "correct_code": "\n# Perform heap operations in Python\nimport heapq\n\n# Create a min heap\nheap = [5, 10, 2, 7, 3]\nheapq.heapify(heap)\n\n# Insert into the heap\nheapq.heappush(heap, 1)\n\n# Delete min element from the heap\nmin_element = heapq.heappop(heap)\nprint(min_element)\n"
+                    }
+                ]
+            },
+                        {
+                "number": 12,
+                "title": "Iterators and Generators",
+                "tasks": [
+                    {
+                        "task_name": "Task 1: Iterate using Iterators",
+                        "description": "Implement iterator objects in Python to iterate over custom-defined sequences. Understand how to create and use iterators.",
+                        "correct_code": "\n# Implement iterator in Python\n# Define a custom sequence class with __iter__ and __next__ methods\n# Create an iterator object and iterate over the sequence\n\nclass MyIterator:\n    def __init__(self, data):\n        self.data = data\n        self.index = 0\n\n    def __iter__(self):\n        return self\n\n    def __next__(self):\n        if self.index >= len(self.data):\n            raise StopIteration\n        result = self.data[self.index]\n        self.index += 1\n        return result\n\n# Create iterable object\nmy_data = MyIterator([1, 2, 3, 4, 5])\n\n# Iterate over the custom sequence\nfor item in my_data:\n    print(item)"
+                    },
+                    {
+                        "task_name": "Task 2: Create Generator Function",
+                        "description": "Write a generator function in Python to generate a sequence of numbers or items lazily. Learn how to yield values one at a time.",
+                        "correct_code": "\n# Create a generator function in Python\n# Define a function using the 'yield' keyword to generate values\n# Call the generator function and iterate over values\n\ndef number_generator(n):\n    for i in range(n):\n        yield i\n\n# Generate numbers lazily using the generator\nfor num in number_generator(5):\n    print(num)"
+                    },
+                    {
+                        "task_name": "Task 3: Use Generator Expressions",
+                        "description": "Explore generator expressions as a concise way to create generators. Implement and iterate over a generator expression in Python.",
+                        "correct_code": "\n# Use generator expressions in Python\n# Create a generator expression to produce a sequence of values\n# Iterate over the generator expression\n\n# Generate squares of numbers using a generator expression\nsquares = (x**2 for x in range(5))\n\n# Iterate over the generator expression and print the squares\nfor sq in squares:\n    print(sq)"
+                    },
+                    {
+                        "task_name": "Task 4: Generate Infinite Sequences",
+                        "description": "Demonstrate how to create infinite sequences using generators. Implement a generator to yield an infinite series of numbers.",
+                        "correct_code": "\n# Create generator for infinite sequence in Python\n# Define a generator that yields values indefinitely\n# Handle the termination condition if needed\n\ndef infinite_generator():\n    num = 0\n    while True:\n        yield num\n        num += 1\n\n# Create and iterate over the infinite sequence\ninf_gen = infinite_generator()\nfor i in range(5):\n    print(next(inf_gen))"
+                    },
+                    {
+                        "task_name": "Task 5: Iterate Through Nested Data Structures",
+                        "description": "Use generators to iterate through nested data structures like lists of lists or dictionaries of lists. Implement nested iteration using generators.",
+                        "correct_code": "\n# Iterate through nested data structures using generators\n# Create a generator function to iterate through nested lists or dictionaries\n# Traversing nested structures with generators\n\n# Generate values from nested list\nnested_list = [[1, 2], [3, 4], [5, 6]]\nfor inner_list in nested_list:\n    for val in inner_list:\n        yield val\n        \n# Display values from nested lists using generator\nnested_gen = nested_list_generator()\nfor value in nested_gen:\n    print(value)"
+                    }
+                ]
+            },
+                        {
+    "number": 13,
+    "title": "Decorators",
+    "tasks": [
+        {
+            "task_name": "Task 1: Introduction to Decorators",
+            "description": "Understand the basics of decorators in Python and their use cases. Implement a simple decorator.",
+            "correct_code": "\n# Example: Basic decorator in Python\n# Define a decorator function and wrap it around another function\n\ndef simple_decorator(func):\n    def wrapper():\n        print('Calling the decorated function')\n        func()\n        print('Finished calling the decorated function')\n    return wrapper\n\n@simple_decorator\n    def greet():\n        print('Hello, Decorators!')\n\ngreet()"
+        },
+        {
+            "task_name": "Task 2: Decorator with Arguments",
+            "description": "Learn how to create decorators that take arguments. Implement a decorator with arguments to modify function behavior.",
+            "correct_code": "\n# Example: Decorator with arguments in Python\n# Create a decorator that accepts arguments and modify function behavior\n\ndef decorator_with_args(arg1, arg2):\n    def decorator(func):\n        def wrapper(*args, **kwargs):\n            print(f'Arguments passed to decorator: {arg1}, {arg2}')\n            func(*args, **kwargs)\n            print('Modification applied by decorator')\n        return wrapper\n    return decorator\n\n@decorator_with_args('arg1value', 'arg2value')\ndef example_function():\n    print('Function being decorated')\n\nexample_function()"
+        },
+        {
+            "task_name": "Task 3: Chaining Decorators",
+            "description": "Explore chaining multiple decorators in Python. Understand decorator stacking and execution order.",
+            "correct_code": "\n# Example: Chaining decorators in Python\n# Apply multiple decorators to a single function in Python\n\ndef decorator1(func):\n    def wrapper():\n        print('Decorator 1 applied')\n        func()\n    return wrapper\n\ndef decorator2(func):\n    def wrapper():\n        print('Decorator 2 applied')\n        func()\n    return wrapper\n\n@decorator1\n@decorator2\ndef decorated_function():\n    print('Decorated function execution')\n\ndecorated_function()"
+        },
+        {
+            "task_name": "Task 4: Decorator Usage Scenarios",
+            "description": "Learn common usage scenarios for decorators in Python such as logging, timing, and authentication.",
+            "correct_code": "\n# Example: Real-world applications of decorators\n# Implement decorators for logging, timing, and authentication purposes\n\nimport time\n\ndef log_decorator(func):\n    def wrapper(*args, **kwargs):\n        print(f'Function {func.__name__} called')\n        result = func(*args, **kwargs)\n        print(f'Function {func.__name__} executed')\n        return result\n    return wrapper\n\n@log_decorator\ndef my_function():\n    print('Function executed')\n    time.sleep(1)\n\nmy_function()"
+        },
+        {
+            "task_name": "Task 5: Decorator Best Practices",
+            "description": "Understand best practices and conventions for using decorators in Python. Learn about maintaining function metadata and functools.wraps.",
+            "correct_code": "\n# Example: Implementing best practices for decorators\n# Use functools.wraps to preserve function metadata when using decorators\n\nfrom functools import wraps\n\ndef log_decorator(func):\n    @wraps(func)\n    def wrapper(*args, **kwargs):\n        print(f'Calling function {func.__name__}')\n        result = func(*args, **kwargs)\n        print(f'Function {func.__name__} executed')\n        return result\n    return wrapper\n\n@log_decorator\ndef my_function():\n    \"\"\"A simple function.\"\"\"\n    print('Execution in progress')\n\nmy_function()\nprint(my_function.__name__)\nprint(my_function.__doc__)"
+        }
+    ]
+},
+                        {
+    "number": 14,
+    "title": "Context Managers and with Blocks",
+    "tasks": [
+        {
+            "task_name": "Task 1: Basic Context Manager",
+            "description": "Learn to create a custom context manager in Python using the 'with' statement. Understand the use of '__enter__' and '__exit__' methods for resource management.",
+            "correct_code": "\nclass MyContextManager:\n    def __enter__(self):\n        print('Entering context')\n        return self\n    \n    def __exit__(self, exc_type, exc_value, traceback):\n        print('Exiting context')\n        \nwith MyContextManager() as x:\n    print('Inside the context manager block')"
+        },
+        {
+            "task_name": "Task 2: Context Manager for File Handling",
+            "description": "Implement a context manager for file handling. Explore managing file resources with '__enter__' and '__exit__' to open and close files.",
+            "correct_code": "\nclass FileManager:\n    def __init__(self, filename, mode):\n        self.filename = filename\n        self.mode = mode\n\n    def __enter__(self):\n        self.file = open(self.filename, self.mode)\n        return self.file\n\n    def __exit__(self, exc_type, exc_value, traceback):\n        if self.file:\n            self.file.close()\n\n# Use the context manager to read a file\nwith FileManager('sample.txt', 'r') as file:\n    print(file.read())"
+        },
+        {
+            "task_name": "Task 3: Handling Exceptions in Context Managers",
+            "description": "Design a context manager that handles exceptions within its block. Utilize the '__exit__' method to catch and manage errors.",
+            "correct_code": "\nclass ErrorHandlingManager:\n    def __enter__(self):\n        return self\n    \n    def __exit__(self, exc_type, exc_value, traceback):\n        if exc_type:\n            print(f'Exception handled: {exc_value}')\n            return True\n\nwith ErrorHandlingManager():\n    raise ValueError('Test error handling in context manager')"
+        },
+        {
+            "task_name": "Task 4: Nested Context Managers",
+            "description": "Use nested context managers to manage multiple resources. Demonstrate the use of multiple 'with' statements in a single line.",
+            "correct_code": "\nwith open('file1.txt', 'r') as file1, open('file2.txt', 'w') as file2:\n    data = file1.read()\n    file2.write(data.upper())"
+        },
+        {
+            "task_name": "Task 5: Creating Reusable Context Managers",
+            "description": "Develop reusable context managers using the 'contextlib' module. Simplify context manager creation with '@contextmanager' decorator.",
+            "correct_code": "\nfrom contextlib import contextmanager\n\n@contextmanager\ndef custom_open(filename):\n    print('Open file:', filename)\n    file = open(filename, 'r')\n    try:\n        yield file\n    finally:\n        file.close()\n        print('Close file:', filename)\n\n# Use the reusable context manager\nwith custom_open('sample.txt') as file:\n    content = file.read()\n    print(content)"
+        }
+    ]
+}
+                ]
+            }
+        ]

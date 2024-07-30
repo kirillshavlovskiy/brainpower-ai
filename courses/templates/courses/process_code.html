@@ -1,0 +1,21 @@
+{% extends 'courses/base.html' %}
+
+{% block title %}{% endblock %}
+
+{% block content %}
+    <h1>Convert into Code</h1>
+<div>
+
+<h2>Prompt:</h2>
+        <p>{{ content.prompt }}</p>
+        <h2>Response:</h2>
+        <pre><code class="language-python">{{ content.response|safe }}</code></pre>
+
+    <form method="post">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit">Process</button>
+    </form>
+    <hr>
+</div>
+{% endblock %}

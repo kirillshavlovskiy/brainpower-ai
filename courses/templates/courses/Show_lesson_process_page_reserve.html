@@ -1,0 +1,145 @@
+{% extends 'courses/base.html' %}
+
+{% block title %}Reprocess Content{% endblock %}
+
+{% block content %}
+    <h1>Process Content</h1>
+<div>
+    <h2>Lesson title:</h2>
+    <pre><code class="language-python">{{ lesson.title|safe }}</code></pre>
+    <h2>Lesson Description:</h2>
+    <pre><code class="language-python">{{ lesson.description|safe }}</code></pre>
+    <h2>Tasks:</h2>
+     {% for task in tasks %}
+    <pre><code class="language-python">{{ task.id }}</code></pre>
+    <pre><code class="language-python">{{ task.title }}</code></pre>
+    <pre><code class="language-python">{{ task.content }}</code></pre>
+    <form id="code-form" novalidate>
+    {% csrf_token %}
+    {{ form.as_p }}
+        <p>
+    <button type="submit">Run Code</button>
+        </p>
+    </form>
+        <textarea id="code_output" cols="200" rows="10" placeholder="Output will appear here">   </textarea>
+    <script>
+// Define a global variable to store the prompt message
+let promptMessage = '';
+
+document.addEventListener('DOMContentLoaded', function () {
+    const form = document.getElementById('code-form');
+    var output_form = CodeMirror.fromTextArea(document.getElementById('code_output'), {
+        lineNumbers: true,
+        mode: "text",
+        theme: "default"
+    });
+    var editor = CodeMirror.fromTextArea(form.querySelector('textarea'), {
+        lineNumbers: true,
+        mode: "python",
+        theme: "default"
+    });
+
+    // Define the event listener for form submission
+    form.addEventListener('submit', handleFormSubmission);
+
+    // Function to handle form submission
+    function handleFormSubmission(event) {
+        event.preventDefault();
+
+        const code = editor.getValue();
+        const formData = new FormData(form);
+        formData.append('code', code);
+
+        fetch('{% url 'process_lesson' lesson.id %}', {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-CSRFToken': 'ZUP3t44Y65LUc73Xf9Ttev8TnyHF3QzKk4gmydjMKbletcifqGx3RUGNzQoH5WeK'
+            }
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            return response.json();
+        })
+        .then(data => {
+            // Store the prompt message globally
+            promptMessage = data.prompt_message;
+
+            if (data.input_requested) {
+                // Display prompt message and input field
+                const updatedCode = '\n' + promptMessage + ' ';  // Append prompt message with space
+                output_form.setValue(updatedCode);
+
+                // Remove the form submission event listener to prevent multiple submissions
+                form.removeEventListener('submit', handleFormSubmission);
+
+                // Handle form submission with input value
+                form.addEventListener('submit', handleInputSubmission);
+            } else {
+                // No input requested, update output form with the response
+                output_form.setValue(data.output);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            output_form.setValue('An error occurred while processing your request.');
+        });
+    }
+
+    // Function to handle form submission with input value
+    function handleInputSubmission(event) {
+        event.preventDefault();
+
+        // Get the user input from the last line of the output form
+        const lines = output_form.getValue().split('\n');
+        const lastLine = lines[lines.length - 1].trim();
+        const userInput = lastLine.substring(promptMessage.length).trim();
+
+        const formData = new FormData(form);
+        formData.append('input_value', userInput);
+
+        // Send the form data to the server
+        fetch('{% url 'process_lesson' lesson.id %}', {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-CSRFToken': 'ZUP3t44Y65LUc73Xf9Ttev8TnyHF3QzKk4gmydjMKbletcifqGx3RUGNzQoH5WeK'
+            }
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            return response.json();
+        })
+        .then(data => {
+            // Update output form with the response
+            const currentCode = output_form.getValue();  // Get current code in output_form
+            const updatedCode = currentCode + '\n' + data.output;  // Append output on a new line
+            output_form.setValue(updatedCode);
+            // Move cursor to the next line for the next execution step
+            output_form.setCursor({ line: output_form.lineCount() });
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            output_form.setValue('An error occurred while processing your request.');
+        });
+    }
+});
+
+    </script>
+ <!--   <script>
+    var editor_1 = CodeMirror.fromTextArea(document.getElementById('code_output {{ task.id }}'), {
+    lineNumbers: true,
+    mode: "python", // or any other mode you need
+    theme: "default"
+    });
+
+    </script>-->
+    {% endfor %}
+    <hr>
+</div>
+{% endblock %}
+

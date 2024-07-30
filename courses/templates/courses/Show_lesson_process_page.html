@@ -1,0 +1,84 @@
+{% extends 'courses/base.html' %}
+{% load static %}
+<link rel="stylesheet" type="text/css" href="{% static 'styles.css' %}">
+{% block title %}Reprocess Content{% endblock %}
+
+{% block content %}
+<h1>{{ lesson.title }}</h1>
+
+{% for task in lesson.task_set.all %}
+<div>
+    <h3>{{ task.name }}</h3>
+    <h4>{{ task.description }}</h4>
+
+        <textarea id="task-{{ task.id }}" placeholder="Output will appear here">{{ task.correct_code }}</textarea>
+         <button class="input-button" onclick="">Send for execution</button>
+         <button is="retrieve-task-{{ task.id }}" class="input-button" onclick="handleRetrievalClick('{{ task.id }}')">Retrieve thread history</button>
+    <script>
+    const taskBlock{{ task.id }} = CodeMirror.fromTextArea(document.getElementById('task-' + {{ task.id }}), {
+        lineNumbers: false,
+        mode: 'python',
+        theme: 'ayu-mirage',
+        readOnly: true
+    });
+
+    const taskElement{{ task.id }} = taskBlock{{ task.id }}.getWrapperElement();
+    taskElement{{ task.id }}.classList.add('customClass');
+</script>
+</div>
+{% endfor %}
+<div id="my-element" data-start-thread-url="{% url 'start_thread' %}">
+    <!-- Your HTML content here -->
+</div>
+<div class="container">
+    <div class="form-container">
+        <div id="wrapper-left" class="form-wrapper-left" data-start-interpreter="{% url 'process_lesson' lesson.id %}">
+            <h2>Practice section:</h2>
+            <form id="code-form">
+                {% csrf_token %}
+                <textarea name="code" id="code" placeholder="Your code here"></textarea>
+                <p><button class="button-soft" type="submit">Run Code</button></p>
+            </form>
+
+
+
+            <div class="output-container">
+                <textarea id="code_output" placeholder="Output will appear here"></textarea>
+
+            </div>
+        </div>
+        <div class="form-wrapper-right">
+            <div id="preview"></div>
+            <form id="code-form-ai" novalidate>
+                <h2>AI CoPilot:</h2>
+                {% csrf_token %}
+                <textarea id="ai-output" name="ai-output" style="height: 80%;" placeholder="AI output will appear here"></textarea>
+
+            </form>
+            <form id="code-input-ai" novalidate>
+                <p><button class=button-soft type="submit">Send Message</button></p>
+                {% csrf_token %}
+                <textarea id="ai-input" name="ai-output" style="height: 20%;" placeholder="AI output will appear here"></textarea>
+
+            </form>
+        </div>
+    </div>
+</div>
+
+<h2>ML Chart</h2>
+
+<div id="plotImage"></div>
+
+
+
+<!-- Import React and any necessary libraries -->
+<script src="https://unpkg.com/react@17/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+
+<!-- Mount React component to root element -->
+<script src="{% static 'js/scripts.js' %}"></script>
+    <hr>
+{% endblock %}
+
+
+

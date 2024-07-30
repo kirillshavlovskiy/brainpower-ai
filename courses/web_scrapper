@@ -1,0 +1,287 @@
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_groq import ChatGroq
+import bs4
+
+from langchain_community.document_loaders import WebBaseLoader
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+from langchain.chains import create_history_aware_retriever, create_retrieval_chain
+#from langchain.chains import create_stuff_documents_chain
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_community.vectorstores import Qdrant
+from langchain_openai import OpenAIEmbeddings
+import os
+
+llamaparse_api_key = os.getenv("LLAMA_CLOUD_API_KEY")
+qdrant_url = os.getenv("QDRANT_URL")
+qdrant_api_key = os.getenv("QDRANT_API_KEY")
+groq_api_key = os.getenv("GROQ_API_KEY")
+apyfy_api_key = os.getenv("APIFY_API_TOKEN")
+azure_api_key = os.getenv("AZURE_API_KEY")
+google_api_key = os.getenv("AZURE_API_KEY")
+# embed_model = FastEmbedEmbeddings()
+# embed_model_2 = resolve_embed_model("local:bge-m3")
+llm_lamma3_70b = ChatGroq(temperature=0, groq_api_key=groq_api_key, model_name="llama3-70b-8192")
+
+#
+urls = [
+    # 'https://microsoft.github.io/autogen/docs/tutorial',
+    # 'https://python.langchain.com/docs/get_started/introduction/',
+    # 'https://www.crewai.com',
+    # 'https://platform.openai.com/docs/introduction',
+    'https://docs.llamaindex.ai/en/stable/understanding/',
+    # 'https://memgpt.readme.io/docs/index',
+    # 'https://docs.pydantic.dev/latest/',
+    # 'https://www.perplexity.ai/hub/getting-started#copilot',
+    # Add more URLs to the list as needed
+]
+# import requests
+# from urllib.parse import urljoin, urlparse
+# from bs4 import BeautifulSoup
+# from collections import deque
+# from langchain.indexes import VectorstoreIndexCreator
+# from langchain_community.utilities import ApifyWrapper
+# from langchain_core.documents import Document
+#
+# def is_valid(url, base_url):
+#     parsed = urlparse(url)
+#     return bool(parsed.netloc) and parsed.netloc == urlparse(base_url).netloc
+#
+#
+# def crawl(start_url, max_depth=1):
+#     visited = set()
+#     queue = deque([(start_url, 0)])
+#
+#     while queue:
+#         current_url, depth = queue.popleft()
+#         if depth > max_depth:
+#             continue
+#
+#         try:
+#             response = requests.get(current_url)
+#             soup = BeautifulSoup(response.text, 'html.parser')
+#
+#             for link in soup.find_all('a', href=True):
+#                 full_url = urljoin(current_url, link['href'])
+#                 if full_url not in visited and is_valid(full_url, start_url):
+#                     visited.add(full_url)
+#                     print(full_url)
+#                     queue.append((full_url, depth + 1))
+#         except requests.exceptions.RequestException as e:
+#             print(f"An error occurred: {e}")
+#
+#     return visited
+#
+#
+# all_links = []
+# for url in urls:
+#     all_links.append(crawl(url))
+#
+# print(len(all_links))
+import pickle
+from langchain.retrievers.web_research import WebResearchRetriever
+
+from langchain_community.utilities import GoogleSearchAPIWrapper
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain.indexes import VectorstoreIndexCreator
+from langchain_community.docstore.document import Document
+from langchain_community.document_loaders import AzureAIDocumentIntelligenceLoader
+from langchain_community.document_loaders import SpiderLoader
+from langchain.retrievers.web_research import WebResearchRetriever
+from langchain_community.document_loaders import AsyncChromiumLoader
+from langchain_community.utilities import GoogleSearchAPIWrapper
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+import os
+data_file = "./data/llama_index/parsed_data.pkl"
+docs_simple = None
+docs_azure = None
+#apify = ApifyWrapper(apyfy_api_key=apyfy_api_key)
+
+if os.path.exists(data_file):
+    # Load the parsed data from the file
+    with open(data_file, "rb") as f:
+        docs = pickle.load(f)
+else:
+    # Perform chain of the parsing steps and store the result in llama_parse_documents
+    print(azure_api_key)
+    try:
+        url_path = "https://docs.llamaindex.ai/en/stable/understanding/"
+        endpoint = "https://smart-html-parser.cognitiveservices.azure.com/"
+        key = azure_api_key
+        loader_azure = AzureAIDocumentIntelligenceLoader(
+            api_endpoint=endpoint,
+            api_key=key,
+            url_path=url_path,
+            api_model="prebuilt-layout"
+        )
+
+        docs_azure = loader_azure.load()
+        loader_simple = AsyncChromiumLoader(urls, headless=True)
+        docs_simple = loader_simple.load()
+        # loader = apify.call_actor(
+        #     actor_id="apify/website-content-crawler",
+        #     run_input={"startUrls": [#{"url": 'https://microsoft.github.io/autogen/docs/tutorial'},
+        #                              {"url": 'https://www.crewai.com'},
+        #                              # {"url": 'https://platform.openai.com/docs/introduction'},
+        #                              # {"url": 'https://docs.llamaindex.ai/en/stable/understanding/'},
+        #                              # {"url": 'https://python.langchain.com/docs/get_started/introduction/'},
+        #                              # {"url": 'https://docs.pydantic.dev/latest/'},
+        #                              # {"url": 'https://memgpt.readme.io/docs/index'},
+        #
+        #                              ]},
+        #     dataset_mapping_function=lambda item: Document(
+        #         page_content=item["text"] or "", metadata={"source": item["url"]}
+        #     ),
+        #
+        # )
+
+        # with open(data_file, "wb") as f:
+        #     pickle.dump(docs, f)
+        #index = VectorstoreIndexCreator().from_loaders([loader])
+    except Exception as e:
+        print(f"Unable to process RAG request...{e}")
+
+
+# Download embeddings from OpenAI
+
+# Split the documents into chunks
+
+from langchain_text_splitters import MarkdownHeaderTextSplitter
+# headers_to_split_on = [
+#     ("#", "Header 1"),
+#     ("##", "Header 2"),
+#     ("###", "Header 3"),
+# ]
+
+
+from langchain_community.document_transformers import Html2TextTransformer
+html2text = Html2TextTransformer()
+docs_transformed_1 = html2text.transform_documents(docs_azure)
+docs_transformed_2 = html2text.transform_documents(docs_simple)
+
+# MD splits
+# markdown_splitter = MarkdownHeaderTextSplitter(
+#     headers_to_split_on=headers_to_split_on, strip_headers=False
+# )
+#
+# md_header_splits = markdown_splitter.split_text(docs_transformed)
+
+# Char-level splits
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+text_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=1000,
+    chunk_overlap=200,
+    add_start_index=True
+)
+
+
+from langchain_openai import OpenAIEmbeddings
+url = "https://f336255f-9d81-439a-9d27-f09e84b17423.us-east4-0.gcp.cloud.qdrant.io:6333"
+api_key = "S3wizW2QJ8IfFZxSA5lr31cAbuukpJWXbAa47_axx5f2KN9SmUmLkQ"
+
+if docs_simple or docs_azure:
+    # Split
+    texts_1 = text_splitter.split_documents(docs_transformed_1)
+    texts_2 = text_splitter.split_documents(docs_transformed_2)
+    qdrant_1 = Qdrant.from_documents(
+        texts_1,
+        OpenAIEmbeddings(),
+        url=url,
+        prefer_grpc=True,
+        api_key=api_key,
+        collection_name="my_documents",
+        force_recreate=True,
+    )
+    qdrant_2 = Qdrant.from_documents(
+        texts_2,
+        OpenAIEmbeddings(),
+        url=url,
+        prefer_grpc=True,
+        api_key=api_key,
+        collection_name="my_documents",
+        force_recreate=True,
+    )
+    retriever_1 = qdrant_1.as_retriever(
+        search_type="mmr",  # Also test "similarity"
+        search_kwargs={"k": 8},
+    )
+    retriever_2 = qdrant_2.as_retriever(
+        search_type="mmr",  # Also test "similarity"
+        search_kwargs={"k": 8},
+    )
+
+    #First we need a prompt that we can pass into an LLM to generate this search query
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("placeholder", "{chat_history}"),
+            ("user", "{input}"),
+            (
+                "user",
+                "Given the above conversation, generate a search query to look up to get information relevant to the conversation",
+            ),
+        ]
+    )
+
+    retriever_chain_1 = create_history_aware_retriever(llm_lamma3_70b, retriever_1, prompt)
+    retriever_chain_2 = create_history_aware_retriever(llm_lamma3_70b, retriever_2, prompt)
+
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "Answer the user's questions based on the below context:\n\n{context}",
+            ),
+            ("placeholder", "{chat_history}"),
+            ("user", "{input}"),
+        ]
+    )
+    document_chain = create_stuff_documents_chain(llm_lamma3_70b, prompt)
+
+    qa_1 = create_retrieval_chain(retriever_chain_1, document_chain)
+    qa_2 = create_retrieval_chain(retriever_chain_2, document_chain)
+
+    from langchain.retrievers.web_research import WebResearchRetriever
+    from llama_index.vector_stores.qdrant import QdrantVectorStore
+    from langchain_google_community import GoogleSearchAPIWrapper
+    from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+    import qdrant_client
+    from langchain_community.vectorstores import Chroma
+    # Vectorstore
+    client = qdrant_client.QdrantClient(
+        url="https://f336255f-9d81-439a-9d27-f09e84b17423.us-east4-0.gcp.cloud.qdrant.io:6333",
+        api_key="S3wizW2QJ8IfFZxSA5lr31cAbuukpJWXbAa47_axx5f2KN9SmUmLkQ",
+    )
+    #vectorstore = QdrantVectorStore(client=client, collection_name='qdrant_rag')
+    vectorstore = Chroma.from_documents(texts_1, OpenAIEmbeddings(disallowed_special=()))
+
+    # LLM
+    llm = ChatOpenAI(temperature=0)
+
+    # Search
+    search = GoogleSearchAPIWrapper()
+
+    web_research_retriever = WebResearchRetriever.from_llm(
+        search=search,
+        vectorstore=vectorstore,
+        llm=llm
+    )
+    from langchain.chains import RetrievalQAWithSourcesChain
+    qa_chain = RetrievalQAWithSourcesChain.from_chain_type(
+        llm_lamma3_70b, retriever=web_research_retriever
+    )
+
+    while True:
+        question = input("-> **Question**:")
+
+        result_websearch = qa_chain({"question": question})
+        result_html_1 = qa_1.invoke({"input": question})
+        result_html_2 = qa_2.invoke({"input": question})
+        print(f"-> **Question**: {question} \n")
+        print(f"**Answer_1**: {result_html_1['answer']} \n")
+        print(f"**Answer_2**: {result_html_2['answer']} \n")
+        print(f"**Additional Answer from websearch**: {result_websearch} \n")

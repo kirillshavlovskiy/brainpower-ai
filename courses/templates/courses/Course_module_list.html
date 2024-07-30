@@ -1,0 +1,28 @@
+{% extends 'courses/base.html' %}
+
+{% block title %}Reprocess Content{% endblock %}
+
+{% block content %}
+    <h1>Process Content</h1>
+<div>
+
+
+        <h2>Course title:</h2>
+        <pre><code class="language-python">{{ course.title|safe }}</code></pre>
+        <h2>Course Objective:</h2>
+        <pre><code class="language-python">{{ course.objective|safe }}</code></pre>
+         <h2>Course Description:</h2>
+        <pre><code class="language-python">{{ course.description|safe }}</code></pre>
+    <h2>Lessons:</h2>
+     {% for module in modules %}
+     <div>Module #{{ module.number }}</div>
+     <div>{{ module.title }}</div>
+        {% for lesson in module.lesson_set.all %}
+        <div>Lesson #{{ lesson.number }}</div>
+        <div></div>
+        <button><a href="{% url 'process_lesson' lesson.id %}">{{ lesson.title }}</a></button>
+        {% endfor %}
+    {% endfor %}
+    <hr>
+</div>
+{% endblock %}

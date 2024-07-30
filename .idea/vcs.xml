@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="VcsDirectoryMappings">
+    <mapping directory="$PROJECT_DIR$" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/courses/data/repo/langchain/langgraph" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/courses/data/repo/langchain/langserve" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/courses/data/repo/langchain/learning" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/courses/data/repo/langgraph" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/courses/data/repo/langserve" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/courses/data/repo/llama_index" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/courses/data/web_repo/langchain" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/data/repo/langchain" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/data/web_repo/langgraph" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/data/web_repo/langserve" vcs="Git" />
+  </component>
+</project>

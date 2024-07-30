@@ -1,0 +1,27 @@
+{% extends 'courses/base.html' %}
+
+{% block title %}Display Content{% endblock %}
+
+{% block content %}
+    <h1>Saved Content</h1>
+   {% for course in courses %}
+    <div>
+        <h2>Course Title:</h2>
+        <p>{{ course.title }}</p>
+        <h2>Objective:</h2>
+        <p>{{ course.objective }}</p>
+         <li>Course Structure</li>
+        {% for module in course.structure %}
+        <div>Module: {{ module.title }}</div>
+        {% endfor %}
+        <!-- Add a link or form for processing content -->
+        <form action="{% url 'process_content' course.id %}" method="post">
+            {% csrf_token %}
+            <input type="submit" value="Re-process Content">
+        </form>
+        <hr>
+    </div>
+{% empty %}
+    <p>No content has been saved yet.</p>
+{% endfor %}
+{% endblock %}

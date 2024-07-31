@@ -104,7 +104,7 @@ transformers~=4.39.2
 psutil~=5.9.8
 fastembed~=0.3.4
 pypdf~=4.1.0
-unstructured~=0.13.2
+unstructured==0.14.10
 h2~=4.1.0
 validators~=0.28.1
 chardet~=5.2.0

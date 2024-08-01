@@ -26,7 +26,6 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, Prom
 from langchain_community import chat_models
 from langchain_text_splitters import Language, CharacterTextSplitter
 from langchain_groq import ChatGroq
-from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings.openai import OpenAIEmbeddings
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -42,7 +41,7 @@ from typing_extensions import TypedDict
 from langchain.retrievers import EnsembleRetriever
 from langchain_community.vectorstores import Chroma
 from langchain_community.retrievers import BM25Retriever
-from langchain_community.vectorstores import FAISS
+
 from langchain.vectorstores import Qdrant
 
 
@@ -519,7 +518,7 @@ def self_retriever_host_or_ai(query: str) -> list:
             """
     # Create Retriever Tool
     loader_repo = GenericLoader.from_filesystem(
-        "/Users/kirillshavlovskiy/mylms/courses/query_process.py",
+        "./courses/query_process.py",
         glob="**/*",
         suffixes=[".py"],
         exclude=["**/non-utf8-encoding.py"],

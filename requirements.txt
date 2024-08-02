@@ -17,7 +17,7 @@ langgraph==0.1.19
 langsmith==0.1.96
 matplotlib==3.8.4
 openai==1.37.2
-Pillow==10.5.0
+Pillow==9.5.0
 pinecone==5.0.0
 pydantic==2.8.2
 pydantic_settings==2.4.0

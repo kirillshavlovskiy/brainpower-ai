@@ -16,7 +16,6 @@ langchain_text_splitters==0.2.2
 langgraph==0.1.19
 langsmith==0.1.96
 matplotlib==3.8.4
-numpy==2.0.1
 openai==1.37.2
 Pillow==10.4.0
 pinecone==5.0.0

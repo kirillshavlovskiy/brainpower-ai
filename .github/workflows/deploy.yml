@@ -20,23 +20,43 @@ jobs:
 
     - name: Print Python version and location
       run: |
-        python3.11 --version
-        which python3.11
+        python --version
+        which python
+
+    - name: Ensure startup.txt exists
+      run: |
+        if [ ! -f "startup.txt" ]; then
+          echo "pip install --user -r requirements.txt && python -m gunicorn --bind=0.0.0.0 --timeout 600 mylms.wsgi:application" > startup.txt
+        fi
 
     - name: Print startup command
-      run: cat /home/site/wwwroot/startup.txt
-
-    - name: List wwwroot contents
-      run: ls -la /home/site/wwwroot
+      run: cat startup.txt
 
     - name: Install dependencies
       run: |
         python -m venv venv
         source venv/bin/activate
         pip install -r requirements.txt
+
+    - name: Create deployment package
+      run: |
+        zip -r deploy.zip . -x "venv/*"
+
     - name: Deploy to Azure Web App
       uses: azure/webapps-deploy@v2
       with:
-        app-name: myLMS-new
-        slot-name: production
+        app-name: 'myLMS-new'
+        slot-name: 'production'
         publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+        package: ./deploy.zip
+
+    - name: Add post-deployment script
+      uses: azure/appservice-settings@v1
+      with:
+        app-name: 'myLMS-new'
+        app-settings-json: '[
+          {
+            "name": "POST_DEPLOYMENT_SCRIPT",
+            "value": "echo \"Listing contents of /home/site/wwwroot:\" && ls -la /home/site/wwwroot && echo \"Checking for startup.txt:\" && cat /home/site/wwwroot/startup.txt || echo \"startup.txt not found\""
+          }
+        ]'

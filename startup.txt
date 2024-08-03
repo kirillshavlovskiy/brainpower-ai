@@ -1,1 +1,1 @@
-pip install -r requirements.txt && gunicorn --bind=0.0.0.0 --timeout 600 mylms.wsgi:application
+python3.10 -m venv antenv && source antenv/bin/activate && pip install --upgrade pip && pip install -r requirements.txt && gunicorn --bind=0.0.0.0 --timeout 600 mylms.wsgi:application

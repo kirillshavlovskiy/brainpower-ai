@@ -18,6 +18,17 @@ jobs:
       with:
         python-version: '3.11'
 
+    - name: Print Python version and location
+      run: |
+        python3.11 --version
+        which python3.11
+
+    - name: Print startup command
+      run: cat /home/site/wwwroot/startup.txt
+
+    - name: List wwwroot contents
+      run: ls -la /home/site/wwwroot
+
     - name: Install dependencies
       run: |
         python -m venv venv

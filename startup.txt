@@ -1,1 +1,1 @@
-pip install --user -r requirements.txt && python3.11 -m gunicorn --bind=0.0.0.0 --timeout 600 mylms.wsgi:application
+pip install -r requirements.txt && gunicorn --bind=0.0.0.0 --timeout 600 mylms.wsgi:application

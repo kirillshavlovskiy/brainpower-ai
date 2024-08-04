@@ -1,4 +1,4 @@
-name: Deploy to Azure
+name: Deploy to Azure Web App
 
 on:
   push:
@@ -17,97 +17,18 @@ jobs:
       with:
         python-version: '3.10.12'
 
-    - name: Analyze directory contents
-      run: |
-        echo "Directory contents with sizes:"
-        du -sh * | sort -rh | head -n 20
-        echo "Total size:"
-        du -sh .
-
-    - name: Clean up artifacts
-      run: |
-        find . -type d -name "__pycache__" -exec rm -rf {} +
-        find . -type f -name "*.pyc" -delete
-
-    - name: Print crucial file contents
-      run: |
-        echo "runtime.txt:"
-        cat runtime.txt
-        echo "requirements.txt:"
-        cat requirements.txt
-        echo "startup.txt:"
-        cat startup.txt
-        echo "mylms/settings.py (partial):"
-        grep -n "ALLOWED_HOSTS\|DEBUG" mylms/settings.py
-
     - name: Create deployment package
       run: |
         zip -r deploy.zip . -x "*.git*" "*.pyc" "__pycache__/*" "node_modules/*" "venv/*"
 
-    - name: Print deployment package contents
-      run: unzip -l deploy.zip
-
     - name: Deploy to Azure Web App
-        uses: azure/webapps-deploy@v2
-        with:
-          app-name: 'myLMS-new'
-          slot-name: 'production'
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: ./deploy.zip
+      uses: azure/webapps-deploy@v2
+      with:
+        app-name: 'myLMS-new'
+        slot-name: 'production'
+        publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+        package: ./deploy.zip
 
-          - name: Setup and verify Python environment
-            uses: azure/webapps-action@v1
-            with:
-              app-name: 'myLMS-new'
-              publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-              script: |
-                echo "Python Version:"
-                python --version
-                echo "Creating virtual environment:"
-                python -m venv antenv
-                echo "Activating virtual environment:"
-                call antenv\Scripts\activate.bat
-                echo "Pip Version:"
-                python -m pip --version
-                echo "Updating pip:"
-                python -m pip install --upgrade pip
-                echo "Installing requirements:"
-                if exist requirements.txt (
-                  python -m pip install -r requirements.txt
-                ) else (
-                  echo "No requirements.txt found"
-                )
-                echo "Installed Packages:"
-                python -m pip list
-                echo "Django Version (if installed):"
-                python -c "import django; print(django.get_version())" || echo "Django not installed"
-                echo "Directory Contents:"
-                dir /s /b /o:gn
-                echo "Startup Command:"
-                type startup.txt
-                echo "Deactivating virtual environment:"
-                deactivate
-
-          - name: Update web.config
-            uses: azure/webapps-action@v1
-            with:
-              app-name: 'myLMS-new'
-              publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-              script: |
-                echo ^<?xml version="1.0" encoding="utf-8"?^> > web.config
-                echo ^<configuration^> >> web.config
-                echo   ^<system.webServer^> >> web.config
-                echo     ^<handlers^> >> web.config
-                echo       ^<add name="PythonHandler" path="*" verb="*" modules="FastCgiModule" scriptProcessor="D:\home\Python310\python.exe|D:\home\Python310\wfastcgi.py" resourceType="Unspecified" requireAccess="Script"/^> >> web.config
-                echo     ^</handlers^> >> web.config
-                echo     ^<appSettings^> >> web.config
-                echo       ^<add key="PYTHONPATH" value="D:\home\site\wwwroot\antenv\Scripts"/^> >> web.config
-                echo       ^<add key="WSGI_HANDLER" value="mylms.wsgi.application"/^> >> web.config
-                echo       ^<add key="DJANGO_SETTINGS_MODULE" value="mylms.settings"/^> >> web.config
-                echo     ^</appSettings^> >> web.config
-                echo   ^</system.webServer^> >> web.config
-                echo ^</configuration^> >> web.config
-
-          - name: Verify deployment
-            run: |
-              echo "Deployment completed. Check Azure portal for details."
+    - name: Verify deployment
+      run: |
+        echo "Deployment completed. Check Azure portal for details."

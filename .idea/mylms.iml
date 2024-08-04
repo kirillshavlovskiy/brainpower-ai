@@ -8,7 +8,6 @@
       <excludeFolder url="file://$MODULE_DIR$/courses/db" />
       <excludeFolder url="file://$MODULE_DIR$/courses/tmp" />
       <excludeFolder url="file://$MODULE_DIR$/.cache" />
-      <excludeFolder url="file://$MODULE_DIR$/.github" />
       <excludeFolder url="file://$MODULE_DIR$/.vscode" />
       <excludeFolder url="file://$MODULE_DIR$/amplify" />
       <excludeFolder url="file://$MODULE_DIR$/build" />

@@ -15,7 +15,14 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.9.2'
+        python-version: '3.11'  # Updated to Python 3.11
+
+    - name: Create virtual environment and install dependencies
+      run: |
+        python -m venv antenv
+        source antenv/bin/activate
+        pip install --upgrade pip
+        pip install -r requirements.txt
 
     - name: Create deployment package
       run: |
@@ -24,7 +31,7 @@ jobs:
     - name: Deploy to Azure Web App
       uses: azure/webapps-deploy@v2
       with:
-        app-name: 'myLMS-new'
+        app-name: 'myLMS-new'  # replace with your app name
         publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
         package: ./deploy.zip
 

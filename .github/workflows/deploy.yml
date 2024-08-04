@@ -15,7 +15,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11'
+        python-version: '3.10'
 
     - name: Create deployment package
       run: |
@@ -28,6 +28,13 @@ jobs:
         app-name: 'myLMS-new'
         publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
         package: ./deploy.zip
+
+    - name: Run deployment script
+      uses: azure/webapps-deploy@v2
+      with:
+        app-name: 'myLMS-new'
+        publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+        startup-command: '/home/site/wwwroot/deploy.sh'
 
     - name: Verify deployment
       run: |

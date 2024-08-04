@@ -3,8 +3,10 @@
 # Navigate to project directory
 cd /home/site/wwwroot
 
-# Create and activate virtual environment
+# Create virtual environment
 python3 -m venv antenv
+
+# Activate virtual environment
 source antenv/bin/activate
 
 # Install dependencies

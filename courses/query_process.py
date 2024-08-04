@@ -8,12 +8,11 @@ from langchain_community.chat_models import ChatOpenAI
 
 from langchain_community.document_loaders.github import GithubFileLoader
 
-from langchain_community.document_loaders import WebBaseLoader
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_community.document_transformers import LongContextReorder, EmbeddingsRedundantFilter
-from langchain_pinecone import PineconeVectorStore
-from langchain.agents import AgentExecutor, create_react_agent, create_self_ask_with_search_agent, \
-    create_tool_calling_agent
+# from langchain_pinecone import PineconeVectorStore
+# from langchain.agents import AgentExecutor, create_react_agent, create_self_ask_with_search_agent, \
+#     create_tool_calling_agent
 from typing import Annotated, Literal, Sequence, TypedDict, Callable, Dict, Any, List, Annotated, Sequence, Union
 
 from langchain_community.document_loaders.parsers import LanguageParser
@@ -26,6 +25,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, Prom
 from langchain_community import chat_models
 from langchain_text_splitters import Language, CharacterTextSplitter
 from langchain_groq import ChatGroq
+from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings.openai import OpenAIEmbeddings
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -41,7 +41,7 @@ from typing_extensions import TypedDict
 from langchain.retrievers import EnsembleRetriever
 from langchain_community.vectorstores import Chroma
 from langchain_community.retrievers import BM25Retriever
-
+from langchain_community.vectorstores import FAISS
 from langchain.vectorstores import Qdrant
 
 

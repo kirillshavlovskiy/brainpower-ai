@@ -1,1 +1,1 @@
-gunicorn --bind=0.0.0.0 --timeout 600 mylms.wsgi
+curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && python3 get-pip.py --user && export PATH=$PATH:$HOME/.local/bin && python3 -m venv antenv && source antenv/bin/activate && pip install -r requirements.txt && gunicorn --bind=0.0.0.0 --timeout 600 mylms.wsgi

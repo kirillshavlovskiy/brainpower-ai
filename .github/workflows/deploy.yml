@@ -15,7 +15,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
+        python-version: '3.10.12'
 
     - name: Analyze directory contents
       run: |
@@ -39,6 +39,23 @@ jobs:
         cat startup.txt
         echo "mylms/settings.py (partial):"
         grep -n "ALLOWED_HOSTS\|DEBUG" mylms/settings.py
+
+    - name: Update startup.txt and add web.config
+      run: |
+        echo "gunicorn --bind=0.0.0.0 --timeout 600 mylms.wsgi:application" > startup.txt
+        echo '<?xml version="1.0" encoding="utf-8"?>
+        <configuration>
+          <system.webServer>
+            <handlers>
+              <add name="httpPlatformHandler" path="*" verb="*" modules="httpPlatformHandler" resourceType="Unspecified"/>
+            </handlers>
+            <httpPlatform processPath="python" arguments="%home%\site\wwwroot\startup.txt" requestTimeout="00:04:00" startupTimeLimit="120" startupRetryCount="3" stdoutLogEnabled="true">
+              <environmentVariables>
+                <environmentVariable name="PYTHONPATH" value="%home%\site\wwwroot"/>
+              </environmentVariables>
+            </httpPlatform>
+          </system.webServer>
+        </configuration>' > web.config
 
     - name: Create deployment package
       run: |

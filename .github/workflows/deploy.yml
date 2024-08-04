@@ -48,52 +48,66 @@ jobs:
       run: unzip -l deploy.zip
 
     - name: Deploy to Azure Web App
-      uses: azure/webapps-deploy@v2
-      with:
-        app-name: 'myLMS-new'
-        slot-name: 'production'
-        publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-        package: ./deploy.zip
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: 'myLMS-new'
+          slot-name: 'production'
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: ./deploy.zip
 
-    - name: Setup Python Environment
-      uses: azure/webapps-deploy@v2
-      with:
-        app-name: 'myLMS-new'
-        publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-        startup-command: |
-          echo "Python Version:"
-          python3 --version
-          echo "Python Location:"
-          which python3
-          echo "Installing pip if not present:"
-          if ! command -v pip3 &> /dev/null; then
-            curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
-            python3 get-pip.py --user
-            export PATH=$PATH:$HOME/.local/bin
-          fi
-          echo "Pip Version:"
-          pip3 --version
-          echo "Updating pip:"
-          pip3 install --upgrade pip
-          echo "Installing requirements:"
-          if [ -f requirements.txt ]; then
-            pip3 install -r requirements.txt
-          else
-            echo "No requirements.txt found"
-          fi
-          echo "Installed Packages:"
-          pip3 list
-          echo "Django Version (if installed):"
-          python3 -c "import django; print(django.get_version())" || echo "Django not installed"
-          echo "PATH:"
-          echo $PATH
-          echo "Directory Contents:"
-          ls -la /home/site/wwwroot
-          echo "Startup Command:"
-          cat startup.txt
-          echo "Running Startup Command:"
-          $(cat startup.txt)
+          - name: Setup and verify Python environment
+            uses: azure/webapps-action@v1
+            with:
+              app-name: 'myLMS-new'
+              publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+              script: |
+                echo "Python Version:"
+                python --version
+                echo "Creating virtual environment:"
+                python -m venv antenv
+                echo "Activating virtual environment:"
+                call antenv\Scripts\activate.bat
+                echo "Pip Version:"
+                python -m pip --version
+                echo "Updating pip:"
+                python -m pip install --upgrade pip
+                echo "Installing requirements:"
+                if exist requirements.txt (
+                  python -m pip install -r requirements.txt
+                ) else (
+                  echo "No requirements.txt found"
+                )
+                echo "Installed Packages:"
+                python -m pip list
+                echo "Django Version (if installed):"
+                python -c "import django; print(django.get_version())" || echo "Django not installed"
+                echo "Directory Contents:"
+                dir /s /b /o:gn
+                echo "Startup Command:"
+                type startup.txt
+                echo "Deactivating virtual environment:"
+                deactivate
 
-    - name: Verify deployment
-      run: |
-        echo "Deployment completed. Check Azure portal for details."
+          - name: Update web.config
+            uses: azure/webapps-action@v1
+            with:
+              app-name: 'myLMS-new'
+              publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+              script: |
+                echo ^<?xml version="1.0" encoding="utf-8"?^> > web.config
+                echo ^<configuration^> >> web.config
+                echo   ^<system.webServer^> >> web.config
+                echo     ^<handlers^> >> web.config
+                echo       ^<add name="PythonHandler" path="*" verb="*" modules="FastCgiModule" scriptProcessor="D:\home\Python310\python.exe|D:\home\Python310\wfastcgi.py" resourceType="Unspecified" requireAccess="Script"/^> >> web.config
+                echo     ^</handlers^> >> web.config
+                echo     ^<appSettings^> >> web.config
+                echo       ^<add key="PYTHONPATH" value="D:\home\site\wwwroot\antenv\Scripts"/^> >> web.config
+                echo       ^<add key="WSGI_HANDLER" value="mylms.wsgi.application"/^> >> web.config
+                echo       ^<add key="DJANGO_SETTINGS_MODULE" value="mylms.settings"/^> >> web.config
+                echo     ^</appSettings^> >> web.config
+                echo   ^</system.webServer^> >> web.config
+                echo ^</configuration^> >> web.config
+
+          - name: Verify deployment
+            run: |
+              echo "Deployment completed. Check Azure portal for details."

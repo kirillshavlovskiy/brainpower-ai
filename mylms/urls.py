@@ -19,10 +19,9 @@ from django.urls import include, path
 from django.views.generic import TemplateView
 
 
-from .views import home_view
-
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('courses/', include('courses.urls')),
+    path('sandbox/', include('sandbox.urls')),
     path('brainpower', TemplateView.as_view(template_name='index.html'), name='home'),
 ]

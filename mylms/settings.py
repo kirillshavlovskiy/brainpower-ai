@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'courses',   # Include your app
     'corsheaders',
     'channels',
+    'sandbox',
 ]
 
 MIDDLEWARE = [

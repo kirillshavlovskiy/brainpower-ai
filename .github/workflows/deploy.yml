@@ -29,13 +29,6 @@ jobs:
         publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
         package: ./deploy.zip
 
-    - name: Run deployment script
-      uses: azure/webapps-deploy@v2
-      with:
-        app-name: 'myLMS-new'
-        publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-        startup-command: '/home/site/wwwroot/deploy.sh'
-
     - name: Verify deployment
       run: |
         echo "Deployment completed. Check Azure portal for details."

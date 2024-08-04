@@ -18,3 +18,6 @@ python manage.py collectstatic --noinput
 
 # Apply migrations (if needed)
 python manage.py migrate
+
+# Start the application
+daphne -b 0.0.0.0 -p 8000 mylms.asgi:application

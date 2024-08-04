@@ -40,24 +40,6 @@ jobs:
         echo "mylms/settings.py (partial):"
         grep -n "ALLOWED_HOSTS\|DEBUG" mylms/settings.py
 
-    - name: Update startup.txt and add web.config
-      run: |
-        echo "gunicorn --bind=0.0.0.0 --timeout 600 mylms.wsgi:application" > startup.txt
-        echo '<?xml version="1.0" encoding="utf-8"?>
-        <configuration>
-          <system.webServer>
-            <handlers>
-              <add name="httpPlatformHandler" path="*" verb="*" modules="httpPlatformHandler" resourceType="Unspecified"/>
-            </handlers>
-            <httpPlatform processPath="python" arguments="%home%\site\wwwroot\startup.txt" requestTimeout="00:04:00" startupTimeLimit="120" startupRetryCount="3" stdoutLogEnabled="true">
-              <environmentVariables>
-                <environmentVariable name="PYTHONPATH" value="%home%\site\wwwroot"/>
-              </environmentVariables>
-            </httpPlatform>
-          </system.webServer>
-        </configuration>' > web.config
-
-
     - name: Create deployment package
       run: |
         zip -r deploy.zip . -x "*.git*" "*.pyc" "__pycache__/*" "node_modules/*" "venv/*"
@@ -72,6 +54,45 @@ jobs:
         slot-name: 'production'
         publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
         package: ./deploy.zip
+
+    - name: Setup Python Environment
+      uses: azure/webapps-deploy@v2
+      with:
+        app-name: 'myLMS-new'
+        publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+        startup-command: |
+          echo "Python Version:"
+          python3 --version
+          echo "Python Location:"
+          which python3
+          echo "Installing pip if not present:"
+          if ! command -v pip3 &> /dev/null; then
+            curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+            python3 get-pip.py --user
+            export PATH=$PATH:$HOME/.local/bin
+          fi
+          echo "Pip Version:"
+          pip3 --version
+          echo "Updating pip:"
+          pip3 install --upgrade pip
+          echo "Installing requirements:"
+          if [ -f requirements.txt ]; then
+            pip3 install -r requirements.txt
+          else
+            echo "No requirements.txt found"
+          fi
+          echo "Installed Packages:"
+          pip3 list
+          echo "Django Version (if installed):"
+          python3 -c "import django; print(django.get_version())" || echo "Django not installed"
+          echo "PATH:"
+          echo $PATH
+          echo "Directory Contents:"
+          ls -la /home/site/wwwroot
+          echo "Startup Command:"
+          cat startup.txt
+          echo "Running Startup Command:"
+          $(cat startup.txt)
 
     - name: Verify deployment
       run: |

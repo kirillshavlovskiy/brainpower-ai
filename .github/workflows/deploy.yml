@@ -15,7 +15,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11'
+        python-version: '3.10'
 
     - name: Analyze directory contents
       run: |
@@ -29,9 +29,23 @@ jobs:
         find . -type d -name "__pycache__" -exec rm -rf {} +
         find . -type f -name "*.pyc" -delete
 
+    - name: Print crucial file contents
+      run: |
+        echo "runtime.txt:"
+        cat runtime.txt
+        echo "requirements.txt:"
+        cat requirements.txt
+        echo "startup.txt:"
+        cat startup.txt
+        echo "mylms/settings.py (partial):"
+        grep -n "ALLOWED_HOSTS\|DEBUG" mylms/settings.py
+
     - name: Create deployment package
       run: |
-        zip -r deploy.zip . -i "*.py" "*.txt" "*.html" "*.css" "*.js" "requirements.txt" "runtime.txt" "startup.txt"
+        zip -r deploy.zip . -x "*.git*" "*.pyc" "__pycache__/*" "node_modules/*" "venv/*"
+
+    - name: Print deployment package contents
+      run: unzip -l deploy.zip
 
     - name: Deploy to Azure Web App
       uses: azure/webapps-deploy@v2
@@ -40,7 +54,6 @@ jobs:
         slot-name: 'production'
         publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
         package: ./deploy.zip
-      timeout-minutes: 30
 
     - name: Verify deployment
       run: |

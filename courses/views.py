@@ -65,6 +65,7 @@ def user_login(request):
     else:
         return JsonResponse({'message': 'Invalid credentials'}, status=401)
 
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def signup(request):
@@ -81,6 +82,7 @@ def signup(request):
         return JsonResponse({'message': 'User created successfully', 'id': user.id}, status=201)
     except Exception as e:
         return JsonResponse({'message': str(e)}, status=400)
+
 
 class ThreadViewSet(viewsets.ModelViewSet):
     serializer_class = ThreadSerializer
@@ -112,6 +114,7 @@ class ThreadViewSet(viewsets.ModelViewSet):
         )
         serializer = self.get_serializer(thread)
         return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
 
 class ExecuteView(APIView):
     @method_decorator(csrf_exempt)
@@ -148,7 +151,6 @@ class ExecuteView(APIView):
             logger.error(f"Error during code execution: {str(e)}", exc_info=True)
             return Response({'error': 'An error occurred during code execution'},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 
 
 async def start_group_chat(request):

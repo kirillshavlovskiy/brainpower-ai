@@ -1,48 +1,36 @@
 import asyncio
-import re
-import uuid
 from pprint import pprint
 
-from asgiref.sync import async_to_sync
 from langchain_community.chat_models import ChatOpenAI
 
 from langchain_community.document_loaders.github import GithubFileLoader
 
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain_community.document_transformers import LongContextReorder, EmbeddingsRedundantFilter
-# from langchain_pinecone import PineconeVectorStore
-# from langchain.agents import AgentExecutor, create_react_agent, create_self_ask_with_search_agent, \
-#     create_tool_calling_agent
-from typing import Annotated, Literal, Sequence, TypedDict, Callable, Dict, Any, List, Annotated, Sequence, Union
+from langchain_core.messages import AIMessage, SystemMessage
+
+from langchain_pinecone import PineconeVectorStore
+
+from typing import Literal, Dict, Any
 
 from langchain_community.document_loaders.parsers import LanguageParser
 
 from langchain_core.messages import HumanMessage
-from langchain_core.output_parsers import JsonOutputParser, CommaSeparatedListOutputParser, StrOutputParser
+from langchain_core.output_parsers import JsonOutputParser, StrOutputParser
 
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, PromptTemplate
-from langchain_community import chat_models
-from langchain_text_splitters import Language, CharacterTextSplitter
+
+from langchain_text_splitters import Language
 from langchain_groq import ChatGroq
-from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings.openai import OpenAIEmbeddings
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 import os
-import pickle
 from langchain_community.chat_message_histories.upstash_redis import UpstashRedisChatMessageHistory
-from langchain_core.tools import tool, create_retriever_tool, BaseTool, Tool
+from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 from langchain_community.document_loaders.generic import GenericLoader
-
-from typing_extensions import TypedDict
-from langchain.retrievers import EnsembleRetriever
-from langchain_community.vectorstores import Chroma
-from langchain_community.retrievers import BM25Retriever
 from langchain_community.vectorstores import FAISS
-from langchain.vectorstores import Qdrant
 
 
 llamaparse_api_key = os.getenv("LLAMA_CLOUD_API_KEY")
@@ -298,9 +286,9 @@ prompt = ChatPromptTemplate.from_messages(
             "Memory Usage Guidelines:\n"
             "0. ***IMPORTANT*** !!!Before giving any answer or deciding if/how to use tools, put user question in the ***context***"
             "of most recent 'chat history' messages!!!"
-            "most recent selected 'chat_history' which will help you to adress any question related to the recent conversation:\n{chat_history}\n\n"
+            "most recent selected 'chat_history' which will help you to address any question related to the recent conversation:\n{chat_history}\n\n"
 
-            "1. ALWAYS after checking user history decide on memory tools usage (save_core_memory, save_recall_memory) if you need more generic information about previous chat history"
+            "1. ALWAYS after checking user history decide on memory tools usage (store_core_memory, store_recall_memory) if you need more generic information about previous chat history"
             " to build a comprehensive understanding of the user.\n"
             "2. Make informed suppositions and extrapolations based on stored"
             " memories.\n"
@@ -337,7 +325,7 @@ prompt = ChatPromptTemplate.from_messages(
             " do call tools, all text preceding the tool call is an internal"
             " message. Respond AFTER calling the tool, once you have"
             " confirmation that the tool completed successfully.\n\n"
-            " before ending conversation always check if you need to save_recall_memory or store_core_memory"
+            " before ending conversation always check if you need to store_recall_memory or store_core_memory"
             "Current system time: {current_time}\n\n",
         ),
         ("placeholder", "{messages}"),
@@ -360,7 +348,6 @@ question_rewriter = re_write_prompt | llm | StrOutputParser()
 
 from langchain_core.tools import tool
 from langchain_community.tools.tavily_search import TavilySearchResults
-from langchain.agents import create_openai_functions_agent
 import tiktoken
 import requests
 import json
@@ -373,7 +360,7 @@ from langchain_core.runnables.config import (
     ensure_config,
     get_executor_for_config,
 )
-from langchain_core.messages.utils import get_buffer_string, AnyMessage
+from langchain_core.messages.utils import get_buffer_string
 from . import _utils as utils
 from . import _constants as constants
 from . import _settings as settings
@@ -381,7 +368,7 @@ from . import _settings as settings
 from ._schemas import GraphState, GraphConfig
 from typing import Optional, Tuple
 from langgraph.prebuilt import ToolNode
-
+from langchain_core.tools import Tool, StructuredTool
 logger = logging.getLogger("memory")
 
 _EMPTY_VEC = [0.0] * 768
@@ -391,7 +378,10 @@ search_tool = TavilySearchResults(max_results=1)
 tools = [search_tool]
 
 
-@tool
+class InputSchema(BaseModel):
+    query: str
+
+
 def perplexity_search(query: str) -> str:
     """Retrieve perplexity response on a query.
 
@@ -425,8 +415,7 @@ def perplexity_search(query: str) -> str:
     return answer
 
 
-@tool
-def langchain_rag_retriever(query: str, topics) -> str:
+def langchain_rag_retriever(query: str) -> str:
     """Retrieve relevant documents using rag-retriever funciton to address query on modern AI frameworks solutions and interfaces.
        Args:
            query (str): The query to be processed by perplexity.
@@ -434,7 +423,7 @@ def langchain_rag_retriever(query: str, topics) -> str:
        Returns:
            str: The Agent response.
        """
-    # global topics
+    global topics
 
     documents = []
     print(topics)
@@ -505,8 +494,6 @@ def langchain_rag_retriever(query: str, topics) -> str:
         return 'reply directly as there is no specific document which could be used to answer this question'
 
 
-
-@tool
 def self_retriever_host_or_ai(query: str) -> list:
     """Retrieve self-retriever response on a query. Suitable to answer user question on host processing logic AI
     framework or api implementation logic
@@ -517,7 +504,7 @@ def self_retriever_host_or_ai(query: str) -> list:
                 str: The Agent response.
             """
     # Create Retriever Tool
-    loader_repo = GenericLoader.from_filesystem(
+    loader_server_app = GenericLoader.from_filesystem(
         "./courses/query_process.py",
         glob="**/*",
         suffixes=[".py"],
@@ -526,22 +513,22 @@ def self_retriever_host_or_ai(query: str) -> list:
         parser=LanguageParser(language=Language.PYTHON, parser_threshold=500),
     )
 
-    docs = loader_repo.load()
+    docs = loader_server_app.load()
+    print(docs)
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=200,
         chunk_overlap=20
     )
     docsplits = splitter.split_documents(docs)
-
     embedding = OpenAIEmbeddings()
-    vectorStore = FAISS.from_documents(docsplits, embedding=embedding)
-    retriever = vectorStore.as_retriever(search_kwargs={"k": 2})
+    index_name = "python-code-search"
+    vectorstore = PineconeVectorStore.from_documents(docsplits, embedding, index_name=index_name)
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 2})
     generation = retriever.invoke(query)
     print(generation)
-    return generation
+    return docs
 
 
-@tool
 def self_retriever_frontend(query: str) -> list:
     """Retrieve self-retriever response on a query. Suitable to answer user question on frontend/web or React/JS
     implementation logic of this react based platform
@@ -562,64 +549,47 @@ def self_retriever_frontend(query: str) -> list:
         file_filter=file_filter
     )
 
-    documents = loader_client_app.load()
-    for doc in documents:
-        print(f"Path: {doc.metadata['path']}")
-        print(f"Content: {doc.page_content[:200]}...")  # Print the first 200 characters
-        print("-" * 50)
-
-    python_splitter = RecursiveCharacterTextSplitter.from_language(language=Language.PYTHON,
-                                                                   chunk_size=1000,
-                                                                   chunk_overlap=200)
-    code_splits = None
-    if documents:
-        code_splits = python_splitter.split_documents(documents)
-
-    # Index
-    # embeddings = FireworksEmbeddings(model="nomic-ai/nomic-embed-text-v1.5")
-    # Initialize embeddings
-    embeddings = OpenAIEmbeddings(model="text-embedding-ada-002")
-
-    index_name = "js-code-search"
-    vectorstore = PineconeVectorStore.from_documents(code_splits, embeddings, index_name=index_name)
-
-    docs = vectorstore.max_marginal_relevance_search(
-        query,
-        k=10,
-        fetch_k=2,
-        lambda_mult=0.5  # Adjust this value between 0 and 1
+    docs = loader_client_app.load()
+    print(docs)
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=2000,
+        chunk_overlap=200
     )
-    for doc in docs:
-        print(f"Path: {doc.metadata['path']}")
-        print(f"Content: {doc.page_content[:200]}...")  # Print the first 200 characters
-        print("-" * 50)
-    filtered_docs, agent_search = grade_docs(query, docs)
-    if agent_search == "no":
-        # generation = conversational_rag_chain.invoke({"input": query, "context": filtered_docs})
-        return filtered_docs
+    codesplits = splitter.split_documents(docs)
+    embedding = OpenAIEmbeddings(model="text-embedding-ada-002")
+    index_name = "js-code-search"
+    vectorstore = PineconeVectorStore.from_documents(codesplits, embedding, index_name=index_name)
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+    generation = retriever.invoke(query)
+    return generation
 
 
-perplexity_tool = Tool(
-    name="Perplexity_Search",
+perplexity_tool = StructuredTool.from_function(
+    name="perplexity_tool",
     func=perplexity_search,
-    description="Useful for when you need to find an answer about any subject you don't know."
-)
-ragretriever_tool = Tool(
-    name="RAG_Retriever",
-    func=langchain_rag_retriever,
-    description="Use this tool when searching for information about AI frameworks, inference models and other solutions."
+    description="Useful for when you need to find an answer about any subject you don't know.",
+    args_schema=InputSchema
 )
 
-self_retriever_tool = Tool(
-    name="AI_Self_Retriever",
-    func=self_retriever_host_or_ai,
-    description="Use this tool when searching for information about yourself, your algorithm of processing user queries, approach of using memory and RAG tools."
-                "this tool is mainly adresses queries about host or server logic of processing requests coming from client app"
+
+langchain_retriever_tool = StructuredTool.from_function(
+    name="langchain_retriever_tool",
+    func=langchain_rag_retriever,
+    description="Use this tool when searching for information about AI frameworks, inference models and other solutions.",
+    args_schema=InputSchema
 )
-frontend_retriever_tool = Tool(
-    name="React_Self_Retriever",
+
+self_retriever_tool = StructuredTool.from_function(
+    name="self_retriever_tool",
+    func=self_retriever_host_or_ai,
+    description="Retrieve self-retriever response on a query about host processing logic AI framework or API implementation logic",
+    args_schema=InputSchema
+)
+frontend_retriever_tool = StructuredTool.from_function(
+    name="frontend_retriever_tool",
     func=self_retriever_frontend,
-    description="Use this tool when searching for information about yourself, your algorithm of processing user queries, approach of using memory and RAG tools."
+    description="Use this tool when searching for information about yourself, your algorithm of processing user queries, approach of using memory and RAG tools.",
+    args_schema=InputSchema
 )
 
 # Create Internal Buffer Knowledge Retriever Tool
@@ -650,18 +620,19 @@ splitDocs = splitter.split_documents(docs)
 
 from langchain_anthropic import ChatAnthropic
 
+
 chat_history = []
 
 llm_llama = ChatGroq(temperature=0, groq_api_key=groq_api_key, model_name=model_4)
 llm_claud = ChatAnthropic(
     model="claude-3-5-sonnet-20240620",  # or another available model
-    temperature=0,
-    max_tokens=1024,
+    temperature=0.1,
+    max_tokens=8192,
     timeout=None,
     max_retries=2,
     streaming=True
 )
-tools = [self_retriever_tool, ragretriever_tool, perplexity_tool]
+# tools = [self_retriever_tool, ragretriever_tool, perplexity_tool]
 # base_prompt = hub.pull("langchain-ai/react-agent-template")
 
 # # Create Retriever Tool
@@ -692,121 +663,9 @@ tools = [self_retriever_tool, ragretriever_tool, perplexity_tool]
 # )
 
 
-@tool
-async def save_recall_memory(memory: str) -> str:
-    """Save a memory to the database for later semantic retrieval.
-
-    Args:
-        memory (str): The memory to be saved.
-
-    Returns:
-        str: The saved memory.
-    """
-    config = ensure_config()
-    configurable = utils.ensure_configurable(config)
-    embeddings = utils.get_embeddings()
-    vector = await embeddings.aembed_query(memory)
-    current_time = datetime.now(tz=timezone.utc)
-    path = constants.INSERT_PATH.format(
-        user_id=configurable["user_id"],
-        event_id=str(uuid.uuid4()),
-    )
-    documents = [
-        {
-            "id": path,
-            "values": vector,
-            "metadata": {
-                constants.PAYLOAD_KEY: memory,
-                constants.PATH_KEY: path,
-                constants.TIMESTAMP_KEY: current_time,
-                constants.TYPE_KEY: "recall",
-                "user_id": configurable["user_id"],
-            },
-        }
-    ]
-    utils.get_index().upsert(
-        vectors=documents,
-        namespace=settings.SETTINGS.pinecone_namespace,
-    )
-    return memory
-
-
-@tool
-def search_memory(query: str, top_k: int = 5) -> list[str]:
-    """Search for memories in the database based on semantic similarity.
-
-    Args:
-        query (str): The search query.
-        top_k (int): The number of results to return.
-
-    Returns:
-        list[str]: A list of relevant memories.
-    """
-    config = ensure_config()
-    configurable = utils.ensure_configurable(config)
-    embeddings = utils.get_embeddings()
-    vector = embeddings.embed_query(query)
-    with langsmith.trace("query", inputs={"query": query, "top_k": top_k}) as rt:
-        response = utils.get_index().query(
-            vector=vector,
-            filter={
-                "user_id": {"$eq": configurable["user_id"]},
-                constants.TYPE_KEY: {"$eq": "recall"},
-            },
-            namespace=settings.SETTINGS.pinecone_namespace,
-            include_metadata=True,
-            top_k=top_k,
-        )
-        rt.end(outputs={"response": response})
-    memories = []
-    if matches := response.get("matches"):
-        memories = [m["metadata"][constants.PAYLOAD_KEY] for m in matches]
-    return memories
-
-
-@tool
-def store_core_memory(memory: str, index: Optional[int] = None) -> str:
-    """Store a core memory in the database.
-
-    Args:
-        memory (str): The memory to store.
-        index (Optional[int]): The index at which to store the memory.
-
-    Returns:
-        str: A confirmation message.
-    """
-    config = ensure_config()
-    configurable = utils.ensure_configurable(config)
-    path, memories = fetch_core_memories(configurable["user_id"])
-    if index is not None:
-        if index < 0 or index >= len(memories):
-            return "Error: Index out of bounds."
-        memories[index] = memory
-    else:
-        memories.insert(0, memory)
-    documents = [
-        {
-            "id": path,
-            "values": _EMPTY_VEC,
-            "metadata": {
-                constants.PAYLOAD_KEY: json.dumps({"memories": memories}),
-                constants.PATH_KEY: path,
-                constants.TIMESTAMP_KEY: datetime.now(tz=timezone.utc),
-                constants.TYPE_KEY: "recall",
-                "user_id": configurable["user_id"],
-            },
-        }
-    ]
-    utils.get_index().upsert(
-        vectors=documents,
-        namespace=settings.SETTINGS.pinecone_namespace,
-    )
-    return "Memory stored."
-
-
 # tools = [knowledgeretrievertool, selfretriever_tool, perplexity_tool]
-all_tools = [self_retriever_frontend, self_retriever_host_or_ai, langchain_rag_retriever, perplexity_tool, save_recall_memory, search_memory,
-             store_core_memory]
+
+
 
 # -----------------------------------------Helper Functions--------------------------------------------------
 
@@ -941,7 +800,7 @@ def search_memory(query: str, top_k: int = 5) -> list[str]:
         top_k (int): The number of results to return.
 
     Returns:
-        list[str]: A list of relevant memories.
+        list[str]: A list of relevant recall memories.
     """
     config = ensure_config()
     configurable = utils.ensure_configurable(config)
@@ -963,6 +822,122 @@ def search_memory(query: str, top_k: int = 5) -> list[str]:
     if matches := response.get("matches"):
         memories = [m["metadata"][constants.PAYLOAD_KEY] for m in matches]
     return memories
+
+
+@tool
+def search_core_memory(query: str, top_k: int = 5) -> list[str]:
+    """Search for memories in the database based on semantic similarity.
+
+    Args:
+        query (str): The search query.
+        top_k (int): The number of results to return.
+
+    Returns:
+        list[str]: A list of relevant core memories.
+    """
+    config = ensure_config()
+    configurable = utils.ensure_configurable(config)
+    embeddings = utils.get_embeddings()
+    vector = embeddings.embed_query(query)
+    with langsmith.trace("query", inputs={"query": query, "top_k": top_k}) as rt:
+        response = utils.get_index().query(
+            vector=vector,
+            filter={
+                "user_id": {"$eq": configurable["user_id"]},
+                constants.TYPE_KEY: {"$eq": "core"},
+            },
+            namespace=settings.SETTINGS.pinecone_namespace,
+            include_metadata=True,
+            top_k=top_k,
+        )
+        rt.end(outputs={"response": response})
+    memories = []
+    if matches := response.get("matches"):
+        memories = [m["metadata"][constants.PAYLOAD_KEY] for m in matches]
+    return memories
+
+
+@tool
+async def store_recall_memory(memory: str) -> str:
+    """Save a memory to the database for later semantic retrieval.
+
+    Args:
+        memory (str): The memory to be saved.
+
+    Returns:
+        str: The saved memory.
+    """
+    config = ensure_config()
+    configurable = utils.ensure_configurable(config)
+    embeddings = utils.get_embeddings()
+    vector = await embeddings.aembed_query(memory)
+    current_time = datetime.now(tz=timezone.utc)
+    path = constants.INSERT_PATH.format(
+        user_id=configurable["user_id"],
+        event_id=str(uuid.uuid4()),
+    )
+    documents = [
+        {
+            "id": path,
+            "values": vector,
+            "metadata": {
+                constants.PAYLOAD_KEY: memory,
+                constants.PATH_KEY: path,
+                constants.TIMESTAMP_KEY: current_time,
+                constants.TYPE_KEY: "recall",
+                "user_id": configurable["user_id"],
+            },
+        }
+    ]
+    utils.get_index().upsert(
+        vectors=documents,
+        namespace=settings.SETTINGS.pinecone_namespace,
+    )
+    return memory
+
+
+@tool
+async def store_core_memory(memory: str, index: Optional[int] = None) -> str:
+    """Store a core memory in the database. Whatever is important for as core knowledge about user and dialog with user
+    Args:
+        memory (str): The memory to store.
+        index (Optional[int]): The index at which to store the memory.
+
+    Returns:
+        str: A confirmation message.
+    """
+    config = ensure_config()
+    configurable = utils.ensure_configurable(config)
+    embeddings = utils.get_embeddings()
+    vector = await embeddings.aembed_query(memory)
+    path, memories = fetch_core_memories(configurable["user_id"])
+    if index is not None:
+        if index < 0 or index >= len(memories):
+            return "Error: Index out of bounds."
+        memories[index] = memory
+    else:
+        memories.insert(0, memory)
+    documents = [
+        {
+            "id": path,
+            "values": vector,
+            "metadata": {
+                constants.PAYLOAD_KEY: json.dumps({"memories": memories}),
+                constants.PATH_KEY: path,
+                constants.TIMESTAMP_KEY: datetime.now(tz=timezone.utc),
+                constants.TYPE_KEY: "core",
+                "user_id": configurable["user_id"],
+            },
+        }
+    ]
+    utils.get_index().upsert(
+        vectors=documents,
+        namespace=settings.SETTINGS.pinecone_namespace,
+    )
+    return "Memory stored."
+
+all_tools = [langchain_retriever_tool, self_retriever_tool, frontend_retriever_tool, perplexity_tool, store_recall_memory, search_memory, search_core_memory,
+             store_core_memory]
 
 
 # -----------------------------------------Nodes--------------------------------------------------
@@ -1150,7 +1125,7 @@ def agent_search(state):
 
 
 async def agent(state: GraphState, config: RunnableConfig):
-    global all_tools
+    # global all_tools
     """Process the current state and generate a response using the LLM.
 
     Args:
@@ -1170,7 +1145,6 @@ async def agent(state: GraphState, config: RunnableConfig):
     query = state["messages"][0]
     if isinstance(query, HumanMessage):
         question = query.content
-        print(state["chat_history"])
     bound = prompt | llm.bind_tools(all_tools)
     chat_hist = (
             "<chat_history>\n" + "\n".join(str(state["chat_history"])) + "\n</chat_history>"
@@ -1442,7 +1416,7 @@ async def react_agent_queue(contents: Dict[str, Any]):
         event_type = event.get("event")
         event_data = event.get("data", {})
 
-        logger.debug(f"Event type: {event_type}, Event data: {event_data}")
+        # logger.debug(f"Event type: {event_type}, Event data: {event_data}")
 
         if event_type == "on_chat_model_stream":
             token = event_data["chunk"].content
@@ -1454,8 +1428,8 @@ async def react_agent_queue(contents: Dict[str, Any]):
                 token = str(token)
 
             # Filter out unwanted tokens and whitespace-only tokens
-            if token.strip() and token.strip() not in ["[]", "content=[", "response_metadata={"]:
-                logger.info(f"Streaming token: {token}")
+            # if token.strip() and token.strip() not in ["[]", "content=[", "response_metadata={"]:
+            #     logger.info(f"Streaming token: {token}")
 
             await channel_layer.group_send(
                 'chat',
@@ -1475,17 +1449,20 @@ async def react_agent_queue(contents: Dict[str, Any]):
 
 
 async def query(query_data):
-    logger.info(f"Received query: {query_data}")
+    # logger.info(f"Received query: {query_data}")
+    thread_id = query_data['thread_id']
     try:
         reply = await react_agent_queue(query_data)
+
         print(reply)
     except Exception as e:
-        logger.error(f"Error in query processing: {str(e)}", exc_info=True)
+        # logger.error(f"Error in query processing: {str(e)}", exc_info=True)
         await channel_layer.group_send(
             'chat',
             {
                 'type': 'chat_message',
                 'text': f"An error occurred while processing your request: {str(e)}",
-                'sender': "System"
+                'sender': "System",
+                'thread_id': thread_id
             }
         )

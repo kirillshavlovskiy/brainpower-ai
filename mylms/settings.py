@@ -16,8 +16,14 @@ from dotenv import load_dotenv
 
 load_dotenv()  # This loads the .env file
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
-BASE_DIR = Path(__file__).resolve().parent.parent
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+DEPLOYED_COMPONENTS_ROOT = BASE_DIR / 'deployed_components'
+DEPLOYED_COMPONENTS_URL = '/deployed_components/'
+
+print(f"BASE_DIR: {BASE_DIR}")
+print(f"DEPLOYED_COMPONENTS_ROOT: {DEPLOYED_COMPONENTS_ROOT}")
+print(f"DEPLOYED_COMPONENTS_URL: {DEPLOYED_COMPONENTS_URL}")
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
@@ -141,49 +147,27 @@ STATICFILES_DIRS = [
 ]
 STATIC_ROOT = os.path.join(BASE_DIR, 'collected_static')
 
-# Add these settings for handling deployed components
-DEPLOYED_COMPONENTS_URL = '/deployed/'
-DEPLOYED_COMPONENTS_ROOT = os.path.join(BASE_DIR, 'deployed_components')
-
 # Ensure the deployed_components directory exists
 os.makedirs(DEPLOYED_COMPONENTS_ROOT, exist_ok=True)
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# LOGGING = {
-#     'version': 1,
-#     'disable_existing_loggers': False,
-#     'formatters': {
-#         'verbose': {
-#             'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
-#             'style': '{',
-#         },
-#     },
-#     'handlers': {
-#         'console': {
-#             'class': 'logging.StreamHandler',
-#             'formatter': 'verbose',
-#         },
-#         'file': {
-#             'class': 'logging.FileHandler',
-#             'filename': os.path.join(BASE_DIR, 'django.log'),
-#             'formatter': 'verbose',
-#         },
-#     },
-#     'loggers': {
-#         'django': {
-#             'handlers': ['console', 'file'],
-#             'level': 'INFO',
-#             'propagate': True,
-#         },
-#         'sandbox': {
-#             'handlers': ['console', 'file'],
-#             'level': 'DEBUG',
-#             'propagate': True,
-#         },
-#     },
-#     'root': {
-#         'handlers': ['console', 'file'],
-#         'level': 'INFO',
-#     },
-# }
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+        },
+        'your_app_name': {  # Replace with your app name
+            'handlers': ['console'],
+            'level': 'DEBUG',
+        },
+    },
+}

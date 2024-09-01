@@ -1,43 +1,159 @@
-import re
 import subprocess
-import tempfile
 import json
-import os
 import traceback
-import time
-from django.conf import settings
-from django.http import JsonResponse
+import docker
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 import logging
 
 logger = logging.getLogger(__name__)
 
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_http_methods
+import json
+
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def execute_code(request):
-    logger.info("execute_code function called")
+def test_docker(request):
     try:
         data = json.loads(request.body)
-        code = data.get('code', '')
-        language = data.get('language', '').lower()
+        command = data.get('command', 'echo "Default Docker test"')
 
-        logger.info(f"Received {language} code: {code[:100]}...")  # Log first 100 chars of code
+        client = docker.from_env()
+        container = client.containers.run(
+            'react-renderer',
+            volumes={tmpdir: {'bind': '/app', 'mode': 'rw'}},
+            detach=True
+        )
 
-        # Simply return the code and language without any processing
-        return JsonResponse({
-            'code': code,
-            'language': language
-        })
+        output = container.decode('utf-8').strip()
+        return JsonResponse({'output': output})
 
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON Decode Error: {str(e)}")
-        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+    except docker.errors.DockerException as e:
+        return JsonResponse({'error': f'Docker error: {str(e)}'}, status=500)
     except Exception as e:
-        logger.error(f"Unexpected Error: {str(e)}", exc_info=True)
-        return JsonResponse({'error': f'An unexpected error occurred: {str(e)}'}, status=500)
+        return JsonResponse({'error': f'Unexpected error: {str(e)}'}, status=500)
 
+import logging
+
+
+logger = logging.getLogger(__name__)
+
+import subprocess
+import os
+from django.http import JsonResponse
+from rest_framework.decorators import api_view
+import requests
+
+logger = logging.getLogger(__name__)
+
+@api_view(['POST'])
+def execute_code(request):
+    logger.info("Received POST request to execute_code")
+    code = request.data.get('code')
+    language = request.data.get('language')
+
+    if language != 'react':
+        logger.error("Unsupported language")
+        return JsonResponse({'error': 'Unsupported language'}, status=400)
+
+    react_renderer_path = '/Users/kirillshavlovskiy/mylms/react_renderer'
+    logger.info(f"Using react_renderer_path: {react_renderer_path}")
+
+    try:
+        os.makedirs(os.path.join(react_renderer_path, 'src'), exist_ok=True)
+        logger.info("Directory structure ensured")
+    except Exception as e:
+        logger.error(f"Error ensuring directory structure: {e}")
+        return JsonResponse({'error': f"Error ensuring directory structure: {e}"}, status=500)
+
+    try:
+        with open(os.path.join(react_renderer_path, 'src', 'component.js'), 'w') as f:
+            f.write(code)
+        logger.info("Code written to component.js")
+    except Exception as e:
+        logger.error(f"Error writing component.js: {e}")
+        return JsonResponse({'error': f"Error writing component.js: {e}"}, status=500)
+
+    # Stop and remove any existing containers
+    try:
+        subprocess.run(['docker', 'ps', '-q', '--filter', 'name=react_renderer'], capture_output=True, text=True)
+        container_id = subprocess.run(['docker', 'ps', '-q', '--filter', 'name=react_renderer'], capture_output=True, text=True).stdout.strip()
+        if container_id:
+            subprocess.run(['docker', 'stop', container_id], check=True)
+            subprocess.run(['docker', 'rm', container_id], check=True)
+            logger.info(f"Stopped and removed existing container: {container_id}")
+    except Exception as e:
+        logger.error(f"Error stopping/removing existing container: {e}")
+
+    try:
+        build_result = subprocess.run(
+            ['docker', 'build', '-t', 'react_renderer', react_renderer_path],
+            capture_output=True,
+            text=True
+        )
+        logger.info(f"Docker build result: {build_result.stdout}")
+        if build_result.returncode != 0:
+            raise Exception(build_result.stderr)
+        logger.info("Docker image built successfully")
+    except Exception as e:
+        logger.error(f"Error building Docker image: {e}")
+        return JsonResponse({'error': f"Error building Docker image: {e}"}, status=500)
+
+    try:
+        run_result = subprocess.run(
+            ['docker', 'run', '--rm', '-d', '--name', 'react_renderer', '-p', '3001:3001', 'react_renderer'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        container_id = run_result.stdout.strip()
+        logger.info(f"Docker container is running with ID: {container_id}")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Error running Docker container: {e.stderr}")
+        return JsonResponse({'error': f"Error running Docker container: {e.stderr}"}, status=500)
+    except Exception as e:
+        logger.error(f"Unexpected error running Docker container: {str(e)}")
+        return JsonResponse({'error': f"Unexpected error running Docker container: {str(e)}"}, status=500)
+
+    return JsonResponse({
+        'message': 'Docker container is running. Access it at http://localhost:3001',
+        'container_id': container_id
+    })
+
+
+@api_view(['GET'])
+def check_container_ready(request):
+    container_id = request.GET.get('container_id')
+    if not container_id:
+        return JsonResponse({'error': 'No container ID provided'}, status=400)
+
+    try:
+        # Check if the container is running
+        result = subprocess.run(
+            ['docker', 'inspect', '--format={{.State.Running}}', container_id],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        is_running = result.stdout.strip() == 'true'
+
+        if not is_running:
+            return JsonResponse({'is_ready': False, 'reason': 'Container not running'})
+
+        # Check if the application is responding
+        try:
+            response = requests.get('http://localhost:3001', timeout=1)
+            is_responding = response.status_code == 200
+        except requests.RequestException:
+            is_responding = False
+
+        return JsonResponse({'is_ready': is_running and is_responding})
+    except subprocess.CalledProcessError:
+        return JsonResponse({'error': 'Container not found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
 
 def process_javascript_code(code):
     logger.info("Starting JavaScript code execution")
@@ -73,7 +189,6 @@ def process_javascript_code(code):
     finally:
         os.unlink(temp_file_path)
 
-
 def process_python_code(code):
     logger.info("Starting Python code execution")
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as temp_file:
@@ -107,54 +222,6 @@ def process_python_code(code):
         return JsonResponse({'error': f'Execution error: {str(e)}'}, status=500)
     finally:
         os.unlink(temp_file_path)
-
-
-def process_react_code(code):
-    logger.info("React code processing started")
-
-    try:
-        # Simple processing for React JSX
-        def process_jsx(jsx_code):
-            # Convert JSX to React.createElement calls
-            def replace_jsx(match):
-                tag = match.group(1)
-                attrs = match.group(2)
-                children = match.group(3)
-
-                attr_str = ''
-                if attrs:
-                    attr_pairs = re.findall(r'(\w+)=\{([^}]+)\}', attrs)
-                    attr_str = ', {' + ', '.join(f"'{k}': {v}" for k, v in attr_pairs) + '}'
-
-                if children:
-                    return f"React.createElement('{tag}'{attr_str}, {children})"
-                else:
-                    return f"React.createElement('{tag}'{attr_str})"
-
-            processed = re.sub(r'<(\w+)([^>]*)>([^<]*)<\/\1>', replace_jsx, jsx_code)
-            return processed
-
-        # Remove import statements
-        code_without_imports = re.sub(r'import.*?;', '', code)
-
-        # Process JSX
-        processed_code = process_jsx(code_without_imports)
-
-        logger.info("Processing completed successfully")
-        logger.info(f"Processed code preview: {processed_code[:100]}...")  # Log first 100 chars
-
-        return JsonResponse({
-            'processedCode': processed_code,
-            'language': 'javascript'
-        })
-
-    except Exception as e:
-        logger.error(f"Processing Error: {str(e)}")
-        return JsonResponse({'error': f'Processing error: {str(e)}'}, status=500)
-
-
-logger = logging.getLogger(__name__)
-
 
 @csrf_exempt
 @require_http_methods(["POST"])

@@ -1,227 +1,287 @@
-import subprocess
-import json
+import time
 import traceback
-import docker
-from django.views.decorators.csrf import csrf_exempt
+import json
+import requests
 from django.views.decorators.http import require_http_methods
+import os
+from django.conf import settings
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from rest_framework.decorators import api_view
+import docker
 import logging
 
 logger = logging.getLogger(__name__)
+client = docker.from_env()
 
-from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_http_methods
-import json
+from mylms import settings
+from docker.errors import NotFound, APIError
 
 
 @csrf_exempt
-@require_http_methods(["POST"])
-def test_docker(request):
-    try:
-        data = json.loads(request.body)
-        command = data.get('command', 'echo "Default Docker test"')
-
-        client = docker.from_env()
-        container = client.containers.run(
-            'react-renderer',
-            volumes={tmpdir: {'bind': '/app', 'mode': 'rw'}},
-            detach=True
-        )
-
-        output = container.decode('utf-8').strip()
-        return JsonResponse({'output': output})
-
-    except docker.errors.DockerException as e:
-        return JsonResponse({'error': f'Docker error: {str(e)}'}, status=500)
-    except Exception as e:
-        return JsonResponse({'error': f'Unexpected error: {str(e)}'}, status=500)
-
-import logging
-
-
-logger = logging.getLogger(__name__)
-
-import subprocess
-import os
-from django.http import JsonResponse
-from rest_framework.decorators import api_view
-import requests
-
-logger = logging.getLogger(__name__)
-
 @api_view(['POST'])
-def execute_code(request):
-    logger.info("Received POST request to execute_code")
+def check_container(request):
+    user_id = request.data.get('user_id', '0')
+    file_name = request.data.get('file_name', 'rendered_component')
+
+    if not file_name:
+        return JsonResponse({'error': 'Missing file_name'}, status=400)
+
+    container_name = f'react_renderer_{user_id}_{file_name}'
+
+    try:
+        container = client.containers.get(container_name)
+        if container.status == 'running':
+            container.reload()
+            port_mapping = container.ports.get('3001/tcp')
+            if port_mapping:
+                host_port = port_mapping[0]['HostPort']
+                dynamic_url = f"http://localhost:{host_port}/{user_id}/{file_name}"
+                return JsonResponse({
+                    'status': 'running',
+                    'container_id': container.id,
+                    'url': dynamic_url,
+                })
+        return JsonResponse({'status': 'stopped'})
+    except docker.errors.NotFound:
+        return JsonResponse({'status': 'not_found'})
+    except Exception as e:
+        logger.error(f"Error checking container status: {str(e)}", exc_info=True)
+        return JsonResponse({'error': str(e)}, status=500)
+
+@csrf_exempt
+@api_view(['POST'])
+def check_or_create_container(request):
+    logger.info(f"Received request data: {request.data}")
     code = request.data.get('code')
     language = request.data.get('language')
+    user_id = request.data.get('user_id', '0')
+    file_name = request.data.get('file_name', 'component.js')
+
+    if not all([code, language, file_name]):
+        logger.warning(f"Missing required fields. code: {bool(code)}, language: {bool(language)}, file_name: {bool(file_name)}")
+        return JsonResponse({'error': 'Missing required fields'}, status=400)
+
 
     if language != 'react':
-        logger.error("Unsupported language")
         return JsonResponse({'error': 'Unsupported language'}, status=400)
 
     react_renderer_path = '/Users/kirillshavlovskiy/mylms/react_renderer'
-    logger.info(f"Using react_renderer_path: {react_renderer_path}")
-
-    try:
-        os.makedirs(os.path.join(react_renderer_path, 'src'), exist_ok=True)
-        logger.info("Directory structure ensured")
-    except Exception as e:
-        logger.error(f"Error ensuring directory structure: {e}")
-        return JsonResponse({'error': f"Error ensuring directory structure: {e}"}, status=500)
+    container_name = f'react_renderer_{user_id}_{file_name}'
 
     try:
         with open(os.path.join(react_renderer_path, 'src', 'component.js'), 'w') as f:
             f.write(code)
         logger.info("Code written to component.js")
-    except Exception as e:
-        logger.error(f"Error writing component.js: {e}")
-        return JsonResponse({'error': f"Error writing component.js: {e}"}, status=500)
 
-    # Stop and remove any existing containers
-    try:
-        subprocess.run(['docker', 'ps', '-q', '--filter', 'name=react_renderer'], capture_output=True, text=True)
-        container_id = subprocess.run(['docker', 'ps', '-q', '--filter', 'name=react_renderer'], capture_output=True, text=True).stdout.strip()
-        if container_id:
-            subprocess.run(['docker', 'stop', container_id], check=True)
-            subprocess.run(['docker', 'rm', container_id], check=True)
-            logger.info(f"Stopped and removed existing container: {container_id}")
-    except Exception as e:
-        logger.error(f"Error stopping/removing existing container: {e}")
+        try:
+            container = client.containers.get(container_name)
+            if container.status != 'running':
+                container.start()
+            logger.info(f"Container {container_name} is running")
+        except docker.errors.NotFound:
+            logger.info(f"Creating new container: {container_name}")
+            container = client.containers.run(
+                'react_renderer',
+                detach=True,
+                name=container_name,
+                environment={
+                    'USER_ID': user_id,
+                    'REACT_APP_USER_ID': user_id,
+                    'FILE_NAME': file_name,
+                },
+                volumes={
+                    react_renderer_path: {'bind': '/app', 'mode': 'rw'}
+                },
+                ports={'3001/tcp': None}
+            )
 
+        # Wait for port mapping to be available
+        max_retries = 10
+        for _ in range(max_retries):
+            container.reload()
+            port_mapping = container.ports.get('3001/tcp')
+            if port_mapping:
+                host_port = port_mapping[0]['HostPort']
+                break
+            time.sleep(1)
+        else:
+            raise Exception("Timeout waiting for port mapping")
+
+        # Construct the dynamic URL
+        dynamic_url = f"http://localhost:{host_port}/{user_id}/{file_name}"
+        logger.info(f"Dynamic URL: {dynamic_url}")
+
+        return JsonResponse({
+            'status': 'success',
+            'message': 'Container is running',
+            'container_id': container.id,
+            'url': dynamic_url,
+        })
+
+    except Exception as e:
+        logger.error(f"Error in check_or_create_container: {str(e)}", exc_info=True)
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+
+def update_code_in_container(container, code, file_name):
     try:
-        build_result = subprocess.run(
-            ['docker', 'build', '-t', 'react_renderer', react_renderer_path],
-            capture_output=True,
-            text=True
+        exec_result = container.exec_run(
+            f"sh -c 'echo \"{code}\" > /app/src/{file_name}'"
         )
-        logger.info(f"Docker build result: {build_result.stdout}")
-        if build_result.returncode != 0:
-            raise Exception(build_result.stderr)
-        logger.info("Docker image built successfully")
+        if exec_result.exit_code != 0:
+            raise Exception(f"Failed to update code: {exec_result.output.decode()}")
+        logger.info(f"Code updated in container: {container.id}")
     except Exception as e:
-        logger.error(f"Error building Docker image: {e}")
-        return JsonResponse({'error': f"Error building Docker image: {e}"}, status=500)
+        logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
+        raise
+
+
+def wait_for_container_ready(container, user_id, file_name):
+    max_retries = 30
+    for _ in range(max_retries):
+        container.reload()
+        port_mapping = container.ports.get('3001/tcp')
+        if port_mapping:
+            host_port = port_mapping[0]['HostPort']
+            dynamic_url = f"http://localhost:{host_port}/{user_id}/{file_name}"
+            try:
+                response = requests.get(dynamic_url, timeout=2)
+                if response.status_code == 200 and 'root' in response.text and 'react' in response.text.lower():
+                    logger.info(f"Container ready: {dynamic_url}")
+                    return dynamic_url
+            except requests.RequestException:
+                pass
+        time.sleep(1)
+    raise Exception("Timeout waiting for container to be ready")
+
+def container_exists(container_id):
+    try:
+        client.containers.get(container_id)
+        return True
+    except docker.errors.NotFound:
+        return False
+
+@csrf_exempt
+@api_view(['POST'])
+def stop_container(request):
+    container_id = request.data.get('container_id')
+    user_id = request.data.get('user_id')
+    file_name = request.data.get('file_name')
+    if not container_exists(container_id):
+        return JsonResponse({'status': 'Container not found, possibly already removed'})
 
     try:
-        run_result = subprocess.run(
-            ['docker', 'run', '--rm', '-d', '--name', 'react_renderer', '-p', '3001:3001', 'react_renderer'],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        container_id = run_result.stdout.strip()
-        logger.info(f"Docker container is running with ID: {container_id}")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Error running Docker container: {e.stderr}")
-        return JsonResponse({'error': f"Error running Docker container: {e.stderr}"}, status=500)
+        container = client.containers.get(container_id)
+        container.stop()
+        container.remove()
+        return JsonResponse({'status': 'Container stopped and removed'})
     except Exception as e:
-        logger.error(f"Unexpected error running Docker container: {str(e)}")
-        return JsonResponse({'error': f"Unexpected error running Docker container: {str(e)}"}, status=500)
-
-    return JsonResponse({
-        'message': 'Docker container is running. Access it at http://localhost:3001',
-        'container_id': container_id
-    })
+        logger.error(f"Error stopping container: {str(e)}", exc_info=True)
+        return JsonResponse({'error': str(e)}, status=500)
 
 
+@csrf_exempt
+@api_view(['POST'])
+def update_code(request):
+    container_id = request.data.get('container_id')
+    code = request.data.get('code')
+    file_name = 'component.js'  # Hardcoded for now, but consider making this dynamic in the future
+    logger.info(f"Received update request for container: {container_id}, file: {file_name}")
+
+    if not container_id or not code:
+        logger.warning("Missing container_id or code in update request")
+        return JsonResponse({'error': 'Missing container_id or code'}, status=400)
+
+    try:
+        # Path to the source directory in your Django project
+        source_dir = os.path.join(settings.BASE_DIR, 'react_renderer', 'src')
+        file_path = os.path.join(source_dir, file_name)
+
+        logger.info(f"Attempting to write to file: {file_path}")
+
+        # Ensure the directory exists
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+        # Write the code to the file
+        with open(file_path, 'w', encoding='utf-8') as file:
+            file.write(code)
+
+        logger.info(f"Successfully wrote to file: {file_path}")
+
+        # Get the container
+        container = client.containers.get(container_id)
+
+        # Touch the file in the container to trigger file change detection
+        exec_result = container.exec_run(["touch", f"/app/src/{file_name}"])
+        if exec_result.exit_code != 0:
+            raise Exception(f"Failed to touch file in container: {exec_result.output.decode()}")
+
+        logger.info(f"Touched file in container: /app/src/{file_name}")
+        return JsonResponse({'status': 'Code updated successfully'})
+
+    except docker.errors.NotFound:
+        logger.error(f"Container not found: {container_id}")
+        return JsonResponse({'error': 'Container not found'}, status=404)
+    except Exception as e:
+        logger.error(f"Error updating code: {str(e)}", exc_info=True)
+        return JsonResponse({'error': str(e)}, status=500)
+
+@csrf_exempt
 @api_view(['GET'])
 def check_container_ready(request):
     container_id = request.GET.get('container_id')
+    user_id = request.GET.get('user_id', 'default')
+    file_name = request.GET.get('file_name')
+    logger.info(
+        f"Checking container readiness for container_id: {container_id}, user_id: {user_id}, file_name: {file_name}")
+
     if not container_id:
+        logger.warning("No container ID provided")
         return JsonResponse({'error': 'No container ID provided'}, status=400)
 
     try:
-        # Check if the container is running
-        result = subprocess.run(
-            ['docker', 'inspect', '--format={{.State.Running}}', container_id],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        is_running = result.stdout.strip() == 'true'
+        container = client.containers.get(container_id)
+        container.reload()
+        container_status = container.status
+        logger.info(f"Container status: {container_status}")
 
-        if not is_running:
-            return JsonResponse({'is_ready': False, 'reason': 'Container not running'})
+        if container_status != 'running':
+            return JsonResponse({'status': 'container_starting'})
 
-        # Check if the application is responding
+        # Get the assigned port
+        port_mapping = container.ports.get('3001/tcp')
+        if not port_mapping:
+            return JsonResponse({'status': 'waiting_for_port'})
+
+        host_port = port_mapping[0]['HostPort']
+        dynamic_url = f"http://localhost:{host_port}/{user_id}/rendered-component"
+
+        # Check if the dev server is responding and the content is available
         try:
-            response = requests.get('http://localhost:3001', timeout=1)
-            is_responding = response.status_code == 200
+            response = requests.get(dynamic_url, timeout=2)
+            if response.status_code == 200:
+                # Check if the response contains expected React content
+                if 'root' in response.text and 'react' in response.text.lower():
+                    return JsonResponse({
+                        'status': 'ready',
+                        'url': dynamic_url
+                    })
+                else:
+                    return JsonResponse({'status': 'content_loading'})
+            else:
+                return JsonResponse({'status': 'server_starting'})
         except requests.RequestException:
-            is_responding = False
+            return JsonResponse({'status': 'server_starting'})
 
-        return JsonResponse({'is_ready': is_running and is_responding})
-    except subprocess.CalledProcessError:
-        return JsonResponse({'error': 'Container not found'}, status=404)
+    except docker.errors.NotFound:
+        logger.error(f"Container with ID {container_id} not found", exc_info=True)
+        return JsonResponse(
+            {'error': 'Container not found', 'details': 'The container may have stopped or been removed'}, status=404)
     except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
-
-def process_javascript_code(code):
-    logger.info("Starting JavaScript code execution")
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False) as temp_file:
-        temp_file.write(code)
-        temp_file_path = temp_file.name
-
-    try:
-        logger.info(f"Running JavaScript code from file: {temp_file_path}")
-        result = subprocess.run(['node', temp_file_path],
-                                capture_output=True,
-                                text=True,
-                                timeout=30)  # 30 seconds timeout
-
-        logger.info(f"JavaScript execution result: {result.returncode}")
-        logger.info(f"JavaScript stdout: {result.stdout}")
-        logger.info(f"JavaScript stderr: {result.stderr}")
-
-        if result.returncode != 0:
-            output = f"Error:\n{result.stderr}"
-        else:
-            output = result.stdout
-
-        logger.info("Returning JavaScript execution result")
-        return JsonResponse({'output': output, 'language': 'javascript'})
-
-    except subprocess.TimeoutExpired:
-        logger.error("JavaScript execution timed out")
-        return JsonResponse({'error': 'Execution timed out'}, status=408)
-    except Exception as e:
-        logger.error(f"JavaScript Execution Error: {str(e)}")
-        return JsonResponse({'error': f'Execution error: {str(e)}'}, status=500)
-    finally:
-        os.unlink(temp_file_path)
-
-def process_python_code(code):
-    logger.info("Starting Python code execution")
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as temp_file:
-        temp_file.write(code)
-        temp_file_path = temp_file.name
-
-    try:
-        logger.info(f"Running Python code from file: {temp_file_path}")
-        result = subprocess.run(['python', temp_file_path],
-                                capture_output=True,
-                                text=True,
-                                timeout=30)  # 30 seconds timeout
-
-        logger.info(f"Python execution result: {result.returncode}")
-        logger.info(f"Python stdout: {result.stdout}")
-        logger.info(f"Python stderr: {result.stderr}")
-
-        if result.returncode != 0:
-            output = f"Error:\n{result.stderr}"
-        else:
-            output = result.stdout
-
-        logger.info("Returning Python execution result")
-        return JsonResponse({'output': output, 'language': 'python'})
-
-    except subprocess.TimeoutExpired:
-        logger.error("Python execution timed out")
-        return JsonResponse({'error': 'Execution timed out'}, status=408)
-    except Exception as e:
-        logger.error(f"Python Execution Error: {str(e)}")
-        return JsonResponse({'error': f'Execution error: {str(e)}'}, status=500)
-    finally:
-        os.unlink(temp_file_path)
+        logger.error(f"Error checking container status: {str(e)}", exc_info=True)
+        return JsonResponse({'error': 'Error checking container status', 'details': str(e)}, status=500)
 
 @csrf_exempt
 @require_http_methods(["POST"])

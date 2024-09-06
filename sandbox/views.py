@@ -319,3 +319,44 @@ def deploy_component(request):
         logger.error(f"Unexpected Error in deploy_component: {str(e)}")
         logger.error(traceback.format_exc())
         return JsonResponse({'error': f'An unexpected error occurred: {str(e)}'}, status=500)
+
+
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+import base64
+import os
+
+def ui_analyzer(url: str, viewport_width: int = 1920, viewport_height: int = 1080) -> dict:
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument(f"--window-size={viewport_width},{viewport_height}")
+
+    try:
+        with webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options) as driver:
+            driver.get(url)
+
+            # Get page title and HTML
+            page_title = driver.title
+            page_html = driver.page_source
+
+            # Take screenshot
+            screenshot_path = "screenshot.png"
+            driver.save_screenshot(screenshot_path)
+
+            # Encode screenshot to base64
+            with open(screenshot_path, "rb") as image_file:
+                encoded_image = base64.b64encode(image_file.read()).decode('utf-8')
+
+            # Clean up the screenshot file
+            os.remove(screenshot_path)
+
+        return {
+            "title": page_title,
+            "html": page_html,
+            "screenshot": encoded_image
+        }
+
+    except Exception as e:
+        return {"error": f"An error occurred: {str(e)}"}

@@ -382,6 +382,59 @@ class InputSchema(BaseModel):
     query: str
 
 
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+import base64
+import os
+
+
+def ui_analyzer(url: str, viewport_width: int = 1920, viewport_height: int = 1080) -> dict:
+    """
+    Analyze UI by taking a screenshot of the given URL and returning the HTML and encoded image.
+
+    Args:
+        url (str): The URL of the webpage to analyze.
+        viewport_width (int): The width of the viewport (default 1920).
+        viewport_height (int): The height of the viewport (default 1080).
+
+    Returns:
+        dict: A dictionary containing the page title, HTML, and base64 encoded screenshot.
+    """
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument(f"--window-size={viewport_width},{viewport_height}")
+
+    try:
+        with webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options) as driver:
+            driver.get(url)
+
+            # Get page title and HTML
+            page_title = driver.title
+            page_html = driver.page_source
+
+            # Take screenshot
+            screenshot_path = "screenshot.png"
+            driver.save_screenshot(screenshot_path)
+
+            # Encode screenshot to base64
+            with open(screenshot_path, "rb") as image_file:
+                encoded_image = base64.b64encode(image_file.read()).decode('utf-8')
+
+            # Clean up the screenshot file
+            os.remove(screenshot_path)
+
+        return {
+            "title": page_title,
+            "html": page_html,
+            "screenshot": encoded_image
+        }
+
+    except Exception as e:
+        return {"error": f"An error occurred: {str(e)}"}
+
+
 def perplexity_search(query: str) -> str:
     """Retrieve perplexity response on a query.
 
@@ -564,6 +617,12 @@ def self_retriever_frontend(query: str) -> list:
     return generation
 
 
+ui_analyzer_tool = StructuredTool.from_function(
+    name="UI_Analyzer",
+    func=ui_analyzer,
+    description="Analyzes the UI of a given URL by taking a screenshot and returning the page title, HTML, and encoded image."
+)
+
 perplexity_tool = StructuredTool.from_function(
     name="perplexity_tool",
     func=perplexity_search,
@@ -628,7 +687,7 @@ llm_claud = ChatAnthropic(
     model="claude-3-5-sonnet-20240620",  # or another available model
     temperature=0.1,
     max_tokens=8192,
-    timeout=None,
+    timeout=300,
     max_retries=2,
     streaming=True
 )
@@ -936,7 +995,7 @@ async def store_core_memory(memory: str, index: Optional[int] = None) -> str:
     )
     return "Memory stored."
 
-all_tools = [langchain_retriever_tool, self_retriever_tool, frontend_retriever_tool, perplexity_tool, store_recall_memory, search_memory, search_core_memory,
+all_tools = [ui_analyzer_tool, langchain_retriever_tool, self_retriever_tool, frontend_retriever_tool, perplexity_tool, store_recall_memory, search_memory, search_core_memory,
              store_core_memory]
 
 

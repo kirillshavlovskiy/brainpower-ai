@@ -19,6 +19,9 @@ RUN yarn config set network-timeout 300000 \
 # Install dependencies
 RUN yarn install
 
+# Add html2canvas
+RUN yarn add html2canvas
+
 # Add node_modules/.bin to PATH
 ENV PATH /app/node_modules/.bin:$PATH
 

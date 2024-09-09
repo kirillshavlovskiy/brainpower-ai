@@ -43,6 +43,7 @@ class GraphState(TypedDict):
     topics: List[str]
     session_ID: str
     chat_history: str
+    image_data: str
     messages: Annotated[List[AnyMessage], add_messages]
     """The messages in the conversation."""
     core_memories: List[str]

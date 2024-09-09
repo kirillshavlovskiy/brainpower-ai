@@ -1,5 +1,6 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { BrowserRouter as Router, Route, Routes, useParams } from 'react-router-dom';
+import { createTheme, ThemeProvider } from '@mui/material/styles';
 
 const DynamicComponent = () => {
   const [Component, setComponent] = useState(null);
@@ -60,10 +61,12 @@ class ErrorBoundary extends React.Component {
     return this.props.children;
   }
 }
+const theme = createTheme();
 
 function App() {
   return (
     <Router>
+    <ThemeProvider theme={theme}>
       <ErrorBoundary>
         <Suspense fallback={<div>Loading...</div>}>
           <Routes>
@@ -72,6 +75,7 @@ function App() {
           </Routes>
         </Suspense>
       </ErrorBoundary>
+      </ThemeProvider>
     </Router>
   );
 }

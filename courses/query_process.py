@@ -16,7 +16,6 @@ from langchain_community.document_loaders.parsers import LanguageParser
 from langchain_core.messages import HumanMessage
 from langchain_core.output_parsers import JsonOutputParser, StrOutputParser
 
-
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, PromptTemplate
 
 from langchain_text_splitters import Language
@@ -31,8 +30,9 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 from langchain_community.document_loaders.generic import GenericLoader
 from langchain_community.vectorstores import FAISS
+from langchain.memory import ConversationBufferMemory
 
-
+memory = ConversationBufferMemory()
 llamaparse_api_key = os.getenv("LLAMA_CLOUD_API_KEY")
 qdrant_url = os.getenv("QDRANT_URL")
 qdrant_api_key = os.getenv("QDRANT_API_KEY")
@@ -56,10 +56,7 @@ local_llm = "llama3"
 
 model = ChatGroq()
 
-
-
 store = {}
-
 
 import re
 
@@ -137,7 +134,6 @@ def sanitize_filename(url):
 fast_llm = ChatOpenAI(model="gpt-3.5-turbo")
 open_ai_llm = ChatOpenAI(model="gpt-4o-mini")
 model = ChatGroq()
-
 
 prompt_topic = ChatPromptTemplate.from_messages([
     (
@@ -273,68 +269,155 @@ self_reflecting_conversational_prompt = ChatPromptTemplate.from_messages([
 ])
 
 # Define the prompt template for the agent
-prompt = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            "You are a helpful assistant with advanced long-term memory"
-            " capabilities. Powered by a stateless LLM, you must rely on"
-            " external memory to store information between conversations."
-            " Utilize the available memory tools to store and retrieve"
-            " important details that will help you better attend to the user's"
-            " needs and understand their context.\n\n"
-            "Memory Usage Guidelines:\n"
-            "0. ***IMPORTANT*** !!!Before giving any answer or deciding if/how to use tools, put user question in the ***context***"
-            "of most recent 'chat history' messages!!!"
-            "most recent selected 'chat_history' which will help you to address any question related to the recent conversation:\n{chat_history}\n\n"
+# asd = ChatPromptTemplate.from_messages([
+#
+#
+#
+#         (
+#             "system",
+#             "You are a helpful assistant with advanced long-term memory"
+#             " capabilities. Powered by a stateless LLM, you must rely on"
+#             " external memory to store information between conversations."
+#             " Utilize the available memory tools to store and retrieve"
+#             " important details that will help you better attend to the user's"
+#             " needs and understand their context.\n\n"
+#             "Memory Usage Guidelines:\n"
+#             "0. ***IMPORTANT*** !!!Before giving any answer or deciding if/how to use tools, put user question in the ***context***"
+#             "of most recent 'chat history' messages!!!"
+#
+#             "1. ALWAYS after checking user history decide on memory tools usage (store_core_memory, store_recall_memory) if you need more generic information about previous chat history"
+#             " to build a comprehensive understanding of the user.\n"
+#             "2. Make informed suppositions and extrapolations based on stored"
+#             " memories.\n"
+#             "3. Regularly reflect on past interactions to identify patterns and"
+#             " preferences.\n"
+#             "4. Update your mental model of the user with each new piece of"
+#             " information.\n"
+#             "5. Cross-reference new information with existing memories for"
+#             " consistency.\n"
+#             "6. Prioritize storing emotional context and personal values"
+#             " alongside facts.\n"
+#             "7. Use memory to anticipate needs and tailor responses to the"
+#             " user's style.\n"
+#             "8. Recognize and acknowledge context of the user's query or"
+#             "conversation perspectives over time using also following code user providing as a context:\n{context}\n\n"
+#             "9. Leverage memories to provide personalized examples and"
+#             " analogies.\n"
+#             "10. Recall past challenges or successes to inform current"
+#             " problem-solving.\n\n"
+#             "## Core Memories\n"
+#             "Core memories are fundamental to understanding the user and are"
+#             " always available:\n{core_memories}\n\n"
+#             "## Recall Memories\n"
+#             "Recall memories are contextually retrieved based on the current"
+#             " conversation:\n{recall_memories}\n\n"
+#             "## Instructions\n"
+#             "Engage with the user naturally, as a trusted colleague or friend."
+#             " There's no need to explicitly mention your memory capabilities."
+#             " Instead, seamlessly incorporate your understanding of the user"
+#             " into your responses. Be attentive to subtle cues and underlying"
+#             " emotions. Adapt your communication style to match the user's"
+#             " preferences and current emotional state. Use tools to persist"
+#             " information you want to retain in the next conversation. If you"
+#             " do call tools, all text preceding the tool call is an internal"
+#             " message. Respond AFTER calling the tool, once you have"
+#             " confirmation that the tool completed successfully.\n\n"
+#             " before ending conversation always check if you need to store_recall_memory or store_core_memory"
+#             "Current system time: {current_time}\n\n",
+#         ),
+#
+#         (
+#             "user",
+#             [
+#                 {
+#                     "type": "image",
+#                     "source": {
+#                         "type": "base64",
+#                         "media_type": "image/png",
+#                         "data": "{image_data}",
+#                     },
+#                 },
+#                 {
+#                     "type": "text",
+#                     "text": "This image supplements previous user message with code UI image context to make responses of the model more accurate and detailed",
+#                 },
+#             ],
+#         ),
+#     MessagesPlaceholder(variable_name="chat_history"),
+#
+#
+#     ]
+# )
 
-            "1. ALWAYS after checking user history decide on memory tools usage (store_core_memory, store_recall_memory) if you need more generic information about previous chat history"
-            " to build a comprehensive understanding of the user.\n"
-            "2. Make informed suppositions and extrapolations based on stored"
-            " memories.\n"
-            "3. Regularly reflect on past interactions to identify patterns and"
-            " preferences.\n"
-            "4. Update your mental model of the user with each new piece of"
-            " information.\n"
-            "5. Cross-reference new information with existing memories for"
-            " consistency.\n"
-            "6. Prioritize storing emotional context and personal values"
-            " alongside facts.\n"
-            "7. Use memory to anticipate needs and tailor responses to the"
-            " user's style.\n"
-            "8. Recognize and acknowledge context of the user's query or"
-            "conversation perspectives over time using also following code user providing as a context:\n{context}\n\n"
-            "9. Leverage memories to provide personalized examples and"
-            " analogies.\n"
-            "10. Recall past challenges or successes to inform current"
-            " problem-solving.\n\n"
-            "## Core Memories\n"
-            "Core memories are fundamental to understanding the user and are"
-            " always available:\n{core_memories}\n\n"
-            "## Recall Memories\n"
-            "Recall memories are contextually retrieved based on the current"
-            " conversation:\n{recall_memories}\n\n"
-            "## Instructions\n"
-            "Engage with the user naturally, as a trusted colleague or friend."
-            " There's no need to explicitly mention your memory capabilities."
-            " Instead, seamlessly incorporate your understanding of the user"
-            " into your responses. Be attentive to subtle cues and underlying"
-            " emotions. Adapt your communication style to match the user's"
-            " preferences and current emotional state. Use tools to persist"
-            " information you want to retain in the next conversation. If you"
-            " do call tools, all text preceding the tool call is an internal"
-            " message. Respond AFTER calling the tool, once you have"
-            " confirmation that the tool completed successfully.\n\n"
-            " before ending conversation always check if you need to store_recall_memory or store_core_memory"
-            "Current system time: {current_time}\n\n",
-        ),
-        ("placeholder", "{messages}"),
-    ]
-)
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import HumanMessage, SystemMessage
+
+prompt_main = ChatPromptTemplate.from_messages([
+    ("system",
+     "You are a helpful assistant with advanced long-term memory"
+     " capabilities. You are working over the user project. Powered by a stateless LLM, you must rely on"
+     " external memory to store information between conversations."
+     " Utilize the available memory tools to store and retrieve"
+     " important details that will help you better attend to the user's"
+     " needs and understand their context.\n\n"
+     "Memory Usage Guidelines:\n"
+     "0. ***IMPORTANT*** !!!Before giving any answer or deciding if/how to use tools, put user question in the ***context***"
+     "of most recent 'chat history' messages!!!"
+     "1. ALWAYS after checking user history provided before decide on memory tools usage (store_core_memory, store_recall_memory) if you need more generic historical information about previous chatting sessions"
+     " to build a comprehensive understanding of the user work.\n"
+     "2. Make informed suppositions and extrapolations based on stored"
+     " memories.\n"
+     "3. Regularly reflect on past interactions to identify patterns and"
+     " preferences.\n"
+     "4. Update your mental model of the user with each new piece of"
+     " information.\n"
+     "5. Cross-reference new information with existing memories for"
+     " consistency.\n"
+     "6. Prioritize storing emotional context and personal values"
+     " alongside facts.\n"
+     "7. Use memory to anticipate needs and tailor responses to the"
+     " user's style.\n"
+     "8. Recognize and acknowledge context of the user's query or"
+     "conversation perspectives over time using also following code user providing as a context:\n{context}\n\n"
+     "9. Leverage memories to provide personalized examples and"
+     " analogies.\n"
+     "10. Recall past challenges or successes to inform current"
+     " problem-solving.\n\n"
+     "## Core Memories\n"
+     "Core memories are fundamental to understanding the user and are"
+     " always available:\n{core_memories}\n\n"
+     "## Recall Memories\n"
+     "Recall memories are contextually retrieved based on the current"
+     " conversation:\n{recall_memories}\n\n"
+     "## Instructions\n"
+     "Engage with the user naturally, as a trusted colleague or friend."
+     " There's no need to explicitly mention your memory capabilities."
+     " Instead, seamlessly incorporate your understanding of the user"
+     " into your responses. Be attentive to subtle cues and underlying"
+     " emotions. Adapt your communication style to match the user's"
+     " preferences and current emotional state. Use tools to persist"
+     " information you want to retain in the next conversation. If you"
+     " do call tools, all text preceding the tool call is an internal"
+     " message. Respond AFTER calling the tool, once you have"
+     " confirmation that the tool completed successfully.\n\n"
+     " before ending conversation always check if you need to store_recall_memory or store_core_memory"
+     "Current system time: {current_time}\n\n"),
+
+    ("user",
+     [
+         {
+             "type": "image_url",
+             "image_url": {"url": "{image_data}"},
+         }
+     ]),
+    ("placeholder", "{messages}"),
+    ("placeholder", "{chat_history}"),
+])
 
 # -----------------------------------------Chain Section--------------------------------------------------
 
-llm = ChatGroq(temperature=0, groq_api_key=groq_api_key, model_name=model_4)
+
+llm = ChatGroq(temperature=0, groq_api_key=groq_api_key, model_name=model_3)
 structured_llm = llm.with_structured_output(method="json_mode")
 retrieval_topic_chain = prompt_topic | structured_llm
 gemma_llm = ChatGroq(temperature=0, groq_api_key=groq_api_key, model_name=model_1)
@@ -369,6 +452,7 @@ from ._schemas import GraphState, GraphConfig
 from typing import Optional, Tuple
 from langgraph.prebuilt import ToolNode
 from langchain_core.tools import Tool, StructuredTool
+
 logger = logging.getLogger("memory")
 
 _EMPTY_VEC = [0.0] * 768
@@ -530,7 +614,7 @@ def langchain_rag_retriever(query: str) -> str:
         docs = vectorstore.max_marginal_relevance_search(
             query,
             k=len(topics),
-            fetch_k=len(topics)*3,
+            fetch_k=len(topics) * 3,
             lambda_mult=0.5  # Adjust this value between 0 and 1
         )
         for doc in docs:
@@ -630,7 +714,6 @@ perplexity_tool = StructuredTool.from_function(
     args_schema=InputSchema
 )
 
-
 langchain_retriever_tool = StructuredTool.from_function(
     name="langchain_retriever_tool",
     func=langchain_rag_retriever,
@@ -679,7 +762,6 @@ splitDocs = splitter.split_documents(docs)
 
 from langchain_anthropic import ChatAnthropic
 
-
 chat_history = []
 
 llm_llama = ChatGroq(temperature=0, groq_api_key=groq_api_key, model_name=model_4)
@@ -687,10 +769,12 @@ llm_claud = ChatAnthropic(
     model="claude-3-5-sonnet-20240620",  # or another available model
     temperature=0.1,
     max_tokens=8192,
-    timeout=300,
+    timeout=None,
     max_retries=2,
     streaming=True
 )
+
+
 # tools = [self_retriever_tool, ragretriever_tool, perplexity_tool]
 # base_prompt = hub.pull("langchain-ai/react-agent-template")
 
@@ -723,7 +807,6 @@ llm_claud = ChatAnthropic(
 
 
 # tools = [knowledgeretrievertool, selfretriever_tool, perplexity_tool]
-
 
 
 # -----------------------------------------Helper Functions--------------------------------------------------
@@ -995,7 +1078,9 @@ async def store_core_memory(memory: str, index: Optional[int] = None) -> str:
     )
     return "Memory stored."
 
-all_tools = [ui_analyzer_tool, langchain_retriever_tool, self_retriever_tool, frontend_retriever_tool, perplexity_tool, store_recall_memory, search_memory, search_core_memory,
+
+all_tools = [langchain_retriever_tool, self_retriever_tool, frontend_retriever_tool, perplexity_tool,
+             store_recall_memory, search_memory, search_core_memory,
              store_core_memory]
 
 
@@ -1204,16 +1289,26 @@ async def agent(state: GraphState, config: RunnableConfig):
     query = state["messages"][0]
     if isinstance(query, HumanMessage):
         question = query.content
-    bound = prompt | llm.bind_tools(all_tools)
-    chat_hist = (
-            "<chat_history>\n" + "\n".join(str(state["chat_history"])) + "\n</chat_history>"
-    )
+    bound = prompt_main | llm
+
+    chat_hist = memory.chat_memory.messages
+
     core_str = (
             "<core_memory>\n" + "\n".join(state["core_memories"]) + "\n</core_memory>"
     )
     recall_str = (
             "<recall_memory>\n" + "\n".join(state["recall_memories"]) + "\n</recall_memory>"
     )
+
+    logger.info(
+        f"\n\n----------------\n\n-----------image_data:\n\n{state['image_data']}\n\n----------------\n\n----------------")
+    logger.info(
+        f"\n\n----------------\n\n-----------image_data:\n\n{chat_hist}\n\n----------------\n\n----------------")
+    logger.info(
+        f"\n\n----------------\n\n-----------image_data:\n\n{core_str}\n\n----------------\n\n----------------")
+    logger.info(
+        f"\n\n----------------\n\n-----------image_data:\n\n{recall_str}\n\n----------------\n\n----------------")
+
     prediction = await bound.ainvoke(
         {
             "messages": state['messages'],
@@ -1221,6 +1316,7 @@ async def agent(state: GraphState, config: RunnableConfig):
             "chat_history": chat_hist,
             "core_memories": core_str,
             "recall_memories": recall_str,
+            "image_data": state['image_data'],
             "current_time": datetime.now(tz=timezone.utc).isoformat(),
         }
     )
@@ -1284,6 +1380,7 @@ def route_tools(state: GraphState) -> Literal["tools", "__end__"]:
     if msg.tool_calls:
         return "tools"
     return END
+
 
 # def route_question(state):
 #     """
@@ -1434,16 +1531,11 @@ workflow.add_edge("tools", "agent")
 message_queue = asyncio.Queue()
 import pprint
 
-
 # -------------------------------------CHAT BOT------------------------------------------
 
 
-from langchain.callbacks.base import BaseCallbackHandler
 from channels.layers import get_channel_layer
-from asgiref.sync import async_to_sync
 channel_layer = get_channel_layer()
-from channels.exceptions import ChannelFull
-
 
 async def react_agent_queue(contents: Dict[str, Any]):
     global topics
@@ -1457,6 +1549,7 @@ async def react_agent_queue(contents: Dict[str, Any]):
             input={
                 "messages": contents['messages'],
                 "context": contents['context'],
+                "image_data": contents['image_data'],
                 "user_id": user_id,
                 "session_ID": contents['session_id'],
                 "thread_ID": thread_id,
@@ -1475,8 +1568,6 @@ async def react_agent_queue(contents: Dict[str, Any]):
         event_type = event.get("event")
         event_data = event.get("data", {})
 
-        # logger.debug(f"Event type: {event_type}, Event data: {event_data}")
-
         if event_type == "on_chat_model_stream":
             token = event_data["chunk"].content
 
@@ -1487,17 +1578,19 @@ async def react_agent_queue(contents: Dict[str, Any]):
                 token = str(token)
 
             # Filter out unwanted tokens and whitespace-only tokens
-            # if token.strip() and token.strip() not in ["[]", "content=[", "response_metadata={"]:
-            #     logger.info(f"Streaming token: {token}")
+            if token.strip() and token.strip() not in ["[]", "content=[", "response_metadata={"]:
+                logger.info(f"Streaming token: {token}")
 
+            # Send the token directly to the WebSocket
             await channel_layer.group_send(
                 'chat',
                 {
-                    'type': 'chat_message',
-                    'text': token,
-                    'sender': "Coding Agent",
-                    'thread_id': thread_id,
-
+                    'type': 'send_message',
+                    'message': {
+                        'text': token,
+                        'sender': "Coding Agent",
+                        'threadId': thread_id,
+                    }
                 }
             )
 
@@ -1506,22 +1599,20 @@ async def react_agent_queue(contents: Dict[str, Any]):
     logger.info(f"Streaming process completed. Total reply length: {len(reply)}")
     return reply
 
-
 async def query(query_data):
-    # logger.info(f"Received query: {query_data}")
     thread_id = query_data['thread_id']
     try:
-        reply = await react_agent_queue(query_data)
-
-        print(reply)
+        await react_agent_queue(query_data)
     except Exception as e:
-        # logger.error(f"Error in query processing: {str(e)}", exc_info=True)
+        logger.error(f"Error in query processing: {str(e)}", exc_info=True)
         await channel_layer.group_send(
             'chat',
             {
-                'type': 'chat_message',
-                'text': f"An error occurred while processing your request: {str(e)}",
-                'sender': "System",
-                'thread_id': thread_id
+                'type': 'send_message',
+                'message': {
+                    'text': f"An error occurred while processing your request: {str(e)}",
+                    'sender': "System",
+                    'threadId': thread_id,
+                }
             }
         )

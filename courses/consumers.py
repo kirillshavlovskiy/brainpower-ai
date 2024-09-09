@@ -16,6 +16,7 @@ from threading import Thread
 import time
 from asyncio import Queue
 
+
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
@@ -23,84 +24,32 @@ User = get_user_model()
 class AsyncChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         self.room_group_name = 'chat'
-        self.session_id = str(uuid.uuid4())
-
         await self.channel_layer.group_add(self.room_group_name, self.channel_name)
         await self.accept()
         logger.info(f"WebSocket connection established: {self.channel_name}")
-
-        # Initialize the message queue
-        self.message_queue = Queue()
-
-        # Start the send loop
-        asyncio.create_task(self.send_loop())
 
     async def disconnect(self, close_code):
         await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
         logger.info(f"WebSocket disconnected: {self.channel_name}, code: {close_code}")
 
-        # Signal the send loop to stop
-        await self.message_queue.put(None)
-
     async def receive(self, text_data):
-        # logger.info(f"Received message: {text_data}")
         text_data_json = json.loads(text_data)
-        content = text_data_json['message']
-
         input_data = {
-            "messages": [{"role": "user", "content": content}],
-            "context": text_data_json['context'],
-            "session_id": self.session_id,
+            "messages": [{"role": "user", "content": text_data_json['message']}],
+            "context": text_data_json['code'],
+            "session_id": self.scope['session'].session_key,
             "user_id": text_data_json['userId'],
-            'thread_id': text_data_json.get('threadId', 'default123')
+            'thread_id': text_data_json.get('threadId', 'default123'),
+            "image_data": text_data_json.get('image', None)
         }
+        await query(input_data)
 
-        # logger.info(f"Calling query with input: {input_data}")
-        asyncio.create_task(self.process_query(input_data))
+    async def send_message(self, event):
+        message = event['message']
+        await self.send(text_data=json.dumps({
+            'message': message
+        }))
 
-    async def process_query(self, input_data):
-        try:
-            await query(input_data)
-        except Exception as e:
-            logger.error(f"Error processing query: {str(e)}", exc_info=True)
-            await self.message_queue.put({
-                'content': f"An error occurred while processing your request: {str(e)}",
-                'sender': "System"
-            })
-
-    async def chat_message(self, event):
-        # logger.debug(f"Received chat_message event: {event}")
-        print(f"Received chat_message event: {event}")
-        await self.message_queue.put({
-            'content': event['text'],
-            'sender': event['sender'],
-            'thread_id': event['thread_id'],
-        })
-
-    async def send_loop(self):
-        # logger.info("Started send_loop")
-        while True:
-            # Block until a message is available
-            # logger.info(f"Queue size before getting a message: {self.message_queue.qsize()}")
-            message = await self.message_queue.get()
-            # logger.info(f"Queue size after getting a message: {self.message_queue.qsize()}")
-
-            if message is None:
-                logger.info("Received stop signal, ending send_loop")
-                break
-
-            # print("message from the queue", message)
-            try:
-                await self.send(text_data=json.dumps({
-                    'message': {
-                        'text': message['content'],
-                        'sender': message['sender'],
-                        'threadId': message['thread_id'],
-                    }
-                }))
-                # logger.debug(f"Sent message to client: {message['content']}")
-            except Exception as e:
-                logger.error(f"Error sending message to WebSocket: {e}")
 
 
 class FileStructureConsumer(AsyncWebsocketConsumer):

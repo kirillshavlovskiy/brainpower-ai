@@ -49,6 +49,7 @@ def check_container(request):
         logger.error(f"Error checking container status: {str(e)}", exc_info=True)
         return JsonResponse({'error': str(e)}, status=500)
 
+
 @csrf_exempt
 @api_view(['POST'])
 def check_or_create_container(request):
@@ -59,9 +60,9 @@ def check_or_create_container(request):
     file_name = request.data.get('file_name', 'component.js')
 
     if not all([code, language, file_name]):
-        logger.warning(f"Missing required fields. code: {bool(code)}, language: {bool(language)}, file_name: {bool(file_name)}")
+        logger.warning(
+            f"Missing required fields. code: {bool(code)}, language: {bool(language)}, file_name: {bool(file_name)}")
         return JsonResponse({'error': 'Missing required fields'}, status=400)
-
 
     if language != 'react':
         return JsonResponse({'error': 'Unsupported language'}, status=400)
@@ -74,14 +75,8 @@ def check_or_create_container(request):
             f.write(code)
         logger.info("Code written to component.js")
 
-        try:
-            container = client.containers.get(container_name)
-            if container.status != 'running':
-                container.start()
-            logger.info(f"Container {container_name} is running")
-        except docker.errors.NotFound:
-            logger.info(f"Creating new container: {container_name}")
-            container = client.containers.run(
+        def create_new_container():
+            return client.containers.run(
                 'react_renderer',
                 detach=True,
                 name=container_name,
@@ -96,8 +91,27 @@ def check_or_create_container(request):
                 ports={'3001/tcp': None}
             )
 
+        try:
+            container = client.containers.get(container_name)
+            container.reload()
+
+            # Check if the container has a port mapping
+            port_mapping = container.ports.get('3001/tcp')
+            if not port_mapping:
+                logger.info(f"Container {container_name} exists but has no port mapping. Recreating...")
+                container.stop()
+                container.remove()
+                container = create_new_container()
+            elif container.status != 'running':
+                container.start()
+
+            logger.info(f"Container {container_name} is running")
+        except docker.errors.NotFound:
+            logger.info(f"Creating new container: {container_name}")
+            container = create_new_container()
+
         # Wait for port mapping to be available
-        max_retries = 10
+        max_retries = 30
         for _ in range(max_retries):
             container.reload()
             port_mapping = container.ports.get('3001/tcp')
@@ -122,7 +136,6 @@ def check_or_create_container(request):
     except Exception as e:
         logger.error(f"Error in check_or_create_container: {str(e)}", exc_info=True)
         return JsonResponse({'error': str(e)}, status=500)
-
 
 
 def update_code_in_container(container, code, file_name):
@@ -156,12 +169,14 @@ def wait_for_container_ready(container, user_id, file_name):
         time.sleep(1)
     raise Exception("Timeout waiting for container to be ready")
 
+
 def container_exists(container_id):
     try:
         client.containers.get(container_id)
         return True
     except docker.errors.NotFound:
         return False
+
 
 @csrf_exempt
 @api_view(['POST'])
@@ -260,7 +275,7 @@ def check_container_ready(request):
 
         # Check if the dev server is responding and the content is available
         try:
-            response = requests.get(dynamic_url, timeout=2)
+            response = requests.get(dynamic_url, timeout=5)
             if response.status_code == 200:
                 # Check if the response contains expected React content
                 if 'root' in response.text and 'react' in response.text.lower():
@@ -271,9 +286,9 @@ def check_container_ready(request):
                 else:
                     return JsonResponse({'status': 'content_loading'})
             else:
-                return JsonResponse({'status': 'server_starting'})
-        except requests.RequestException:
-            return JsonResponse({'status': 'server_starting'})
+                return JsonResponse({'status': 'server_error', 'details': f'Server responded with status code {response.status_code}'})
+        except requests.RequestException as e:
+            return JsonResponse({'status': 'server_starting', 'details': str(e)})
 
     except docker.errors.NotFound:
         logger.error(f"Container with ID {container_id} not found", exc_info=True)

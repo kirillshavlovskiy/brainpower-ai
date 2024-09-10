@@ -32,7 +32,7 @@ from langchain_community.document_loaders.generic import GenericLoader
 from langchain_community.vectorstores import FAISS
 from langchain.memory import ConversationBufferMemory
 
-memory = ConversationBufferMemory()
+
 llamaparse_api_key = os.getenv("LLAMA_CLOUD_API_KEY")
 qdrant_url = os.getenv("QDRANT_URL")
 qdrant_api_key = os.getenv("QDRANT_API_KEY")
@@ -61,15 +61,14 @@ store = {}
 import re
 
 
-def get_session_history(conversation_id: str, user_id: str) -> UpstashRedisChatMessageHistory:
-    session_id = f"{conversation_id}_{user_id}"
+def get_session_history(session_id: str) -> UpstashRedisChatMessageHistory:
     history = UpstashRedisChatMessageHistory(url=url_upstash, token=token_upstash, ttl=0, session_id=session_id)
     return history
 
 
-def update_session_history(conversation_id: str, user_id: str, user_message,
+def update_session_history(user_id: str, thread_id: str, user_message,
                            ai_message) -> UpstashRedisChatMessageHistory:
-    session_id = f"{conversation_id}_{user_id}"
+    session_id = f"{user_id}_{thread_id}"
     history = UpstashRedisChatMessageHistory(url=url_upstash, token=token_upstash, ttl=0, session_id=session_id)
     # Ensure user_message is a string
     if not isinstance(user_message, str):
@@ -410,8 +409,15 @@ prompt_main = ChatPromptTemplate.from_messages([
              "image_url": {"url": "{image_data}"},
          }
      ]),
-    ("placeholder", "{messages}"),
-    ("placeholder", "{chat_history}"),
+    MessagesPlaceholder("chat_history"),
+    ("user",
+     [
+         {
+             "type": "text",
+             "text": "{question}",
+         }
+     ]),
+
 ])
 
 # -----------------------------------------Chain Section--------------------------------------------------
@@ -1091,21 +1097,9 @@ def load_memories(state: GraphState, config: RunnableConfig):
     """Load core and recall memories for the current conversation."""
     configurable = utils.ensure_configurable(config)
     user_id = configurable["user_id"]
-    session_id = state["session_ID"]
+
     tokenizer = tiktoken.encoding_for_model("gpt-3.5-turbo")
-    messages = get_session_history('12345', '123454')
-    recent_messages = []
-    k = 0
-    for m in reversed(messages.messages):
-        if k > 3:
-            break
-        k += 1
-        if isinstance(m, AIMessage):
-            recent_messages.append(AIMessage(content=m.content))
-        elif isinstance(m, HumanMessage):
-            recent_messages.append(HumanMessage(content=m.content))
-        else:
-            recent_messages.append(SystemMessage(content=m.content))
+
 
     def convert_messages(messages):
         converted = []
@@ -1135,7 +1129,6 @@ def load_memories(state: GraphState, config: RunnableConfig):
     return {
         "core_memories": core_memories,
         "recall_memories": recall_memories,
-        "chat_history": recent_messages,
     }
 
 
@@ -1266,7 +1259,7 @@ def agent_search(state):
 #                        "output"] + f"Action: {action.tool}" + f"Action Input: {action.tool_input}" + f"Result: {result}"
 #
 #     return {"question": question, "generation": generation}
-
+from langchain_core.runnables.history import RunnableWithMessageHistory
 
 async def agent(state: GraphState, config: RunnableConfig):
     # global all_tools
@@ -1281,7 +1274,7 @@ async def agent(state: GraphState, config: RunnableConfig):
     """
     configurable = utils.ensure_configurable(config)
     user_id = configurable["user_id"]
-    session_id = state["session_ID"]
+
     llm = llm_claud
     # llm = llm_llama
     # llm = open_ai_llm
@@ -1289,9 +1282,16 @@ async def agent(state: GraphState, config: RunnableConfig):
     query = state["messages"][0]
     if isinstance(query, HumanMessage):
         question = query.content
+
     bound = prompt_main | llm
 
-    chat_hist = memory.chat_memory.messages
+    agent_with_history = RunnableWithMessageHistory(
+        bound,
+        get_session_history,
+        input_messages_key="question",
+        history_messages_key="chat_history",
+    )
+
 
     core_str = (
             "<core_memory>\n" + "\n".join(state["core_memories"]) + "\n</core_memory>"
@@ -1299,29 +1299,25 @@ async def agent(state: GraphState, config: RunnableConfig):
     recall_str = (
             "<recall_memory>\n" + "\n".join(state["recall_memories"]) + "\n</recall_memory>"
     )
+    if state['user_id'] and state['thread_id']:
+        session_id = state['user_id'] + '_' + state['thread_id']
+    else:
+        session_id = "0"
 
-    logger.info(
-        f"\n\n----------------\n\n-----------image_data:\n\n{state['image_data']}\n\n----------------\n\n----------------")
-    logger.info(
-        f"\n\n----------------\n\n-----------image_data:\n\n{chat_hist}\n\n----------------\n\n----------------")
-    logger.info(
-        f"\n\n----------------\n\n-----------image_data:\n\n{core_str}\n\n----------------\n\n----------------")
-    logger.info(
-        f"\n\n----------------\n\n-----------image_data:\n\n{recall_str}\n\n----------------\n\n----------------")
-
-    prediction = await bound.ainvoke(
+    prediction = await agent_with_history.ainvoke(
         {
-            "messages": state['messages'],
+            "question": question,
             "context": state['context'],
-            "chat_history": chat_hist,
             "core_memories": core_str,
             "recall_memories": recall_str,
             "image_data": state['image_data'],
             "current_time": datetime.now(tz=timezone.utc).isoformat(),
-        }
+        },
+        config={"configurable": {"session_id": session_id}}
     )
 
-    update_session_history('12345', '123454', question, prediction)
+    update_session_history(state['user_id'], state['thread_id'], question, prediction)
+    logger.info("\nprediction\n",prediction)
 
     return {
         "messages": prediction,
@@ -1533,86 +1529,93 @@ import pprint
 
 # -------------------------------------CHAT BOT------------------------------------------
 
-
+import asyncio
+from typing import Dict, Any
 from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
+import logging
+from langchain.callbacks.base import BaseCallbackHandler
+
+logger = logging.getLogger(__name__)
 channel_layer = get_channel_layer()
 
-async def react_agent_queue(contents: Dict[str, Any]):
+class StreamingCallback(BaseCallbackHandler):
+    def __init__(self, channel_name):
+        self.channel_name = channel_name
+        self.buffer = ""
+        self.lock = asyncio.Lock()
+
+    async def on_llm_new_token(self, token: str, **kwargs):
+        async with self.lock:
+            self.buffer += token
+            if len(self.buffer) >= 10 or '\n' in self.buffer:  # Adjust buffer size as needed
+                await self.flush()
+
+    async def flush(self):
+        if self.buffer:
+            await channel_layer.send(
+                self.channel_name,
+                {
+                    'type': 'chat_message',
+                    'text': self.buffer,
+                    'sender': "Coding Agent",
+                }
+            )
+            logger.info(f"Sent buffer: {self.buffer}")
+            self.buffer = ""
+
+async def react_agent_queue(contents: Dict[str, Any], channel_name: str):
     global topics
-    reply = ""
     app = workflow.compile()
     thread_id = contents['thread_id']
     user_id = contents['user_id']
     logger.info(f"Starting streaming process for user: {user_id}, thread: {thread_id}")
 
-    async for event in app.astream_events(
-            input={
-                "messages": contents['messages'],
-                "context": contents['context'],
-                "image_data": contents['image_data'],
-                "user_id": user_id,
-                "session_ID": contents['session_id'],
-                "thread_ID": thread_id,
-                "topics": topics
-            },
-            config={
-                "configurable": {
+    streaming_callback = StreamingCallback(channel_name)
+
+    try:
+        async for event in app.astream_events(
+                input={
+                    "messages": contents['messages'],
+                    "context": contents['context'],
+                    "image_data": contents['image_data'],
                     "user_id": user_id,
-                    "thread_id": thread_id,
-                    "lang_memgpt_url": "",
-                    "delay": 4,
-                }
-            },
-            version="v2"
-    ):
-        event_type = event.get("event")
-        event_data = event.get("data", {})
+                    "session_ID": contents['session_id'],
+                    "thread_ID": thread_id,
+                    "topics": topics
+                },
+                config={
+                    "configurable": {
+                        "user_id": user_id,
+                        "thread_id": thread_id,
+                        "lang_memgpt_url": "",
+                        "delay": 4,
+                    },
+                    "callbacks": [streaming_callback],
+                },
+                version="v2"
+        ):
 
-        if event_type == "on_chat_model_stream":
-            token = event_data["chunk"].content
+            pass
 
-            # Ensure token is a string and not empty or just whitespace
-            if isinstance(token, list) and token:
-                token = token[0].get('text', '')
-            elif not isinstance(token, str):
-                token = str(token)
+    finally:
+        # Ensure any remaining content in the buffer is sent
+        await streaming_callback.flush()
 
-            # Filter out unwanted tokens and whitespace-only tokens
-            if token.strip() and token.strip() not in ["[]", "content=[", "response_metadata={"]:
-                logger.info(f"Streaming token: {token}")
+    logger.info(f"Streaming process completed for user: {user_id}, thread: {thread_id}")
 
-            # Send the token directly to the WebSocket
-            await channel_layer.group_send(
-                'chat',
-                {
-                    'type': 'send_message',
-                    'message': {
-                        'text': token,
-                        'sender': "Coding Agent",
-                        'threadId': thread_id,
-                    }
-                }
-            )
-
-            reply += token
-
-    logger.info(f"Streaming process completed. Total reply length: {len(reply)}")
-    return reply
-
-async def query(query_data):
+async def query(query_data, channel_name):
     thread_id = query_data['thread_id']
     try:
-        await react_agent_queue(query_data)
+        await react_agent_queue(query_data, channel_name)
     except Exception as e:
         logger.error(f"Error in query processing: {str(e)}", exc_info=True)
-        await channel_layer.group_send(
-            'chat',
+        await channel_layer.send(
+            channel_name,
             {
-                'type': 'send_message',
-                'message': {
-                    'text': f"An error occurred while processing your request: {str(e)}",
-                    'sender': "System",
-                    'threadId': thread_id,
-                }
+                'type': 'chat_message',
+                'text': f"An error occurred while processing your request: {str(e)}",
+                'sender': "System",
+                'thread_id': thread_id
             }
         )

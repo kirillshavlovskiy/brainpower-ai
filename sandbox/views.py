@@ -197,44 +197,62 @@ def stop_container(request):
         return JsonResponse({'error': str(e)}, status=500)
 
 
+import re
+from asgiref.sync import sync_to_async
+from courses.consumers import get_file_content
+
 @csrf_exempt
 @api_view(['POST'])
-def update_code(request):
+async def update_code(request):
     container_id = request.data.get('container_id')
-    code = request.data.get('code')
-    file_name = 'component.js'  # Hardcoded for now, but consider making this dynamic in the future
-    logger.info(f"Received update request for container: {container_id}, file: {file_name}")
+    main_code = request.data.get('main_code')
+    user_id = request.data.get('user_id')
+    logger.info(f"Received update request for container: {container_id}")
 
-    if not container_id or not code:
-        logger.warning("Missing container_id or code in update request")
-        return JsonResponse({'error': 'Missing container_id or code'}, status=400)
+    if not all([container_id, main_code, user_id]):
+        logger.warning("Missing required data in update request")
+        return JsonResponse({'error': 'Missing required data'}, status=400)
 
     try:
-        # Path to the source directory in your Django project
-        source_dir = os.path.join(settings.BASE_DIR, 'react_renderer', 'src')
-        file_path = os.path.join(source_dir, file_name)
-
-        logger.info(f"Attempting to write to file: {file_path}")
-
-        # Ensure the directory exists
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-
-        # Write the code to the file
-        with open(file_path, 'w', encoding='utf-8') as file:
-            file.write(code)
-
-        logger.info(f"Successfully wrote to file: {file_path}")
+        # Find all imports in the main code
+        import_pattern = r"import\s+(?:(?:{\s*[\w\s,]+\s*})|(?:[\w]+))\s+from\s+['\"](.+?)['\"]"
+        imports = re.findall(import_pattern, main_code)
 
         # Get the container
         container = client.containers.get(container_id)
 
-        # Touch the file in the container to trigger file change detection
-        exec_result = container.exec_run(["touch", f"/app/src/{file_name}"])
+        # Update main.js in the container
+        exec_result = container.exec_run(["sh", "-c", f"echo '{main_code}' > /app/src/main.js"])
         if exec_result.exit_code != 0:
-            raise Exception(f"Failed to touch file in container: {exec_result.output.decode()}")
+            raise Exception(f"Failed to update main.js in container: {exec_result.output.decode()}")
+        logger.info("Updated main.js in container")
 
-        logger.info(f"Touched file in container: /app/src/{file_name}")
+        # Process each import
+        for import_path in imports:
+            if import_path.endswith('.js') or import_path.endswith('.css'):
+                file_content = await get_file_content(user_id, import_path)
+                if file_content:
+                    # Create or update the file in the container
+                    container_path = f"/app/src/{import_path}"
+                    exec_result = container.exec_run(["sh", "-c", f"echo '{file_content}' > {container_path}"])
+                    if exec_result.exit_code != 0:
+                        raise Exception(f"Failed to update {import_path} in container: {exec_result.output.decode()}")
+                    logger.info(f"Updated {import_path} in container")
+
+        # Touch main.js to trigger file change detection
+        exec_result = container.exec_run(["touch", "/app/src/main.js"])
+        if exec_result.exit_code != 0:
+            raise Exception(f"Failed to touch main.js in container: {exec_result.output.decode()}")
+        logger.info("Touched main.js in container")
+
         return JsonResponse({'status': 'Code updated successfully'})
+
+    except docker.errors.NotFound:
+        logger.error(f"Container not found: {container_id}")
+        return JsonResponse({'error': 'Container not found'}, status=404)
+    except Exception as e:
+        logger.error(f"Error updating code: {str(e)}", exc_info=True)
+        return JsonResponse({'error': str(e)}, status=500)
 
     except docker.errors.NotFound:
         logger.error(f"Container not found: {container_id}")

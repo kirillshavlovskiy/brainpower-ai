@@ -14,16 +14,19 @@ import json
 import asyncio
 from threading import Thread
 import time
-from asyncio import Queue
+
 
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
+logger = logging.getLogger(__name__)
 
 class AsyncChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         self.room_group_name = 'chat'
+        self.session_id = str(uuid.uuid4())
+
         await self.channel_layer.group_add(self.room_group_name, self.channel_name)
         await self.accept()
         logger.info(f"WebSocket connection established: {self.channel_name}")
@@ -34,22 +37,37 @@ class AsyncChatConsumer(AsyncWebsocketConsumer):
 
     async def receive(self, text_data):
         text_data_json = json.loads(text_data)
+        content = text_data_json['message']
         input_data = {
-            "messages": [{"role": "user", "content": text_data_json['message']}],
+            "messages": [{"role": "user", "content": content}],
             "context": text_data_json['code'],
-            "session_id": self.scope['session'].session_key,
+            "session_id": self.session_id,
             "user_id": text_data_json['userId'],
             'thread_id': text_data_json.get('threadId', 'default123'),
-            "image_data": text_data_json.get('image', None)
+            "image_data": text_data_json['image']
         }
-        await query(input_data)
 
-    async def send_message(self, event):
-        message = event['message']
+        asyncio.create_task(self.process_query(input_data))
+
+    async def process_query(self, input_data):
+        try:
+            await query(input_data, self.channel_name)
+        except Exception as e:
+            logger.error(f"Error processing query: {str(e)}", exc_info=True)
+            await self.chat_message({
+                'text': f"An error occurred while processing your request: {str(e)}",
+                'sender': "System",
+                'thread_id': input_data['thread_id'],
+            })
+
+    async def chat_message(self, event):
         await self.send(text_data=json.dumps({
-            'message': message
+            'message': {
+                'text': event['text'],
+                'sender': event['sender'],
+                'threadId': event.get('thread_id', 'default'),
+            }
         }))
-
 
 
 class FileStructureConsumer(AsyncWebsocketConsumer):

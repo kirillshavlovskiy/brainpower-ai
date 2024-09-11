@@ -1,22 +1,21 @@
-import time
-import traceback
-import json
+from socket import socket
 import requests
 import os
 import base64
 import re
-from django.views.decorators.http import require_http_methods
+from mylms import settings
+from rest_framework.decorators import api_view as async_api_view
+from docker.errors import NotFound, APIError
+from courses.consumers import FileStructureConsumer
+import os
+import subprocess
 from django.conf import settings
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.decorators import api_view
-from rest_framework.decorators import api_view as async_api_view
-import docker
 import logging
-from requests.exceptions import ReadTimeout
-from docker.errors import NotFound, APIError
-from courses.consumers import FileStructureConsumer
-from channels.db import database_sync_to_async
+import docker
+import shutil
 
 logger = logging.getLogger(__name__)
 client = docker.from_env()
@@ -27,12 +26,9 @@ client = docker.from_env()
 def check_container(request):
     user_id = request.data.get('user_id', '0')
     file_name = request.data.get('file_name', 'rendered_component')
-
     if not file_name:
         return JsonResponse({'error': 'Missing file_name'}, status=400)
-
     container_name = f'react_renderer_{user_id}_{file_name}'
-
     try:
         container = client.containers.get(container_name)
         if container.status == 'running':
@@ -64,14 +60,10 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         if exec_result.exit_code != 0:
             raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
         logger.info(f"Updated component.js in container with content from {file_name} at path {main_file_path}")
-
-
         logger.info(f"Processing for user: {user}")
-
         # Get the directory of the main file
         base_path = os.path.dirname(main_file_path)
         logger.info(f"Base path derived from main file: {base_path}")
-
         css_import_matches = re.findall(r"import\s+['\"](.+\.css)['\"];?", code)
         logger.info(f"Found CSS imports: {css_import_matches}")
         for css_file_path in css_import_matches:
@@ -152,13 +144,10 @@ def check_or_create_container(request):
     if not all([code, language, file_name]):
         logger.warning(f"Missing required fields. code: {bool(code)}, language: {bool(language)}, file_name: {bool(file_name)}")
         return JsonResponse({'error': 'Missing required fields'}, status=400)
-
     if language != 'react':
         return JsonResponse({'error': 'Unsupported language'}, status=400)
-
     react_renderer_path = '/Users/kirillshavlovskiy/mylms/react_renderer'
     container_name = f'react_renderer_{user_id}_{file_name}'
-
     try:
         container = client.containers.get(container_name)
         if container.status != 'running':
@@ -318,65 +307,58 @@ def deploy_to_production(request):
         return JsonResponse({'error': 'Missing required data'}, status=400)
 
     try:
-        # 1. Verify the development container is running
+        # 1. Run npm build in the container
         container = client.containers.get(container_id)
-        if container.status != 'running':
-            return JsonResponse({'error': 'Development container is not running'}, status=400)
-
-        # 2. Build production-ready files
-        exec_result = container.exec_run(
-            "npm run build",
-            workdir="/app"
-        )
+        exec_result = container.exec_run("npm run build")
         if exec_result.exit_code != 0:
-            return JsonResponse({'error': 'Failed to build production files'}, status=500)
+            raise Exception(f"Build failed: {exec_result.output.decode()}")
 
-        # 3. Copy production files from the container
-        build_dir = '/app/build'
-        production_files = container.exec_run(f"tar -c -C {build_dir} .")
-        if production_files.exit_code != 0:
-            return JsonResponse({'error': 'Failed to retrieve production files'}, status=500)
-
-        # 4. Create a unique subdomain for the user's app
+        # 2. Copy the build files from the container
         subdomain = f"{user_id}-{file_name.replace('.', '-')}"
         production_dir = os.path.join(settings.PRODUCTION_APPS_ROOT, subdomain)
+        if os.path.exists(production_dir):
+            shutil.rmtree(production_dir)
         os.makedirs(production_dir, exist_ok=True)
 
-        # 5. Extract production files to the subdomain directory
-        with open(os.path.join(production_dir, 'app.tar'), 'wb') as f:
-            f.write(production_files.output)
-        os.system(f"tar -xf {os.path.join(production_dir, 'app.tar')} -C {production_dir}")
-        os.remove(os.path.join(production_dir, 'app.tar'))
+        # Use docker cp to copy files from container to host
+        subprocess.run(f"docker cp {container_id}:/app/build/. {production_dir}", shell=True, check=True)
 
-        # 6. Update Nginx configuration to serve the new app
-        nginx_config = f"""
-        server {{
-            listen 80;
-            server_name {subdomain}.example.com;
-            root {production_dir};
-            index index.html;
-            location / {{
-                try_files $uri $uri/ /index.html;
-            }}
-        }}
-        """
-        with open(f"/etc/nginx/sites-available/{subdomain}", 'w') as f:
-            f.write(nginx_config)
-        os.system(f"ln -s /etc/nginx/sites-available/{subdomain} /etc/nginx/sites-enabled/")
-        os.system("nginx -s reload")
+        # 3. Start a simple HTTP server for the app
+        port = find_available_port()
+        start_http_server(production_dir, port)
 
-        # 7. Return the production URL to the user
-        production_url = f"http://{subdomain}.example.com"
+        # 4. Return the new URL to the client
+        production_url = f"http://localhost:{port}"
         return JsonResponse({
             'status': 'success',
             'message': 'Application deployed to production',
             'production_url': production_url
         })
 
-    except docker.errors.NotFound:
-        return JsonResponse({'error': 'Container not found'}, status=404)
     except Exception as e:
-        logger.error(f"Error deploying to production: {str(e)}", exc_info=True)
+        logger.error(f"Error in deploy_to_production: {str(e)}")
         return JsonResponse({'error': str(e)}, status=500)
+
+def find_available_port(start_port=8000, max_port=9000):
+    for port in range(start_port, max_port):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.bind(("", port))
+            s.close()
+            return port
+        except OSError:
+            continue
+    raise IOError("No free ports")
+
+def start_http_server(directory, port):
+    os.chdir(directory)
+    subprocess.Popen(["python", "-m", "http.server", str(port)])
+
+# Make sure to stop any running servers when the Django server stops
+import atexit
+
+@atexit.register
+def stop_all_servers():
+    subprocess.run(["pkill", "-f", "python -m http.server"])
 
 

@@ -18,12 +18,10 @@ load_dotenv()  # This loads the .env file
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
 DEPLOYED_COMPONENTS_ROOT = BASE_DIR / 'deployed_components'
 DEPLOYED_COMPONENTS_URL = '/deployed_components/'
-
-print(f"BASE_DIR: {BASE_DIR}")
-print(f"DEPLOYED_COMPONENTS_ROOT: {DEPLOYED_COMPONENTS_ROOT}")
-print(f"DEPLOYED_COMPONENTS_URL: {DEPLOYED_COMPONENTS_URL}")
+PRODUCTION_APPS_ROOT = os.path.join(BASE_DIR, 'production_apps')
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/

@@ -32,7 +32,7 @@ print(f"DEPLOYED_COMPONENTS_URL: {DEPLOYED_COMPONENTS_URL}")
 SECRET_KEY = 'django-insecure-r+zttm^2o4$y2n61xl&-vuul479zz0h)n8crl^lyj^tt=jt=e^'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
 
 ALLOWED_HOSTS = ['*']
 

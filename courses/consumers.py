@@ -2,7 +2,7 @@ import logging
 import traceback
 # from .app_1 import callback, message_queue, get_summary
 import uuid
-
+import os
 from .query_process import query, message_queue
 from asgiref.sync import async_to_sync
 from .models import FileStructure
@@ -171,8 +171,57 @@ if __name__ == "__main__":
             logger.error(traceback.format_exc())
             return None
 
+    def get_file_content_for_container(user, file_path, base_path):
+        try:
+            logger.info(
+                f"Attempting to retrieve file content for path: {file_path} for user: {user}, base path: {base_path}")
+
+            # Remove leading './' if present
+            file_path = file_path.lstrip('./')
+
+            # Combine base_path and file_path
+            full_path = os.path.normpath(os.path.join(base_path, file_path))
+            logger.info(f"Full path: {full_path}")
+
+            # Split the path into parts
+            path_parts = full_path.split('/')
+
+            # Traverse the file structure
+            current_folder = None
+            for part in path_parts[:-1]:
+                if current_folder is None:
+                    current_folder = FileStructure.objects.get(user=user, name=part, parent=None)
+                else:
+                    current_folder = FileStructure.objects.get(user=user, name=part, parent=current_folder)
+                logger.info(f"Traversed to folder: {part}")
+
+            # Get the file from the last folder
+            file_name = path_parts[-1]
+            if current_folder:
+                file = FileStructure.objects.get(user=user, name=file_name, parent=current_folder, type='file')
+            else:
+                file = FileStructure.objects.get(user=user, name=file_name, parent=None, type='file')
+
+            logger.info(f"Found file: {file.name}")
+
+            if not file.content:
+                file.content = ''
+                file.save()
+                logger.info(f"Set empty content for file: {file.name}")
+
+            logger.info(f"Returning content for file {full_path}: {file.content[:50]}...")
+            return file.content
+        except FileStructure.DoesNotExist:
+            logger.error(f"File with path {full_path} does not exist for user {user}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error in get_file_content: {str(e)}")
+            logger.error(traceback.format_exc())
+            return None
+
     async def get_file_content(self, file_id, file_name=None):
         try:
+
             # Ensure file_id is an integer
             file_id = int(file_id)
 

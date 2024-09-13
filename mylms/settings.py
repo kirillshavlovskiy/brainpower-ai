@@ -13,18 +13,43 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 from pathlib import Path
 import os
 from dotenv import load_dotenv
+from corsheaders.defaults import default_headers
 
 load_dotenv()  # This loads the .env file
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
+
+DJANGO_ENV = os.environ.get('DJANGO_ENV', 'development')
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DEPLOYED_COMPONENTS_ROOT = BASE_DIR / 'deployed_components'
-DEPLOYED_COMPONENTS_URL = '/deployed_components/'
 
-print(f"BASE_DIR: {BASE_DIR}")
-print(f"DEPLOYED_COMPONENTS_ROOT: {DEPLOYED_COMPONENTS_ROOT}")
-print(f"DEPLOYED_COMPONENTS_URL: {DEPLOYED_COMPONENTS_URL}")
+STATIC_URL = '/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+DEPLOYED_COMPONENTS_URL = '/deployed/'
+DEPLOYED_COMPONENTS_ROOT = os.path.join(BASE_DIR, 'deployed_apps')
 
+STATICFILES_DIRS = [
+    os.path.join(BASE_DIR, 'static'),
+    DEPLOYED_COMPONENTS_ROOT,
+]
+
+# Add the DEPLOYED_COMPONENTS_ROOT to STATICFILES_DIRS
+
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+
+# Use the DJANGO_ENV variable to set different configurations
+if DJANGO_ENV == 'production':
+    DEBUG = False
+    ALLOWED_HOSTS = ['13.61.3.236']
+    # ... other production settings ...
+elif DJANGO_ENV == 'development':
+    DEBUG = True
+    ALLOWED_HOSTS = ['*']
+    # ... other development settings ...
+
+# You can use DJANGO_ENV elsewhere in your settings as needed
+print(f"Running in {DJANGO_ENV} mode")
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
@@ -32,9 +57,7 @@ print(f"DEPLOYED_COMPONENTS_URL: {DEPLOYED_COMPONENTS_URL}")
 SECRET_KEY = 'django-insecure-r+zttm^2o4$y2n61xl&-vuul479zz0h)n8crl^lyj^tt=jt=e^'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
 
-ALLOWED_HOSTS = ['*']
 
 
 # Application definition
@@ -63,12 +86,41 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-CORS_ALLOW_ALL_ORIGINS = True
-CORS_ALLOWED_ORIGIN = [
-    "http://localhost:3000",  # Add the origin of your React application
+CORS_ALLOW_ALL_ORIGINS = True  # For development only. Set to False in production.
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
+
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+
+
+# Add this line to allow all headers
+CORS_ALLOW_ALL_HEADERS = True
+
+
 
 ROOT_URLCONF = 'mylms.urls'
 
@@ -139,18 +191,7 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 5242880  # 5 MB
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/4.2/howto/static-files/
 
-# Update static files configuration
-STATIC_URL = '/static/'  # This should be '/static/' not '/deployed/'
-STATICFILES_DIRS = [
-    os.path.join(BASE_DIR, 'static'),
-    os.path.join(BASE_DIR, 'deployed_components'),  # Add this line
-]
-STATIC_ROOT = os.path.join(BASE_DIR, 'collected_static')
 
-# Ensure the deployed_components directory exists
-os.makedirs(DEPLOYED_COMPONENTS_ROOT, exist_ok=True)
-
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # LOGGING = {
 #     'version': 1,

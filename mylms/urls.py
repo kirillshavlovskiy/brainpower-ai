@@ -1,31 +1,28 @@
-"""
-URL configuration for LMS_project project.
-
-The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/4.2/topics/http/urls/
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  path('', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.urls import include, path
-    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
-"""
-
-from django.views.generic import TemplateView
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
+from django.views.generic import TemplateView
+from django.views.static import serve
 from django.conf import settings
 from django.conf.urls.static import static
+
+def serve_react_app(request, app_name):
+    path = f'{settings.DEPLOYED_COMPONENTS_ROOT}/{app_name}/index.html'
+    return serve(request, path, document_root='/')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('courses/', include('courses.urls')),
     path('sandbox/', include('sandbox.urls')),
-    path('brainpower', TemplateView.as_view(template_name='index.html'), name='home'),
+    path('', TemplateView.as_view(template_name='home.html'), name='home'),
+
+    # Serve the React app's index.html
+    re_path(r'^deployed/(?P<app_name>[^/]+)/$', serve_react_app, name='serve_react_app'),
+
+    # Serve static files for the React app
+    re_path(r'^deployed/(?P<path>.*)$', serve, {
+        'document_root': settings.DEPLOYED_COMPONENTS_ROOT,
+        'show_indexes': settings.DEBUG
+    }),
 ]
 
 if settings.DEBUG:

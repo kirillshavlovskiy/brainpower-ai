@@ -475,7 +475,6 @@ class InputSchema(BaseModel):
 import base64
 import os
 
-
 def perplexity_search(query: str) -> str:
     """Retrieve perplexity response on a query.
 

@@ -7,7 +7,7 @@ gunicorn
 whitenoise
 psycopg2-binary
 djangorestframework==3.15.1
-faiss_cpu==1.7.4
+faiss_cpu
 GitPython==3.1.43
 langchain
 langchain_anthropic

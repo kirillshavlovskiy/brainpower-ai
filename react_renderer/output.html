@@ -1,0 +1,28 @@
+
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>React Component</title>
+      </head>
+      <body>
+        <div id="root"><div data-reactroot=""><h1>Hello from TestComponent</h1><p>This is a test React component.</p></div></div>
+        <script src="https://unpkg.com/react@17/umd/react.production.min.js"></script>
+        <script src="https://unpkg.com/react-dom@17/umd/react-dom.production.min.js"></script>
+        <script>
+          "use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports["default"] = void 0;
+var _react = _interopRequireDefault(require("react"));
+function _interopRequireDefault(e) { return e && e.__esModule ? e : { "default": e }; }
+var TestComponent = function TestComponent() {
+  return /*#__PURE__*/_react["default"].createElement("div", null, /*#__PURE__*/_react["default"].createElement("h1", null, "Hello from TestComponent"), /*#__PURE__*/_react["default"].createElement("p", null, "This is a test React component."));
+};
+var _default = exports["default"] = TestComponent;
+          ReactDOM.hydrate(React.createElement(TestComponent), document.getElementById('root'));
+        </script>
+      </body>
+    </html>
+    

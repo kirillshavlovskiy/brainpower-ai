@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 client = docker.from_env()
 
 
+SERVER_IP = '13.61.3.236'  # Replace with your actual server IP
+SERVER_PORT = 8000
 
 
 @csrf_exempt
@@ -135,7 +137,63 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         raise
 
 
-@csrf_exempt
+
+
+@api_view(['GET'])
+def check_container_ready(request):
+    container_id = request.GET.get('container_id')
+    user_id = request.GET.get('user_id', 'default')
+    file_name = request.GET.get('file_name')
+    logger.info(
+        f"Checking container readiness for container_id: {container_id}, user_id: {user_id}, file_name: {file_name}")
+
+    if not container_id:
+        return JsonResponse({'error': 'No container ID provided'}, status=400)
+
+    try:
+        container = client.containers.get(container_id)
+        container.reload()
+        container_status = container.status
+        logger.info(f"Container status: {container_status}")
+
+        logs = container.logs(tail=10).decode('utf-8').strip()
+        latest_log = logs.split('\n')[-1] if logs else "No logs available"
+
+        if container_status != 'running':
+            return JsonResponse({'status': 'container_starting', 'log': latest_log})
+
+        port_mapping = container.ports.get(f'{SERVER_PORT}/tcp')
+        if not port_mapping:
+            return JsonResponse({'status': 'waiting_for_port', 'log': latest_log})
+
+        host_port = port_mapping[0]['HostPort']
+        dynamic_url = f"http://{SERVER_IP}:{host_port}"
+
+        try:
+            response = requests.get(dynamic_url, timeout=5)
+            if response.status_code == 200:
+                if 'root' in response.text and 'react' in response.text.lower():
+                    return JsonResponse({
+                        'status': 'ready',
+                        'url': dynamic_url,
+                        'log': latest_log
+                    })
+                else:
+                    return JsonResponse({'status': 'content_loading', 'log': latest_log})
+            else:
+                return JsonResponse(
+                    {'status': 'server_error', 'details': f'Server responded with status code {response.status_code}',
+                     'log': latest_log})
+        except requests.RequestException:
+            return JsonResponse({'status': 'server_starting', 'log': latest_log})
+
+    except docker.errors.NotFound:
+        return JsonResponse({'error': 'Container not found', 'log': 'Container not found'}, status=404)
+    except Exception as e:
+        logger.error(f"Error checking container status: {str(e)}", exc_info=True)
+        return JsonResponse({'error': 'Error checking container status', 'details': str(e), 'log': str(e)}, status=500)
+
+
 @api_view(['POST'])
 def check_or_create_container(request):
     logger.info(f"Received request data: {request.data}")
@@ -145,12 +203,15 @@ def check_or_create_container(request):
     file_name = request.data.get('file_name', 'component.js')
     main_file_path = request.data.get('main_file_path', "Root/Project")
     if not all([code, language, file_name]):
-        logger.warning(f"Missing required fields. code: {bool(code)}, language: {bool(language)}, file_name: {bool(file_name)}")
+        logger.warning(
+            f"Missing required fields. code: {bool(code)}, language: {bool(language)}, file_name: {bool(file_name)}")
         return JsonResponse({'error': 'Missing required fields'}, status=400)
     if language != 'react':
         return JsonResponse({'error': 'Unsupported language'}, status=400)
-    react_renderer_path = '/Users/kirillshavlovskiy/mylms/react_renderer'
+
+    react_renderer_path = '/path/to/react_renderer'  # Update this path
     container_name = f'react_renderer_{user_id}_{file_name}'
+
     try:
         container = client.containers.get(container_name)
         if container.status != 'running':
@@ -166,20 +227,21 @@ def check_or_create_container(request):
                 'USER_ID': user_id,
                 'REACT_APP_USER_ID': user_id,
                 'FILE_NAME': file_name,
+                'PORT': str(SERVER_PORT)  # Set the server port
             },
             volumes={
                 react_renderer_path: {'bind': '/app', 'mode': 'rw'}
             },
-            ports={'3001/tcp': None}
+            ports={f'{SERVER_PORT}/tcp': None}  # Map to a random host port
         )
 
     update_code_internal(container, code, user_id, file_name, main_file_path)
 
     container.reload()
-    port_mapping = container.ports.get('3001/tcp')
+    port_mapping = container.ports.get(f'{SERVER_PORT}/tcp')
     if port_mapping:
         host_port = port_mapping[0]['HostPort']
-        dynamic_url = f"http://localhost:{host_port}"
+        dynamic_url = f"http://{SERVER_IP}:{host_port}"
         logger.info(f"Dynamic URL: {dynamic_url}")
         return JsonResponse({
             'status': 'success',
@@ -243,61 +305,6 @@ def container_exists(container_id):
         return True
     except docker.errors.NotFound:
         return False
-
-@csrf_exempt
-@api_view(['GET'])
-def check_container_ready(request):
-    container_id = request.GET.get('container_id')
-    user_id = request.GET.get('user_id', 'default')
-    file_name = request.GET.get('file_name')
-    logger.info(f"Checking container readiness for container_id: {container_id}, user_id: {user_id}, file_name: {file_name}")
-
-    if not container_id:
-        return JsonResponse({'error': 'No container ID provided'}, status=400)
-
-    try:
-        container = client.containers.get(container_id)
-        container.reload()
-        container_status = container.status
-        logger.info(f"Container status: {container_status}")
-
-        # Get the latest logs
-        logs = container.logs(tail=10).decode('utf-8').strip()
-        latest_log = logs.split('\n')[-1] if logs else "No logs available"
-
-        if container_status != 'running':
-            return JsonResponse({'status': 'container_starting', 'log': latest_log})
-
-        # Get the assigned port
-        port_mapping = container.ports.get('3001/tcp')
-        if not port_mapping:
-            return JsonResponse({'status': 'waiting_for_port', 'log': latest_log})
-
-        host_port = port_mapping[0]['HostPort']
-        dynamic_url = f"http://localhost:{host_port}"
-
-        # Check if the dev server is responding and the content is available
-        try:
-            response = requests.get(dynamic_url, timeout=5)
-            if response.status_code == 200:
-                if 'root' in response.text and 'react' in response.text.lower():
-                    return JsonResponse({
-                        'status': 'ready',
-                        'url': dynamic_url,
-                        'log': latest_log
-                    })
-                else:
-                    return JsonResponse({'status': 'content_loading', 'log': latest_log})
-            else:
-                return JsonResponse({'status': 'server_error', 'details': f'Server responded with status code {response.status_code}', 'log': latest_log})
-        except requests.RequestException:
-            return JsonResponse({'status': 'server_starting', 'log': latest_log})
-
-    except docker.errors.NotFound:
-        return JsonResponse({'error': 'Container not found', 'log': 'Container not found'}, status=404)
-    except Exception as e:
-        logger.error(f"Error checking container status: {str(e)}", exc_info=True)
-        return JsonResponse({'error': 'Error checking container status', 'details': str(e), 'log': str(e)}, status=500)
 
 
 import re

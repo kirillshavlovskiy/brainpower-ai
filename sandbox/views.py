@@ -16,9 +16,12 @@ from rest_framework.decorators import api_view
 import logging
 import docker
 import shutil
+import tempfile
 
 logger = logging.getLogger(__name__)
 client = docker.from_env()
+
+
 
 
 @csrf_exempt
@@ -36,7 +39,7 @@ def check_container(request):
             port_mapping = container.ports.get('3001/tcp')
             if port_mapping:
                 host_port = port_mapping[0]['HostPort']
-                dynamic_url = f"http://localhost:{host_port}/{user_id}/{file_name}"
+                dynamic_url = f"http://localhost:{host_port}"
                 return JsonResponse({
                     'status': 'running',
                     'container_id': container.id,
@@ -176,7 +179,7 @@ def check_or_create_container(request):
     port_mapping = container.ports.get('3001/tcp')
     if port_mapping:
         host_port = port_mapping[0]['HostPort']
-        dynamic_url = f"http://localhost:{host_port}/{user_id}/{file_name}"
+        dynamic_url = f"http://localhost:{host_port}"
         logger.info(f"Dynamic URL: {dynamic_url}")
         return JsonResponse({
             'status': 'success',
@@ -271,7 +274,7 @@ def check_container_ready(request):
             return JsonResponse({'status': 'waiting_for_port', 'log': latest_log})
 
         host_port = port_mapping[0]['HostPort']
-        dynamic_url = f"http://localhost:{host_port}/{user_id}/{file_name}"
+        dynamic_url = f"http://localhost:{host_port}"
 
         # Check if the dev server is responding and the content is available
         try:
@@ -296,69 +299,181 @@ def check_container_ready(request):
         logger.error(f"Error checking container status: {str(e)}", exc_info=True)
         return JsonResponse({'error': 'Error checking container status', 'details': str(e), 'log': str(e)}, status=500)
 
-@csrf_exempt
-@api_view(['POST'])
-def deploy_to_production(request):
-    container_id = request.data.get('container_id')
-    user_id = request.data.get('user_id')
-    file_name = request.data.get('file_name')
 
-    if not all([container_id, user_id, file_name]):
-        return JsonResponse({'error': 'Missing required data'}, status=400)
+import re
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
+from django.views import View
+from django.http import JsonResponse
+import logging
+import docker
+import json
+from django.conf import settings
+from django.views.generic import TemplateView
 
-    try:
-        # 1. Run npm build in the container
-        container = client.containers.get(container_id)
-        exec_result = container.exec_run("npm run build")
-        if exec_result.exit_code != 0:
-            raise Exception(f"Build failed: {exec_result.output.decode()}")
+logger = logging.getLogger(__name__)
 
-        # 2. Copy the build files from the container
-        subdomain = f"{user_id}-{file_name.replace('.', '-')}"
-        production_dir = os.path.join(settings.PRODUCTION_APPS_ROOT, subdomain)
-        if os.path.exists(production_dir):
-            shutil.rmtree(production_dir)
-        os.makedirs(production_dir, exist_ok=True)
+NGINX_SITES_PATH = '/etc/nginx/sites-available'
+NGINX_SITES_ENABLED_PATH = '/etc/nginx/sites-enabled'
+REACT_APPS_ROOT = '/var/www/react-apps'
 
-        # Use docker cp to copy files from container to host
-        subprocess.run(f"docker cp {container_id}:/app/build/. {production_dir}", shell=True, check=True)
 
-        # 3. Start a simple HTTP server for the app
-        port = find_available_port()
-        start_http_server(production_dir, port)
+def update_index_html(file_path):
+    with open(file_path, 'r') as file:
+        content = file.read()
 
-        # 4. Return the new URL to the client
-        production_url = f"http://localhost:{port}"
-        return JsonResponse({
-            'status': 'success',
-            'message': 'Application deployed to production',
-            'production_url': production_url
-        })
+    # Update script src and link href to use relative paths
+    content = re.sub(r'(src|href)="/static/', r'\1="./static/', content)
 
-    except Exception as e:
-        logger.error(f"Error in deploy_to_production: {str(e)}")
-        return JsonResponse({'error': str(e)}, status=500)
+    with open(file_path, 'w') as file:
+        file.write(content)
 
-def find_available_port(start_port=8000, max_port=9000):
-    for port in range(start_port, max_port):
+
+@method_decorator(csrf_exempt, name='dispatch')
+class DeployToProductionView_dev(View):
+    def options(self, request, *args, **kwargs):
+        response = JsonResponse({})
+        response["Access-Control-Allow-Origin"] = "http://localhost:3000"
+        response["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        response["Access-Control-Allow-Headers"] = "X-Requested-With, Content-Type"
+        return response
+
+    def post(self, request, *args, **kwargs):
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.bind(("", port))
-            s.close()
-            return port
-        except OSError:
-            continue
-    raise IOError("No free ports")
+            data = json.loads(request.body)
+            container_id = data.get('container_id')
+            user_id = data.get('user_id')
+            file_name = data.get('file_name')
 
-def start_http_server(directory, port):
-    os.chdir(directory)
-    subprocess.Popen(["python", "-m", "http.server", str(port)])
+            if not all([container_id, user_id, file_name]):
+                return JsonResponse({'error': 'Missing required data'}, status=400)
 
-# Make sure to stop any running servers when the Django server stops
-import atexit
+            # 1. Run npm build in the container
+            client = docker.from_env()
+            container = client.containers.get(container_id)
+            exec_result = container.exec_run("npm run build")
+            if exec_result.exit_code != 0:
+                raise Exception(f"Build failed: {exec_result.output.decode()}")
 
-@atexit.register
-def stop_all_servers():
-    subprocess.run(["pkill", "-f", "python -m http.server"])
+            # 2. Copy the build files from the container to a local directory
+            app_name = f"{user_id}_{file_name.replace('.', '-')}"
+            production_dir = os.path.join(settings.BASE_DIR, 'deployed_apps', app_name)
+
+            # Remove existing directory if it exists
+            if os.path.exists(production_dir):
+                shutil.rmtree(production_dir)
+
+            os.makedirs(production_dir, exist_ok=True)
+
+            # Use docker cp to copy files from container to host
+            os.system(f"docker cp {container_id}:/app/build/. {production_dir}")
+
+            # Update index.html to use relative paths
+            index_path = os.path.join(production_dir, 'index.html')
+            update_index_html(index_path)
+
+            # Print directory contents for debugging
+            print(f"Contents of {production_dir}:")
+            for root, dirs, files in os.walk(production_dir):
+                level = root.replace(production_dir, '').count(os.sep)
+                indent = ' ' * 4 * (level)
+                print(f"{indent}{os.path.basename(root)}/")
+                subindent = ' ' * 4 * (level + 1)
+                for f in files:
+                    print(f"{subindent}{f}")
+
+            # 3. In a local environment, we'll skip Nginx configuration
+            # Instead, we'll assume we're serving these files directly through Django
+
+            # 4. Return the new URL to the client
+            production_url = f"http://{request.get_host()}/deployed/{app_name}/"
+            return JsonResponse({
+                'status': 'success',
+                'message': 'Application deployed locally',
+                'production_url': production_url
+            })
+
+        except Exception as e:
+            logger.error(f"Error in local deployment: {str(e)}")
+            return JsonResponse({'error': str(e)}, status=500)
 
 
+class ServeReactApp(TemplateView):
+    template_name = 'index.html'
+
+    def get_template_names(self):
+        app_name = self.kwargs['app_name']
+        template_path = f'{settings.DEPLOYED_COMPONENTS_ROOT}/{app_name}/index.html'
+        return [template_path]
+
+
+class DeployToProductionView_prod(View):
+    def post(self, request, *args, **kwargs):
+        try:
+            data = json.loads(request.body)
+            container_id = data.get('container_id')
+            user_id = data.get('user_id')
+            file_name = data.get('file_name')
+
+            if not all([container_id, user_id, file_name]):
+                return JsonResponse({'error': 'Missing required data'}, status=400)
+
+            # 1. Run npm build in the container
+            client = docker.from_env()
+            container = client.containers.get(container_id)
+            exec_result = container.exec_run("npm run build")
+            if exec_result.exit_code != 0:
+                raise Exception(f"Build failed: {exec_result.output.decode()}")
+
+            # 2. Copy the build files from the container to the React apps directory
+            app_name = f"{user_id}_{file_name.replace('.', '-')}"
+            production_dir = os.path.join(REACT_APPS_ROOT, app_name)
+
+            # Remove existing directory if it exists
+            if os.path.exists(production_dir):
+                shutil.rmtree(production_dir)
+
+            os.makedirs(production_dir, exist_ok=True)
+
+            # Use docker cp to copy files from container to host
+            subprocess.run(["docker", "cp", f"{container_id}:/app/build/.", production_dir], check=True)
+
+            # 3. Create Nginx configuration for the React app
+            self.create_nginx_config(app_name, production_dir)
+
+            # 4. Reload Nginx to apply changes
+            subprocess.run(["sudo", "nginx", "-s", "reload"], check=True)
+
+            # 5. Return the new URL to the client
+            production_url = f"http://{request.get_host()}/deployed/{app_name}/"
+            return JsonResponse({
+                'status': 'success',
+                'message': 'Application deployed to production',
+                'production_url': production_url
+            })
+
+        except Exception as e:
+            logger.error(f"Error in deploy_to_production: {str(e)}")
+            return JsonResponse({'error': str(e)}, status=500)
+
+    def create_nginx_config(self, app_name, app_path):
+        config_content = f"""
+    server {{
+        listen 80;
+        server_name {self.request.get_host()};
+
+        location /{app_name} {{
+            alias {app_path};
+            try_files $uri $uri/ /{app_name}/index.html;
+        }}
+    }}
+        """
+
+        config_file = os.path.join(NGINX_SITES_PATH, f"{app_name}")
+        with open(config_file, 'w') as f:
+            f.write(config_content)
+
+        # Create symlink in sites-enabled if it doesn't exist
+        symlink_path = os.path.join(NGINX_SITES_ENABLED_PATH, app_name)
+        if not os.path.exists(symlink_path):
+            os.symlink(config_file, symlink_path)

@@ -69,10 +69,7 @@ function App() {
     <ThemeProvider theme={theme}>
       <ErrorBoundary>
         <Suspense fallback={<div>Loading...</div>}>
-          <Routes>
-            <Route path="/:userId/:fileName" element={<DynamicComponent />} />
-            <Route path="/" element={<div>Welcome to the React Renderer. Please enter a valid URL with userId and fileName.</div>} />
-          </Routes>
+          <DynamicComponent />
         </Suspense>
       </ErrorBoundary>
       </ThemeProvider>

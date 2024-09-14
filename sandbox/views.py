@@ -201,7 +201,7 @@ def check_or_create_container(request):
     language = request.data.get('language')
     user_id = request.data.get('user_id', '0')
     file_name = request.data.get('file_name', 'component.js')
-    main_file_path = request.data.get('main_file_path', "./")
+    main_file_path = request.data.get('main_file_path', ".")
     if not all([code, language, file_name]):
         logger.warning(
             f"Missing required fields. code: {bool(code)}, language: {bool(language)}, file_name: {bool(file_name)}")
@@ -209,7 +209,7 @@ def check_or_create_container(request):
     if language != 'react':
         return JsonResponse({'error': 'Unsupported language'}, status=400)
 
-    react_renderer_path = '/path/to/react_renderer'  # Update this path
+    react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'  # Update this path
     container_name = f'react_renderer_{user_id}_{file_name}'
 
     try:

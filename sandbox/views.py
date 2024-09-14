@@ -23,7 +23,7 @@ client = docker.from_env()
 
 
 SERVER_IP = '13.61.3.236'  # Replace with your actual server IP
-SERVER_PORT = 8000
+SERVER_PORT = 3001
 
 
 @csrf_exempt
@@ -229,10 +229,7 @@ def check_or_create_container(request):
                 'FILE_NAME': file_name,
                 'PORT': str(SERVER_PORT)  # Set the server port
             },
-            volumes={
-                react_renderer_path: {'bind': '/app', 'mode': 'rw'}
-            },
-            ports={f'{SERVER_PORT}/tcp': None}  # Map to a random host port
+            ports={f'{SERVER_PORT}/tcp': 3001}  # Map to a random host port
         )
 
     update_code_internal(container, code, user_id, file_name, main_file_path)

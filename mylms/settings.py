@@ -41,7 +41,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Use the DJANGO_ENV variable to set different configurations
 if DJANGO_ENV == 'production':
     DEBUG = False
-    ALLOWED_HOSTS = ['13.61.3.236']
+    ALLOWED_HOSTS = ['13.60.82.196']
     # ... other production settings ...
 elif DJANGO_ENV == 'development':
     DEBUG = True
@@ -91,6 +91,7 @@ CORS_ALLOW_ALL_ORIGINS = True  # For development only. Set to False in productio
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://13.60.82.196:8000",
 ]
 
 CORS_ALLOW_CREDENTIALS = True

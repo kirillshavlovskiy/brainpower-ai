@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 client = docker.from_env()
 
 
-SERVER_IP = '13.61.3.236'  # Replace with your actual server IP
+SERVER_IP = '13.60.82.196'  # Replace with your actual server IP
 SERVER_PORT = 3001
 
 

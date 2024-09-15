@@ -219,6 +219,15 @@ def check_or_create_container(request):
         logger.info(f"Using existing container: {container_name}")
     except docker.errors.NotFound:
         logger.info(f"Creating new container: {container_name}")
+
+        # Create a temporary directory for user-specific files
+        user_dir = os.path.join(react_renderer_path, f'user_{user_id}')
+        os.makedirs(user_dir, exist_ok=True)
+
+        # Create a file for the user's code
+        with open(os.path.join(user_dir, 'component.js'), 'w') as f:
+            f.write(code)
+
         container = client.containers.run(
             'react_renderer',
             detach=True,
@@ -230,9 +239,9 @@ def check_or_create_container(request):
                 'PORT': str(SERVER_PORT)  # Set the server port
             },
             volumes={
-                react_renderer_path: {'bind': '/app', 'mode': 'rw'}
+                user_dir: {'bind': '/app/src', 'mode': 'rw'}  # Mount only the user-specific directory
             },
-            ports={f'{SERVER_PORT}/tcp': 3001}  # Map to a random host port
+            ports={f'{SERVER_PORT}/tcp': None}  # Map to a random host port
         )
 
     update_code_internal(container, code, user_id, file_name, main_file_path)
@@ -252,7 +261,6 @@ def check_or_create_container(request):
         })
     else:
         return JsonResponse({'error': 'Failed to get port mapping'}, status=500)
-
 
 @csrf_exempt
 @api_view(['POST'])

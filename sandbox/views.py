@@ -166,8 +166,13 @@ def check_container_ready(request):
         container_status = container.status
         logger.info(f"Container status: {container_status}")
 
-        logs = container.logs().decode('utf-8')
-        latest_log = logs.split('\n')[-1] if logs else "No logs available"
+        # Get all logs and print them
+        all_logs = container.logs(stdout=True, stderr=True).decode('utf-8').strip()
+        logger.info(f"All container logs:\n{all_logs}")
+
+        # Get recent logs
+        recent_logs = container.logs(stdout=True, stderr=True, tail=50).decode('utf-8').strip()
+        latest_log = recent_logs.split('\n')[-1] if recent_logs else "No recent logs"
 
         if container_status != 'running':
             return JsonResponse({'status': 'container_starting', 'log': latest_log})
@@ -179,22 +184,17 @@ def check_container_ready(request):
         host_port = port_mapping[0]['HostPort']
         dynamic_url = f"http://{SERVER_IP}:{host_port}/{user_id}/{file_name}"
 
-        if 'You can now view react_renderer in the browser' in logs:
+        # Check for compilation status
+        if "Compiled successfully!" in all_logs:
             return JsonResponse({
                 'status': 'ready',
                 'url': dynamic_url,
-                'log': latest_log
+                'log': "Compiled successfully!"
             })
-        elif 'Failed to compile' in logs:
-            return JsonResponse({
-                'status': 'compilation_failed',
-                'log': latest_log
-            })
+        elif "Starting the development server..." in all_logs:
+            return JsonResponse({'status': 'compiling', 'log': "Starting the development server..."})
         else:
-            return JsonResponse({
-                'status': 'compiling',
-                'log': latest_log
-            })
+            return JsonResponse({'status': 'preparing', 'log': latest_log})
 
     except docker.errors.NotFound:
         return JsonResponse({'error': 'Container not found', 'log': 'Container not found'}, status=404)

@@ -209,7 +209,7 @@ def check_or_create_container(request):
     if language != 'react':
         return JsonResponse({'error': 'Unsupported language'}, status=400)
 
-    react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'  # Update this path
+    react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer/src'  # Update this path
     container_name = f'react_renderer_{user_id}_{file_name}'
 
     try:

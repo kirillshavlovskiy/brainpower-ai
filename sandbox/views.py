@@ -194,6 +194,10 @@ def check_container_ready(request):
         return JsonResponse({'error': 'Error checking container status', 'details': str(e), 'log': str(e)}, status=500)
 
 
+import os
+import shutil
+
+
 @api_view(['POST'])
 def check_or_create_container(request):
     logger.info(f"Received request data: {request.data}")
@@ -209,7 +213,7 @@ def check_or_create_container(request):
     if language != 'react':
         return JsonResponse({'error': 'Unsupported language'}, status=400)
 
-    react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer/src'  # Update this path
+    react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'  # Update this path
     container_name = f'react_renderer_{user_id}_{file_name}'
 
     try:
@@ -224,8 +228,13 @@ def check_or_create_container(request):
         user_dir = os.path.join(react_renderer_path, f'user_{user_id}')
         os.makedirs(user_dir, exist_ok=True)
 
-        # Create a file for the user's code
-        with open(os.path.join(user_dir, 'component.js'), 'w') as f:
+        # Copy the entire 'src' directory to the user's directory
+        src_dir = os.path.join(react_renderer_path, 'src')
+        user_src_dir = os.path.join(user_dir, 'src')
+        shutil.copytree(src_dir, user_src_dir, dirs_exist_ok=True)
+
+        # Write the user's code to the appropriate file
+        with open(os.path.join(user_src_dir, file_name), 'w') as f:
             f.write(code)
 
         container = client.containers.run(
@@ -239,7 +248,7 @@ def check_or_create_container(request):
                 'PORT': str(SERVER_PORT)  # Set the server port
             },
             volumes={
-                user_dir: {'bind': '/app/src', 'mode': 'rw'}  # Mount only the user-specific directory
+                user_dir: {'bind': '/app', 'mode': 'rw'}  # Mount the entire user directory
             },
             ports={f'{SERVER_PORT}/tcp': None}  # Map to a random host port
         )

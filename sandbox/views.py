@@ -224,23 +224,6 @@ def check_or_create_container(request):
     except docker.errors.NotFound:
         logger.info(f"Creating new container: {container_name}")
 
-        # Create a temporary directory for user-specific files
-        user_dir = os.path.join(react_renderer_path, f'user_{user_id}')
-        os.makedirs(user_dir, exist_ok=True)
-
-        # Copy the entire 'src' directory to the user's directory
-        src_dir = os.path.join(react_renderer_path, 'src')
-        user_src_dir = os.path.join(user_dir, 'src')
-        shutil.copytree(src_dir, user_src_dir, dirs_exist_ok=True)
-
-        # Copy package.json to the user's directory
-        package_json_path = os.path.join(react_renderer_path, 'package.json')
-        shutil.copy2(package_json_path, user_dir)
-
-        # Write the user's code to the appropriate file
-        with open(os.path.join(user_src_dir, file_name), 'w') as f:
-            f.write(code)
-
         container = client.containers.run(
             'react_renderer',
             detach=True,
@@ -251,9 +234,13 @@ def check_or_create_container(request):
                 'FILE_NAME': file_name,
                 'PORT': str(SERVER_PORT)  # Set the server port
             },
-            # volumes={
-            #     user_dir: {'bind': '/app', 'mode': 'rw'}  # Mount the entire user directory
-            # },
+            volumes={
+                os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
+                os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
+                os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
+                os.path.join(react_renderer_path, 'package-lock.json'): {'bind': '/app/package-lock.json',
+                                                                         'mode': 'ro'},
+            },
             ports={f'{SERVER_PORT}/tcp': None}  # Map to a random host port
         )
 

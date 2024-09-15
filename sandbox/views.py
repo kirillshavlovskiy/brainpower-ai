@@ -167,16 +167,18 @@ def check_container_ready(request):
             return JsonResponse({'status': 'waiting_for_port', 'log': latest_log})
 
         host_port = port_mapping[0]['HostPort']
-        dynamic_url = f"http://{SERVER_IP}:{host_port}"
+        dynamic_url = f"http://{SERVER_IP}:{host_port}/{user_id}/{file_name}"
 
         try:
             response = requests.get(dynamic_url, timeout=5)
             if response.status_code == 200:
                 if 'root' in response.text and 'react' in response.text.lower():
                     return JsonResponse({
-                        'status': 'ready',
+                        'status': 'success',
+                        'message': 'Container is running',
+                        'container_id': container.id,
                         'url': dynamic_url,
-                        'log': latest_log
+                        'can_deploy': True,
                     })
                 else:
                     return JsonResponse({'status': 'content_loading', 'log': latest_log})
@@ -250,7 +252,7 @@ def check_or_create_container(request):
     port_mapping = container.ports.get(f'{SERVER_PORT}/tcp')
     if port_mapping:
         host_port = port_mapping[0]['HostPort']
-        dynamic_url = f"{SERVER_IP}:3001/{user_id}/{file_name}"
+        dynamic_url = f"http://{SERVER_IP}:{host_port}/{user_id}/{file_name}"
         logger.info(f"Dynamic URL: {dynamic_url}")
         return JsonResponse({
             'status': 'success',
@@ -288,7 +290,7 @@ def update_code(request):
     main_code = request.data.get('main_code')
     user_id = request.data.get('user_id')
     file_name = request.data.get('file_name')
-    main_file_path = request.data.get('main_file_path', "Root/Project")  # Get this from the request
+    main_file_path = request.data.get('main_file_path', ".")  # Get this from the request
     logger.info(f"Received update request for container: {container_id}, original file: {file_name}, main file path: {main_file_path}")
 
     if not all([container_id, main_code, user_id, main_file_path]):

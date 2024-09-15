@@ -137,8 +137,6 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         raise
 
 
-
-
 @api_view(['GET'])
 def check_container_ready(request):
     container_id = request.GET.get('container_id')
@@ -156,7 +154,7 @@ def check_container_ready(request):
         container_status = container.status
         logger.info(f"Container status: {container_status}")
 
-        logs = container.logs(tail=10).decode('utf-8').strip()
+        logs = container.logs().decode('utf-8')
         latest_log = logs.split('\n')[-1] if logs else "No logs available"
 
         if container_status != 'running':
@@ -169,25 +167,22 @@ def check_container_ready(request):
         host_port = port_mapping[0]['HostPort']
         dynamic_url = f"http://{SERVER_IP}:{host_port}/{user_id}/{file_name}"
 
-        try:
-            response = requests.get(dynamic_url, timeout=5)
-            if response.status_code == 200:
-                if 'root' in response.text and 'react' in response.text.lower():
-                    return JsonResponse({
-                        'status': 'success',
-                        'message': 'Container is running',
-                        'container_id': container.id,
-                        'url': dynamic_url,
-                        'can_deploy': True,
-                    })
-                else:
-                    return JsonResponse({'status': 'content_loading', 'log': latest_log})
-            else:
-                return JsonResponse(
-                    {'status': 'server_error', 'details': f'Server responded with status code {response.status_code}',
-                     'log': latest_log})
-        except requests.RequestException:
-            return JsonResponse({'status': 'server_starting', 'log': latest_log})
+        if 'You can now view react_renderer in the browser' in logs:
+            return JsonResponse({
+                'status': 'ready',
+                'url': dynamic_url,
+                'log': latest_log
+            })
+        elif 'Failed to compile' in logs:
+            return JsonResponse({
+                'status': 'compilation_failed',
+                'log': latest_log
+            })
+        else:
+            return JsonResponse({
+                'status': 'compiling',
+                'log': latest_log
+            })
 
     except docker.errors.NotFound:
         return JsonResponse({'error': 'Container not found', 'log': 'Container not found'}, status=404)
@@ -198,7 +193,6 @@ def check_container_ready(request):
 
 import os
 import shutil
-
 
 @api_view(['POST'])
 def check_or_create_container(request):

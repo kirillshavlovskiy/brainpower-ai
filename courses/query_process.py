@@ -1525,7 +1525,7 @@ async def react_agent_queue(contents: Dict[str, Any], channel_name: str):
                     "image_data": contents['image_data'],
                     "user_id": user_id,
                     "session_ID": contents['session_id'],
-                    "thread_ID": thread_id,
+                    "thread_id": thread_id,
                     "topics": topics
                 },
                 config={

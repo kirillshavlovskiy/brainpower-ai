@@ -41,7 +41,7 @@ def check_container(request):
             port_mapping = container.ports.get('3001/tcp')
             if port_mapping:
                 host_port = port_mapping[0]['HostPort']
-                dynamic_url = f"http://localhost:{host_port}"
+                dynamic_url = f"http://localhost:{host_port}/{user_id}/{file_name}"
                 return JsonResponse({
                     'status': 'running',
                     'container_id': container.id,
@@ -229,6 +229,9 @@ def check_or_create_container(request):
                 'FILE_NAME': file_name,
                 'PORT': str(SERVER_PORT)  # Set the server port
             },
+            volumes={
+                react_renderer_path: {'bind': '/app', 'mode': 'rw'}
+            },
             ports={f'{SERVER_PORT}/tcp': 3001}  # Map to a random host port
         )
 
@@ -238,7 +241,7 @@ def check_or_create_container(request):
     port_mapping = container.ports.get(f'{SERVER_PORT}/tcp')
     if port_mapping:
         host_port = port_mapping[0]['HostPort']
-        dynamic_url = f"http://{SERVER_IP}:{host_port}"
+        dynamic_url = f"http://localhost:{host_port}/{user_id}/{file_name}"
         logger.info(f"Dynamic URL: {dynamic_url}")
         return JsonResponse({
             'status': 'success',

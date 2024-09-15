@@ -251,9 +251,9 @@ def check_or_create_container(request):
                 'FILE_NAME': file_name,
                 'PORT': str(SERVER_PORT)  # Set the server port
             },
-            volumes={
-                user_dir: {'bind': '/app', 'mode': 'rw'}  # Mount the entire user directory
-            },
+            # volumes={
+            #     user_dir: {'bind': '/app', 'mode': 'rw'}  # Mount the entire user directory
+            # },
             ports={f'{SERVER_PORT}/tcp': None}  # Map to a random host port
         )
 

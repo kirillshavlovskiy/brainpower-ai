@@ -58,12 +58,22 @@ def check_container(request):
 def update_code_internal(container, code, user, file_name, main_file_path):
     try:
         encoded_code = base64.b64encode(code.encode()).decode()
-        exec_result = container.exec_run([
-            "sh", "-c",
-            f"echo {encoded_code} | base64 -d > /app/src/component.js"
-        ])
-        if exec_result.exit_code != 0:
-            raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                exec_result = container.exec_run([
+                    "sh", "-c",
+                    f"echo {encoded_code} | base64 -d > /app/src/component.js"
+                ])
+                if exec_result.exit_code != 0:
+                    raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
+                break
+            except docker.errors.APIError as e:
+                if attempt == max_attempts - 1:
+                    raise
+                logger.warning(f"API error on attempt {attempt + 1}, retrying: {str(e)}")
+                time.sleep(1)
+
         logger.info(f"Updated component.js in container with content from {file_name} at path {main_file_path}")
         logger.info(f"Processing for user: {user}")
         # Get the directory of the main file
@@ -276,6 +286,7 @@ def stop_container(request):
         logger.error(f"Error stopping container: {str(e)}", exc_info=True)
         return JsonResponse({'error': str(e)}, status=500)
 
+import  time
 
 @csrf_exempt
 @api_view(['POST'])
@@ -284,8 +295,9 @@ def update_code(request):
     main_code = request.data.get('main_code')
     user_id = request.data.get('user_id')
     file_name = request.data.get('file_name')
-    main_file_path = request.data.get('main_file_path', ".")  # Get this from the request
-    logger.info(f"Received update request for container: {container_id}, original file: {file_name}, main file path: {main_file_path}")
+    main_file_path = request.data.get('main_file_path', "Root/Project")
+    logger.info(
+        f"Received update request for container: {container_id}, original file: {file_name}, main file path: {main_file_path}")
 
     if not all([container_id, main_code, user_id, main_file_path]):
         logger.warning("Missing required data in update request")
@@ -293,6 +305,25 @@ def update_code(request):
 
     try:
         container = client.containers.get(container_id)
+
+        # Check if the container is running
+        container.reload()
+        if container.status != 'running':
+            logger.info(f"Container {container_id} is not running. Attempting to start it.")
+            container.start()
+            container.reload()
+
+            # Wait for the container to be in the running state
+            max_attempts = 10
+            for _ in range(max_attempts):
+                if container.status == 'running':
+                    break
+                time.sleep(1)
+                container.reload()
+
+            if container.status != 'running':
+                raise Exception(f"Failed to start container {container_id}")
+
         update_code_internal(container, main_code, user_id, file_name, main_file_path)
         return JsonResponse({'status': 'Code updated successfully'})
 

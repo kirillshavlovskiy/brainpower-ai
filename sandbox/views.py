@@ -233,6 +233,10 @@ def check_or_create_container(request):
         user_src_dir = os.path.join(user_dir, 'src')
         shutil.copytree(src_dir, user_src_dir, dirs_exist_ok=True)
 
+        # Copy package.json to the user's directory
+        package_json_path = os.path.join(react_renderer_path, 'package.json')
+        shutil.copy2(package_json_path, user_dir)
+
         # Write the user's code to the appropriate file
         with open(os.path.join(user_src_dir, file_name), 'w') as f:
             f.write(code)

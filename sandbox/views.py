@@ -1,3 +1,4 @@
+import random
 from socket import socket
 import requests
 import os
@@ -23,7 +24,8 @@ client = docker.from_env()
 
 
 SERVER_IP = '13.60.82.196'  # Replace with your actual server IP
-SERVER_PORT = 3001
+HOST_PORT_RANGE_START = 32768
+HOST_PORT_RANGE_END = 60999
 
 
 @csrf_exempt
@@ -41,7 +43,7 @@ def check_container(request):
             port_mapping = container.ports.get('3001/tcp')
             if port_mapping:
                 host_port = port_mapping[0]['HostPort']
-                dynamic_url = f"{SERVER_PORT}:3001/{host_port}/{user_id}/{file_name}"
+                dynamic_url = f"{SERVER_IP}:{host_port}/{user_id}/{file_name}"
                 return JsonResponse({
                     'status': 'running',
                     'container_id': container.id,
@@ -170,7 +172,7 @@ def check_container_ready(request):
         if container_status != 'running':
             return JsonResponse({'status': 'container_starting', 'log': latest_log})
 
-        port_mapping = container.ports.get(f'{SERVER_PORT}/tcp')
+        port_mapping = container.ports.get('3001/tcp')
         if not port_mapping:
             return JsonResponse({'status': 'waiting_for_port', 'log': latest_log})
 
@@ -230,6 +232,8 @@ def check_or_create_container(request):
     except docker.errors.NotFound:
         logger.info(f"Creating new container: {container_name}")
 
+        host_port = random.randint(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
+
         container = client.containers.run(
             'react_renderer',
             detach=True,
@@ -238,7 +242,7 @@ def check_or_create_container(request):
                 'USER_ID': user_id,
                 'REACT_APP_USER_ID': user_id,
                 'FILE_NAME': file_name,
-                'PORT': str(SERVER_PORT)  # Set the server port
+                'PORT': str(3001)  # Set the server port
             },
             volumes={
                 os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
@@ -247,13 +251,13 @@ def check_or_create_container(request):
                 os.path.join(react_renderer_path, 'package-lock.json'): {'bind': '/app/package-lock.json',
                                                                          'mode': 'ro'},
             },
-            ports={f'{SERVER_PORT}/tcp': None}  # Map to a random host port
+            ports={'3001/tcp': host_port}
         )
 
     update_code_internal(container, code, user_id, file_name, main_file_path)
 
     container.reload()
-    port_mapping = container.ports.get(f'{SERVER_PORT}/tcp')
+    port_mapping = container.ports.get('3001/tcp')
     if port_mapping:
         host_port = port_mapping[0]['HostPort']
         dynamic_url = f"http://{SERVER_IP}:{host_port}/{user_id}/{file_name}"

@@ -9,6 +9,7 @@
     "@mui/icons-material": "^5.11.16",
     "@mui/material": "^5.13.2",
     "lucide-react": "^0.268.0",
+    "lucide-react": "^0.268.0",
     "react": "^17.0.2",
     "react-dom": "^17.0.2",
     "react-router-dom": "^6.10.0"
@@ -31,7 +32,7 @@
     "test": "react-scripts test",
     "eject": "react-scripts eject",
     "transpile": "babel src --out-dir dist",
-    "start": "HOST=0.0.0.0 PORT=3001 react-scripts start"
+    "start": "HOST=0.0.0.0 react-scripts start"
   },
   "browserslist": {
     "production": [
@@ -45,5 +46,4 @@
       "last 1 safari version"
     ]
   },
-  "homepage": "/deployed/0_rendered-test-component-js"
 }

@@ -125,6 +125,8 @@ class FileStructureConsumer(AsyncWebsocketConsumer):
                 await self.delete_node(data['id'])
             elif action == 'add_node':
                 await self.add_node(data['parentId'], data['node'])
+            elif action == 'get_file_path':
+                await self.get_file_path(data['id'])
             else:
                 logger.warning(f"Received unknown action: {action}")
         except KeyError as e:
@@ -523,3 +525,28 @@ if __name__ == "__main__":
                 'type': 'error',
                 'message': 'Failed to add node'
             }))
+
+    async def get_file_path(self, file_id):
+        try:
+            path = await self._get_file_path(file_id)
+            await self.send(text_data=json.dumps({
+                'type': 'file_path',
+                'id': file_id,
+                'path': path
+            }))
+        except Exception as e:
+            logger.error(f"Error getting file path: {str(e)}")
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'message': 'Failed to get file path'
+            }))
+
+    @database_sync_to_async
+    def _get_file_path(self, file_id):
+        file = FileStructure.objects.get(id=file_id, user=self.user)
+        path = file.name
+        current = file
+        while current.parent:
+            current = current.parent
+            path = f"{current.name}/{path}"
+        return path

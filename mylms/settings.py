@@ -91,6 +91,7 @@ CORS_ALLOW_ALL_ORIGINS = True  # For development only. Set to False in productio
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "https://d1ruevvpet0k71.cloudfront.net",
     "http://13.60.82.196:8000",
 ]
 

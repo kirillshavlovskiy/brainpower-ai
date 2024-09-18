@@ -272,23 +272,48 @@ def check_or_create_container(request):
     else:
         return JsonResponse({'error': 'Failed to get port mapping'}, status=500)
 
+
+import time
+
+
 @csrf_exempt
 @api_view(['POST'])
 def stop_container(request):
     container_id = request.data.get('container_id')
     user_id = request.data.get('user_id')
     file_name = request.data.get('file_name')
-    if not container_exists(container_id):
-        return JsonResponse({'status': 'Container not found, possibly already removed'})
+
+    if not container_id:
+        return JsonResponse({'error': 'No container ID provided'}, status=400)
 
     try:
         container = client.containers.get(container_id)
-        container.stop()
-        container.remove()
+    except docker.errors.NotFound:
+        logger.info(f"Container {container_id} not found, considering it already removed")
+        return JsonResponse({'status': 'Container not found, possibly already removed'})
+
+    try:
+        logger.info(f"Attempting to stop container {container_id}")
+        container.stop(timeout=10)  # Give it 10 seconds to stop gracefully
+
+        # Wait for the container to stop
+        max_wait = 15
+        start_time = time.time()
+        while time.time() - start_time < max_wait:
+            container.reload()
+            if container.status == 'exited':
+                break
+            time.sleep(1)
+
+        if container.status != 'exited':
+            logger.warning(f"Container {container_id} did not stop gracefully, forcing removal")
+
+        container.remove(force=True)
+        logger.info(f"Container {container_id} stopped and removed successfully")
         return JsonResponse({'status': 'Container stopped and removed'})
     except Exception as e:
-        logger.error(f"Error stopping container: {str(e)}", exc_info=True)
-        return JsonResponse({'error': str(e)}, status=500)
+        logger.error(f"Error stopping container {container_id}: {str(e)}", exc_info=True)
+        return JsonResponse({'error': f"Failed to stop container: {str(e)}"}, status=500)
 
 import  time
 

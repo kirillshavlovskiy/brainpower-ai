@@ -17,10 +17,8 @@ from courses import routing
 application = ProtocolTypeRouter({
     "http": get_asgi_application(),
     "websocket": AuthMiddlewareStack(
-        UserIDAuthMiddleware(
             URLRouter(
                 routing.websocket_urlpatterns
             )
-        )
     ),
 })

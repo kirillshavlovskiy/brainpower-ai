@@ -507,6 +507,11 @@ class ServeReactApp(TemplateView):
         return [template_path]
 
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 class DeployToProductionView_prod(View):
     def post(self, request, *args, **kwargs):
         try:
@@ -518,53 +523,70 @@ class DeployToProductionView_prod(View):
             if not all([container_id, user_id, file_name]):
                 return JsonResponse({'error': 'Missing required data'}, status=400)
 
+            logger.info(f"Starting deployment for container: {container_id}, user: {user_id}, file: {file_name}")
+
             # 1. Run npm build in the container
             client = docker.from_env()
             container = client.containers.get(container_id)
+            logger.info("Running npm build in container")
             exec_result = container.exec_run("npm run build")
             if exec_result.exit_code != 0:
-                raise Exception(f"Build failed: {exec_result.output.decode()}")
+                error_message = f"Build failed: {exec_result.output.decode()}"
+                logger.error(error_message)
+                return JsonResponse({'error': error_message}, status=500)
+
+            logger.info("npm build completed successfully")
 
             # 2. Copy the build files from the container to the React apps directory
             app_name = f"{user_id}_{file_name.replace('.', '-')}"
             production_dir = os.path.join(REACT_APPS_ROOT, app_name)
 
-            # Remove existing directory if it exists
+            logger.info(f"Copying build files to {production_dir}")
             if os.path.exists(production_dir):
                 shutil.rmtree(production_dir)
-
             os.makedirs(production_dir, exist_ok=True)
 
             # Use docker cp to copy files from container to host
             subprocess.run(["docker", "cp", f"{container_id}:/app/build/.", production_dir], check=True)
+            logger.info("Files copied successfully")
 
             # 3. Create Nginx configuration for the React app
+            logger.info("Creating Nginx configuration")
             self.create_nginx_config(app_name, production_dir)
 
             # 4. Reload Nginx to apply changes
+            logger.info("Reloading Nginx")
             subprocess.run(["sudo", "nginx", "-s", "reload"], check=True)
 
             # 5. Return the new URL to the client
-            production_url = f"http://{request.get_host()}/deployed/{app_name}/"
+            production_url = f"http://{app_name}.{request.get_host()}/"
+            logger.info(f"Deployment completed. Production URL: {production_url}")
+
+            logger.info("npm build completed successfully")
+            build_logs = container.logs(since=int(time.time()) - 300).decode()  # Get logs from the last 5 minutes
+            logger.info(f"Container build logs:\n{build_logs}")
+
             return JsonResponse({
                 'status': 'success',
                 'message': 'Application deployed to production',
-                'production_url': production_url
+                'production_url': production_url,
+                'deployment_logs': build_logs  # Add this line
             })
 
         except Exception as e:
-            logger.error(f"Error in deploy_to_production: {str(e)}")
+            logger.error(f"Error in deploy_to_production: {str(e)}", exc_info=True)
             return JsonResponse({'error': str(e)}, status=500)
 
     def create_nginx_config(self, app_name, app_path):
+        logger.info(f"Creating Nginx config for {app_name}")
         config_content = f"""
     server {{
         listen 80;
-        server_name {self.request.get_host()};
+        server_name {app_name}.{self.request.get_host()};
 
-        location /{app_name} {{
+        location / {{
             alias {app_path};
-            try_files $uri $uri/ /{app_name}/index.html;
+            try_files $uri $uri/ /index.html;
         }}
     }}
         """
@@ -577,3 +599,5 @@ class DeployToProductionView_prod(View):
         symlink_path = os.path.join(NGINX_SITES_ENABLED_PATH, app_name)
         if not os.path.exists(symlink_path):
             os.symlink(config_file, symlink_path)
+
+        logger.info(f"Nginx config created for {app_name}")

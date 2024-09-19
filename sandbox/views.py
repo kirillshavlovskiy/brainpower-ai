@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 client = docker.from_env()
 
 
-SERVER_IP = '13.60.82.196'  # Replace with your actual server IP
+SERVER = 'https://brainpower-ai.net'  # Replace with your actual server IP
 HOST_PORT_RANGE_START = 32768
 HOST_PORT_RANGE_END = 60999
 
@@ -43,7 +43,7 @@ def check_container(request):
             port_mapping = container.ports.get('3001/tcp')
             if port_mapping:
                 host_port = port_mapping[0]['HostPort']
-                dynamic_url = f"{SERVER_IP}:{host_port}/{user_id}/{file_name}"
+                dynamic_url = f"{SERVER}:{host_port}/{user_id}/{file_name}"
                 return JsonResponse({
                     'status': 'running',
                     'container_id': container.id,
@@ -182,7 +182,7 @@ def check_container_ready(request):
             return JsonResponse({'status': 'waiting_for_port', 'log': latest_log})
 
         host_port = port_mapping[0]['HostPort']
-        dynamic_url = f"http://{SERVER_IP}:{host_port}/{user_id}/{file_name}"
+        dynamic_url = f"{SERVER}:{host_port}/{user_id}/{file_name}"
 
         # Check for compilation status
         if "Compiled successfully!" in all_logs:
@@ -260,7 +260,7 @@ def check_or_create_container(request):
     port_mapping = container.ports.get('3001/tcp')
     if port_mapping:
         host_port = port_mapping[0]['HostPort']
-        dynamic_url = f"http://{SERVER_IP}:{host_port}/{user_id}/{file_name}"
+        dynamic_url = f"{SERVER}:{host_port}/{user_id}/{file_name}"
         logger.info(f"Dynamic URL: {dynamic_url}")
         return JsonResponse({
             'status': 'success',

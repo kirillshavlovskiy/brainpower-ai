@@ -185,7 +185,7 @@ def check_container_ready(request):
             return JsonResponse({'status': 'waiting_for_port', 'log': latest_log})
 
         host_port = port_mapping[0]['HostPort']
-        dynamic_url = f"http://{host_port}.{HOST_URL}"
+        dynamic_url = f"http://{host_port}.{HOST_URL}/{user_id}/{file_name}"
 
         # Check for compilation status
         if "Compiled successfully!" in all_logs:
@@ -285,7 +285,7 @@ def check_or_create_container(request):
     container.reload()
     port_mapping = container.ports.get('3001/tcp')
     if port_mapping:
-        dynamic_url = f"http://{host_port}.{HOST_URL}"
+        dynamic_url = f"http://{host_port}.{HOST_URL}/{user_id}/{file_name}"
         logger.info(f"Container running successfully: {dynamic_url}")
         return JsonResponse({
             'status': 'success',

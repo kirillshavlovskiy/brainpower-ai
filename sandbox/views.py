@@ -185,7 +185,7 @@ def check_container_ready(request):
             return JsonResponse({'status': 'waiting_for_port', 'log': latest_log})
 
         host_port = port_mapping[0]['HostPort']
-        dynamic_url = f"{HOST_URL}:{host_port}/{user_id}/{file_name}"
+        dynamic_url = f"{host_port}.{file_name}.{user_id}.{HOST_URL}"
 
         # Check for compilation status
         if "Compiled successfully!" in all_logs:

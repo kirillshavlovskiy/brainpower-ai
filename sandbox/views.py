@@ -16,16 +16,17 @@ from django.views.decorators.csrf import csrf_exempt
 from rest_framework.decorators import api_view
 import logging
 import docker
+from string import Template
 import shutil
 import tempfile
 
 logger = logging.getLogger(__name__)
 client = docker.from_env()
 
-
-SERVER = 'https://brainpower-ai.net'  # Replace with your actual server IP
+HOST_URL = 'brainpower-ai.net'
 HOST_PORT_RANGE_START = 32768
 HOST_PORT_RANGE_END = 60999
+NGINX_SITES_DYNAMIC = '/etc/nginx/sites-dynamic'
 
 
 @csrf_exempt
@@ -43,7 +44,7 @@ def check_container(request):
             port_mapping = container.ports.get('3001/tcp')
             if port_mapping:
                 host_port = port_mapping[0]['HostPort']
-                dynamic_url = f"{SERVER}:{host_port}/{user_id}/{file_name}"
+                dynamic_url = f"{HOST_URL}:{host_port}/{user_id}/{file_name}"
                 return JsonResponse({
                     'status': 'running',
                     'container_id': container.id,
@@ -106,7 +107,8 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                     f"mkdir -p $(dirname {container_css_path}) && touch {container_css_path}"
                 ])
                 if exec_result.exit_code != 0:
-                    logger.error(f"Failed to create empty CSS file {css_file_path} in container: {exec_result.output.decode()}")
+                    logger.error(
+                        f"Failed to create empty CSS file {css_file_path} in container: {exec_result.output.decode()}")
                 else:
                     logger.info(f"Created empty CSS file {css_file_path} in container")
 
@@ -135,7 +137,8 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                         f"mkdir -p $(dirname {container_path}) && touch {container_path}"
                     ])
                     if exec_result.exit_code != 0:
-                        logger.error(f"Failed to create empty file {import_path} in container: {exec_result.output.decode()}")
+                        logger.error(
+                            f"Failed to create empty file {import_path} in container: {exec_result.output.decode()}")
                     else:
                         logger.info(f"Created empty file {import_path} in container")
 
@@ -182,7 +185,7 @@ def check_container_ready(request):
             return JsonResponse({'status': 'waiting_for_port', 'log': latest_log})
 
         host_port = port_mapping[0]['HostPort']
-        dynamic_url = f"{SERVER}:{host_port}/{user_id}/{file_name}"
+        dynamic_url = f"{HOST_URL}:{host_port}/{user_id}/{file_name}"
 
         # Check for compilation status
         if "Compiled successfully!" in all_logs:
@@ -205,63 +208,85 @@ def check_container_ready(request):
 
 import os
 import shutil
+import socket
+
+
+def get_available_port(start, end):
+    while True:
+        port = random.randint(start, end)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        result = sock.connect_ex(('localhost', port))
+        sock.close()
+        if result != 0:
+            return port
+
 
 @api_view(['POST'])
 def check_or_create_container(request):
-    logger.info(f"Received request data: {request.data}")
-    code = request.data.get('main_code')
-    language = request.data.get('language')
-    user_id = request.data.get('user_id', '0')
-    file_name = request.data.get('file_name', 'component.js')
-    main_file_path = request.data.get('main_file_path', "Root/Project")
+    data = request.data
+    code = data.get('main_code')
+    language = data.get('language')
+    user_id = data.get('user_id', '0')
+    file_name = data.get('file_name', 'component.js')
+    main_file_path = data.get('main_file_path', "Root/Project/DailyInspirationApp/component.js")
+
     if not all([code, language, file_name]):
-        logger.warning(
-            f"Missing required fields. code: {bool(code)}, language: {bool(language)}, file_name: {bool(file_name)}")
         return JsonResponse({'error': 'Missing required fields'}, status=400)
     if language != 'react':
         return JsonResponse({'error': 'Unsupported language'}, status=400)
 
-    react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'  # Update this path
+    react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'
     container_name = f'react_renderer_{user_id}_{file_name}'
 
     try:
         container = client.containers.get(container_name)
         if container.status != 'running':
             container.start()
-        logger.info(f"Using existing container: {container_name}")
+        container.reload()
+        host_port = container.ports.get('3001/tcp')[0]['HostPort']
+        logger.info(f"Existing container found and started: {container_name}")
     except docker.errors.NotFound:
-        logger.info(f"Creating new container: {container_name}")
+        host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
+        logger.info(f"Creating new container: {container_name} on port {host_port}")
 
-        host_port = random.randint(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
+        try:
+            container = client.containers.run(
+                'react_renderer',
+                detach=True,
+                name=container_name,
+                environment={
+                    'USER_ID': user_id,
+                    'REACT_APP_USER_ID': user_id,
+                    'FILE_NAME': file_name,
+                    'PORT': str(3001)
+                },
+                volumes={
+                    os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
+                    os.path.join(react_renderer_path, 'package-lock.json'): {'bind': '/app/package-lock.json',
+                                                                             'mode': 'ro'},
+                },
+                ports={'3001/tcp': host_port},
+                mem_limit='512m',
+                cpu_quota=50000,  # 50% of CPU
+                restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
+            )
+        except docker.errors.APIError as e:
+            logger.error(f"Failed to create container: {str(e)}")
+            return JsonResponse({'error': 'Failed to create container'}, status=500)
 
-        container = client.containers.run(
-            'react_renderer',
-            detach=True,
-            name=container_name,
-            environment={
-                'USER_ID': user_id,
-                'REACT_APP_USER_ID': user_id,
-                'FILE_NAME': file_name,
-                'PORT': str(3001)  # Set the server port
-            },
-            volumes={
-                os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
-                os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
-                os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
-                os.path.join(react_renderer_path, 'package-lock.json'): {'bind': '/app/package-lock.json',
-                                                                         'mode': 'ro'},
-            },
-            ports={'3001/tcp': host_port}
-        )
-
-    update_code_internal(container, code, user_id, file_name, main_file_path)
+    try:
+        update_code_internal(container, code, user_id, file_name, main_file_path)
+    except Exception as e:
+        logger.error(f"Failed to update code in container: {str(e)}")
+        return JsonResponse({'error': 'Failed to update code in container'}, status=500)
 
     container.reload()
     port_mapping = container.ports.get('3001/tcp')
     if port_mapping:
-        host_port = port_mapping[0]['HostPort']
-        dynamic_url = f"{SERVER}:{host_port}/{user_id}/{file_name}"
-        logger.info(f"Dynamic URL: {dynamic_url}")
+        dynamic_url = f"http://{host_port}.{HOST_URL}"
+        logger.info(f"Container running successfully: {dynamic_url}")
         return JsonResponse({
             'status': 'success',
             'message': 'Container is running',
@@ -270,6 +295,7 @@ def check_or_create_container(request):
             'can_deploy': True,
         })
     else:
+        logger.error("Failed to get port mapping")
         return JsonResponse({'error': 'Failed to get port mapping'}, status=500)
 
 
@@ -315,7 +341,9 @@ def stop_container(request):
         logger.error(f"Error stopping container {container_id}: {str(e)}", exc_info=True)
         return JsonResponse({'error': f"Failed to stop container: {str(e)}"}, status=500)
 
-import  time
+
+import time
+
 
 @csrf_exempt
 @api_view(['POST'])
@@ -362,6 +390,7 @@ def update_code(request):
     except Exception as e:
         logger.error(f"Error updating code: {str(e)}", exc_info=True)
         return JsonResponse({'error': str(e)}, status=500)
+
 
 def container_exists(container_id):
     try:

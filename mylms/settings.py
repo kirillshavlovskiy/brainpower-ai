@@ -43,6 +43,7 @@ if DJANGO_ENV == 'production':
     DEBUG = False
     ALLOWED_HOSTS = ['13.60.82.196',
                      'brainpower-ai.net',
+                     '.brainpower-ai.net',
                      'www.brainpower-ai.net',
                      'd1ruevvpet0k71.cloudfront.net',
                      'localhost',

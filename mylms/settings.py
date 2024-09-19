@@ -99,6 +99,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",
     "https://d1ruevvpet0k71.cloudfront.net",
     "https://13.60.82.196:8000",
+    "http://brainpower-ai.net",
     "https://brainpower-ai.net"
 ]
 

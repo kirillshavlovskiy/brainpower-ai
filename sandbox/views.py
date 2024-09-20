@@ -511,9 +511,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
+@method_decorator(csrf_exempt, name='dispatch')
 class DeployToProductionView_prod(View):
     def post(self, request, *args, **kwargs):
+        logger.info(f"Received deployment request: {request.POST}")
         try:
             data = json.loads(request.body)
             container_id = data.get('container_id')
@@ -559,23 +560,18 @@ class DeployToProductionView_prod(View):
             subprocess.run(["sudo", "nginx", "-s", "reload"], check=True)
 
             # 5. Return the new URL to the client
-            production_url = f"http://{app_name}.{request.get_host()}/"
+            production_url = f"http://{request.get_host()}/deployed/{app_name}/"
             logger.info(f"Deployment completed. Production URL: {production_url}")
-
-            logger.info("npm build completed successfully")
-            build_logs = container.logs(since=int(time.time()) - 300).decode()  # Get logs from the last 5 minutes
-            logger.info(f"Container build logs:\n{build_logs}")
-
             return JsonResponse({
                 'status': 'success',
                 'message': 'Application deployed to production',
-                'production_url': production_url,
-                'deployment_logs': build_logs  # Add this line
+                'production_url': production_url
             })
 
         except Exception as e:
             logger.error(f"Error in deploy_to_production: {str(e)}", exc_info=True)
             return JsonResponse({'error': str(e)}, status=500)
+
 
     def create_nginx_config(self, app_name, app_path):
         logger.info(f"Creating Nginx config for {app_name}")

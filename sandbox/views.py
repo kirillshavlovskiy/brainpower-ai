@@ -540,70 +540,44 @@ from django.conf import settings
 class DeployToProductionView_prod(View):
     def post(self, request, *args, **kwargs):
         def stream_deployment():
-            start_time = time.time()
-            yield f"Deployment started at {start_time}\n"
-
+            deployment_container = None
             try:
                 data = json.loads(request.body)
-                yield f"Received data: {data}\n"
-
-                container_id = data.get('container_id')
                 user_id = data.get('user_id')
                 file_name = data.get('file_name')
+                container_id = data.get('container_id')  # We need this for copying files later
 
-                if not all([container_id, user_id, file_name]):
+                if not all([user_id, file_name, container_id]):
                     yield "Error: Missing required data\n"
                     return
 
-                yield f"Starting deployment for container: {container_id}, user: {user_id}, file: {file_name}\n"
+                yield f"Starting deployment for user: {user_id}, file: {file_name}\n"
 
-                # 1. Run npm build in the container
-                yield "Running npm build in container...\n"
-                build_start = time.time()
-                client = docker.from_env()
-                container = client.containers.get(container_id)
-                exec_result = container.exec_run("npm run build", stream=True)
-                for line in exec_result.output:
-                    yield line.decode('utf-8')
+                deployment_container = self.create_deployment_container(user_id, file_name)
 
-                yield "Checking Node.js and npm versions...\n"
-                exec_result = container.exec_run("node --version && npm --version")
-                yield f"Node.js and npm versions:\n{exec_result.output.decode('utf-8')}\n"
-
-                yield "Displaying package.json contents...\n"
-                exec_result = container.exec_run("cat package.json")
-                yield f"package.json contents:\n{exec_result.output.decode('utf-8')}\n"
-
-                yield "Clearing npm cache and reinstalling dependencies...\n"
-                exec_result = container.exec_run("npm cache clean --force && rm -rf node_modules && npm install")
-                yield f"Dependency reinstallation result:\n{exec_result.output.decode('utf-8')}\n"
-
-                yield "Running npm build with increased memory limit and production optimizations...\n"
-
+                yield "Deployment container created. Starting build process...\n"
                 build_command = """
-                                export NODE_OPTIONS="--max-old-space-size=8192" && 
-                                export GENERATE_SOURCEMAP=false &&
-                                npm run build -- --profile
-                                """
-
-                exec_result = container.exec_run(f"/bin/sh -c '{build_command}'", stream=True)
-
+                cd /app && 
+                export NODE_OPTIONS="--max-old-space-size=8192" &&
+                export GENERATE_SOURCEMAP=false &&
+                npm run build -- --verbose
+                """
+                exec_result = deployment_container.exec_run(
+                    f"sh -c '{build_command}'",
+                    stream=True
+                )
                 for line in exec_result.output:
-                    yield line.decode('utf-8')
-
-                    # Monitor system resources
-                    mem = psutil.virtual_memory()
-                    yield f"Memory usage: {mem.percent}%\n"
+                    yield f"Build process: {line.decode()}\n"
 
                 if exec_result.exit_code != 0:
                     yield f"Build failed with exit code {exec_result.exit_code}\n"
-                    container_logs = container.logs(tail=100).decode('utf-8')
-                    yield f"Container logs:\n{container_logs}\n"
                     raise Exception("Build process failed")
 
                 yield "Build completed successfully.\n"
 
-                # 2. Copy the build files from the container to the React apps directory
+                # We don't need to create a tar file anymore, as we'll copy directly from the container
+
+                # 2. Copy the build files from the deployment container to the React apps directory
                 yield "Copying build files...\n"
                 copy_start = time.time()
                 app_name = f"{user_id}_{file_name.replace('.', '-')}"
@@ -613,7 +587,8 @@ class DeployToProductionView_prod(View):
                     shutil.rmtree(production_dir)
                 os.makedirs(production_dir, exist_ok=True)
 
-                subprocess.run(["docker", "cp", f"{container_id}:/app/build/.", production_dir], check=True)
+                # Use the deployment_container.id instead of container_id
+                subprocess.run(["docker", "cp", f"{deployment_container.id}:/app/build/.", production_dir], check=True)
                 yield f"Files copied successfully in {time.time() - copy_start:.2f} seconds\n"
 
                 # 3. Create Nginx configuration for the React app
@@ -633,13 +608,56 @@ class DeployToProductionView_prod(View):
                     "message": "Application deployed successfully",
                     "production_url": production_url
                 })
+
             except Exception as e:
-                yield json.dumps({
-                    "status": "error",
-                    "message": str(e)
-                })
+                yield f"Error in deployment: {str(e)}\n"
+                yield json.dumps({"status": "error", "message": str(e)})
+            finally:
+                if deployment_container:
+                    try:
+                        deployment_container.stop()
+                        deployment_container.remove()
+                        logger.info(f"Stopped and removed deployment container: {deployment_container.name}")
+                    except Exception as e:
+                        logger.error(f"Error stopping deployment container: {str(e)}")
 
         return StreamingHttpResponse(stream_deployment(), content_type='text/plain')
+
+    def create_deployment_container(self, user_id, file_name):
+        client = docker.from_env()
+        container_name = f'deploy_container_{user_id}_{file_name}_{int(time.time())}'
+
+        try:
+            container = client.containers.run(
+                'react_renderer',  # This is your custom image name
+                name=container_name,
+                command='tail -f /dev/null',  # Keep container running
+                detach=True,
+                remove=True,
+                environment={
+                    'NODE_OPTIONS': '--max-old-space-size=8192',
+                    'USER_ID': user_id,
+                    'FILE_NAME': file_name,
+                    'PORT': '3001'
+                },
+                mem_limit='8g',
+                memswap_limit='16g',
+                cpu_quota=100000,  # 100% of CPU
+                volumes={
+                    '/home/ubuntu/brainpower-ai/react_renderer/src': {'bind': '/app/src', 'mode': 'rw'},
+                    '/home/ubuntu/brainpower-ai/react_renderer/public': {'bind': '/app/public', 'mode': 'rw'},
+                    '/home/ubuntu/brainpower-ai/react_renderer/package.json': {'bind': '/app/package.json',
+                                                                               'mode': 'ro'},
+                    '/home/ubuntu/brainpower-ai/react_renderer/package-lock.json': {'bind': '/app/package-lock.json',
+                                                                                    'mode': 'ro'},
+                },
+                ports={'3001/tcp': None}  # This will assign a random port
+            )
+            logger.info(f"Created deployment container: {container_name}")
+            return container
+        except docker.errors.APIError as e:
+            logger.error(f"Failed to create deployment container: {str(e)}")
+            raise
 
     def create_nginx_config(self, app_name, app_path):
         logger.info(f"Creating Nginx config for {app_name}")

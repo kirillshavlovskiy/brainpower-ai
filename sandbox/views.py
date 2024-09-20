@@ -508,70 +508,90 @@ class ServeReactApp(TemplateView):
 
 
 import logging
+import json
+import os
+import shutil
+import time
+import logging
+import docker
+import subprocess
+from django.views import View
+from django.http import JsonResponse, StreamingHttpResponse
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
 @method_decorator(csrf_exempt, name='dispatch')
 class DeployToProductionView_prod(View):
     def post(self, request, *args, **kwargs):
-        logger.info(f"Received deployment request: {request.POST}")
-        try:
-            data = json.loads(request.body)
-            container_id = data.get('container_id')
-            user_id = data.get('user_id')
-            file_name = data.get('file_name')
+        def stream_deployment():
+            start_time = time.time()
+            yield f"Deployment started at {start_time}\n"
 
-            if not all([container_id, user_id, file_name]):
-                return JsonResponse({'error': 'Missing required data'}, status=400)
+            try:
+                data = json.loads(request.body)
+                yield f"Received data: {data}\n"
 
-            logger.info(f"Starting deployment for container: {container_id}, user: {user_id}, file: {file_name}")
+                container_id = data.get('container_id')
+                user_id = data.get('user_id')
+                file_name = data.get('file_name')
 
-            # 1. Run npm build in the container
-            client = docker.from_env()
-            container = client.containers.get(container_id)
-            logger.info("Running npm build in container")
-            exec_result = container.exec_run("npm run build")
-            if exec_result.exit_code != 0:
-                error_message = f"Build failed: {exec_result.output.decode()}"
-                logger.error(error_message)
-                return JsonResponse({'error': error_message}, status=500)
+                if not all([container_id, user_id, file_name]):
+                    yield "Error: Missing required data\n"
+                    return
 
-            logger.info("npm build completed successfully")
+                yield f"Starting deployment for container: {container_id}, user: {user_id}, file: {file_name}\n"
 
-            # 2. Copy the build files from the container to the React apps directory
-            app_name = f"{user_id}_{file_name.replace('.', '-')}"
-            production_dir = os.path.join(REACT_APPS_ROOT, app_name)
+                # 1. Run npm build in the container
+                yield "Running npm build in container...\n"
+                build_start = time.time()
+                client = docker.from_env()
+                container = client.containers.get(container_id)
+                exec_result = container.exec_run("npm run build", stream=True)
+                for line in exec_result.output:
+                    yield line.decode('utf-8')
 
-            logger.info(f"Copying build files to {production_dir}")
-            if os.path.exists(production_dir):
-                shutil.rmtree(production_dir)
-            os.makedirs(production_dir, exist_ok=True)
+                if exec_result.exit_code != 0:
+                    yield f"Build failed with exit code {exec_result.exit_code}\n"
+                    return
 
-            # Use docker cp to copy files from container to host
-            subprocess.run(["docker", "cp", f"{container_id}:/app/build/.", production_dir], check=True)
-            logger.info("Files copied successfully")
+                yield f"npm build completed in {time.time() - build_start:.2f} seconds\n"
 
-            # 3. Create Nginx configuration for the React app
-            logger.info("Creating Nginx configuration")
-            self.create_nginx_config(app_name, production_dir)
 
-            # 4. Reload Nginx to apply changes
-            logger.info("Reloading Nginx")
-            subprocess.run(["sudo", "nginx", "-s", "reload"], check=True)
+                # 2. Copy the build files from the container to the React apps directory
+                yield "Copying build files...\n"
+                copy_start = time.time()
+                app_name = f"{user_id}_{file_name.replace('.', '-')}"
+                production_dir = os.path.join(REACT_APPS_ROOT, app_name)
 
-            # 5. Return the new URL to the client
-            production_url = f"http://{request.get_host()}/deployed/{app_name}/"
-            logger.info(f"Deployment completed. Production URL: {production_url}")
-            return JsonResponse({
-                'status': 'success',
-                'message': 'Application deployed to production',
-                'production_url': production_url
-            })
+                if os.path.exists(production_dir):
+                    shutil.rmtree(production_dir)
+                os.makedirs(production_dir, exist_ok=True)
 
-        except Exception as e:
-            logger.error(f"Error in deploy_to_production: {str(e)}", exc_info=True)
-            return JsonResponse({'error': str(e)}, status=500)
+                subprocess.run(["docker", "cp", f"{container_id}:/app/build/.", production_dir], check=True)
+                yield f"Files copied successfully in {time.time() - copy_start:.2f} seconds\n"
 
+                # 3. Create Nginx configuration for the React app
+                yield "Creating Nginx configuration...\n"
+                self.create_nginx_config(app_name, production_dir)
+
+                # 4. Reload Nginx to apply changes
+                yield "Reloading Nginx...\n"
+                subprocess.run(["sudo", "nginx", "-s", "reload"], check=True)
+
+                # 5. Return the new URL to the client
+                production_url = f"http://{request.get_host()}/deployed/{app_name}/"
+                yield f"Deployment completed. Production URL: {production_url}\n"
+
+                end_time = time.time()
+                yield f"Deployment completed in {end_time - start_time:.2f} seconds\n"
+            except Exception as e:
+                logger.error(f"Error in deploy_to_production: {str(e)}", exc_info=True)
+                yield f"Error in deployment: {str(e)}\n"
+
+        return StreamingHttpResponse(stream_deployment(), content_type='text/plain')
 
     def create_nginx_config(self, app_name, app_path):
         logger.info(f"Creating Nginx config for {app_name}")
@@ -597,3 +617,4 @@ class DeployToProductionView_prod(View):
             os.symlink(config_file, symlink_path)
 
         logger.info(f"Nginx config created for {app_name}")
+

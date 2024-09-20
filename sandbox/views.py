@@ -541,13 +541,13 @@ class DeployToProductionView_prod(View):
     def post(self, request, *args, **kwargs):
         def stream_deployment():
             deployment_container = None
+            build_successful = False
             try:
                 data = json.loads(request.body)
                 user_id = data.get('user_id')
                 file_name = data.get('file_name')
-                container_id = data.get('container_id')  # We need this for copying files later
 
-                if not all([user_id, file_name, container_id]):
+                if not all([user_id, file_name]):
                     yield "Error: Missing required data\n"
                     return
 
@@ -567,39 +567,31 @@ class DeployToProductionView_prod(View):
                     stream=True
                 )
                 for line in exec_result.output:
-                    yield f"Build process: {line.decode()}\n"
+                    decoded_line = line.decode()
+                    yield f"Build process: {decoded_line}\n"
+                    if "Compiled successfully." in decoded_line:
+                        build_successful = True
 
-                if exec_result.exit_code != 0:
-                    yield f"Build failed with exit code {exec_result.exit_code}\n"
+                if not build_successful:
+                    yield f"Build failed. Check the logs above for errors.\n"
                     raise Exception("Build process failed")
 
                 yield "Build completed successfully.\n"
 
-                # We don't need to create a tar file anymore, as we'll copy directly from the container
-
-                # 2. Copy the build files from the deployment container to the React apps directory
+                # Copy build files from the deployment container
                 yield "Copying build files...\n"
                 copy_start = time.time()
                 app_name = f"{user_id}_{file_name.replace('.', '-')}"
-                production_dir = os.path.join(REACT_APPS_ROOT, app_name)
+                production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
 
                 if os.path.exists(production_dir):
                     shutil.rmtree(production_dir)
                 os.makedirs(production_dir, exist_ok=True)
 
-                # Use the deployment_container.id instead of container_id
                 subprocess.run(["docker", "cp", f"{deployment_container.id}:/app/build/.", production_dir], check=True)
                 yield f"Files copied successfully in {time.time() - copy_start:.2f} seconds\n"
 
-                # 3. Create Nginx configuration for the React app
-                yield "Creating Nginx configuration...\n"
-                self.create_nginx_config(app_name, production_dir)
-
-                # 4. Reload Nginx to apply changes
-                yield "Reloading Nginx...\n"
-                subprocess.run(["sudo", "nginx", "-s", "reload"], check=True)
-
-                # 5. Return the new URL to the client
+                # Generate the URL for the deployed application
                 production_url = f"http://{request.get_host()}/deployed/{app_name}/"
                 yield f"Deployment completed. Production URL: {production_url}\n"
 

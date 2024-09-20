@@ -553,12 +553,31 @@ class DeployToProductionView_prod(View):
                 for line in exec_result.output:
                     yield line.decode('utf-8')
 
+                yield "Checking Node.js and npm versions...\n"
+                exec_result = container.exec_run("node --version && npm --version")
+                yield f"Node.js and npm versions:\n{exec_result.output.decode('utf-8')}\n"
+
+                yield "Displaying package.json contents...\n"
+                exec_result = container.exec_run("cat package.json")
+                yield f"package.json contents:\n{exec_result.output.decode('utf-8')}\n"
+
+                yield "Clearing npm cache and reinstalling dependencies...\n"
+                exec_result = container.exec_run("npm cache clean --force && rm -rf node_modules && npm install")
+                yield f"Dependency reinstallation result:\n{exec_result.output.decode('utf-8')}\n"
+
+                yield "Running npm build with increased memory limit and verbosity...\n"
+                exec_result = container.exec_run(
+                    "export NODE_OPTIONS=--max_old_space_size=4096 && npm run build -- --verbose",
+                    stream=True
+                )
+                for line in exec_result.output:
+                    yield line.decode('utf-8')
+
                 if exec_result.exit_code != 0:
                     yield f"Build failed with exit code {exec_result.exit_code}\n"
-                    return
-
-                yield f"npm build completed in {time.time() - build_start:.2f} seconds\n"
-
+                    container_logs = container.logs(tail=100).decode('utf-8')
+                    yield f"Container logs:\n{container_logs}\n"
+                    raise Exception("Build process failed")
 
                 # 2. Copy the build files from the container to the React apps directory
                 yield "Copying build files...\n"
@@ -585,11 +604,17 @@ class DeployToProductionView_prod(View):
                 production_url = f"http://{request.get_host()}/deployed/{app_name}/"
                 yield f"Deployment completed. Production URL: {production_url}\n"
 
-                end_time = time.time()
-                yield f"Deployment completed in {end_time - start_time:.2f} seconds\n"
+
+                yield json.dumps({
+                    "status": "success",
+                    "message": "Application deployed successfully",
+                    "production_url": production_url
+                })
             except Exception as e:
-                logger.error(f"Error in deploy_to_production: {str(e)}", exc_info=True)
-                yield f"Error in deployment: {str(e)}\n"
+                yield json.dumps({
+                    "status": "error",
+                    "message": str(e)
+                })
 
         return StreamingHttpResponse(stream_deployment(), content_type='text/plain')
 

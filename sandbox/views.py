@@ -267,7 +267,7 @@ def check_or_create_container(request):
                     'REACT_APP_USER_ID': user_id,
                     'FILE_NAME': file_name,
                     'PORT': str(3001),
-                    'NODE_OPTIONS': '--max_old_space_size=4096'  # Increase Node.js memory limit
+                    'NODE_OPTIONS': '--max-old-space-size=8192'  # Increase Node.js memory limit
                 },
                 volumes={
                     os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
@@ -277,9 +277,9 @@ def check_or_create_container(request):
                                                                              'mode': 'ro'},
                 },
                 ports={'3001/tcp': host_port},
-                mem_limit='4g',  # Increased from 512m to 4g
-                memswap_limit='6g',  # Added memswap limit
-                cpu_quota=50000,  # 50% of CPU
+                mem_limit='8g',  # Increased to 8g
+                memswap_limit='16g',  # Increased swap
+                cpu_quota=100000,  # Increased to 100% of CPU
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
             logger.info(f"New container created: {container_name}")
@@ -519,7 +519,6 @@ class ServeReactApp(TemplateView):
         return [template_path]
 
 
-import logging
 import json
 import os
 import shutil
@@ -527,20 +526,27 @@ import time
 import logging
 import docker
 import subprocess
+import psutil
+
+
 from django.views import View
 from django.http import JsonResponse, StreamingHttpResponse
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 
-logger = logging.getLogger(__name__)
 
 @method_decorator(csrf_exempt, name='dispatch')
 class DeployToProductionView_prod(View):
     def post(self, request, *args, **kwargs):
         def stream_deployment():
+            start_time = time.time()
+            yield f"Deployment started at {start_time}\n"
+
             try:
                 data = json.loads(request.body)
+                yield f"Received data: {data}\n"
+
                 container_id = data.get('container_id')
                 user_id = data.get('user_id')
                 file_name = data.get('file_name')
@@ -551,23 +557,48 @@ class DeployToProductionView_prod(View):
 
                 yield f"Starting deployment for container: {container_id}, user: {user_id}, file: {file_name}\n"
 
+                # 1. Run npm build in the container
+                yield "Running npm build in container...\n"
+                build_start = time.time()
                 client = docker.from_env()
                 container = client.containers.get(container_id)
-
-                yield "Checking Node.js version...\n"
-                exec_result = container.exec_run("node --version")
-                yield f"Node.js version: {exec_result.output.decode().strip()}\n"
-
-                yield "Running npm build with increased memory limit...\n"
-                exec_result = container.exec_run(
-                    "/bin/sh -c 'export NODE_OPTIONS=--max_old_space_size=4096 && npm run build'",
-                    stream=True
-                )
+                exec_result = container.exec_run("npm run build", stream=True)
                 for line in exec_result.output:
                     yield line.decode('utf-8')
 
+                yield "Checking Node.js and npm versions...\n"
+                exec_result = container.exec_run("node --version && npm --version")
+                yield f"Node.js and npm versions:\n{exec_result.output.decode('utf-8')}\n"
+
+                yield "Displaying package.json contents...\n"
+                exec_result = container.exec_run("cat package.json")
+                yield f"package.json contents:\n{exec_result.output.decode('utf-8')}\n"
+
+                yield "Clearing npm cache and reinstalling dependencies...\n"
+                exec_result = container.exec_run("npm cache clean --force && rm -rf node_modules && npm install")
+                yield f"Dependency reinstallation result:\n{exec_result.output.decode('utf-8')}\n"
+
+                yield "Running npm build with increased memory limit and production optimizations...\n"
+
+                build_command = """
+                                export NODE_OPTIONS="--max-old-space-size=8192" && 
+                                export GENERATE_SOURCEMAP=false &&
+                                npm run build -- --profile
+                                """
+
+                exec_result = container.exec_run(f"/bin/sh -c '{build_command}'", stream=True)
+
+                for line in exec_result.output:
+                    yield line.decode('utf-8')
+
+                    # Monitor system resources
+                    mem = psutil.virtual_memory()
+                    yield f"Memory usage: {mem.percent}%\n"
+
                 if exec_result.exit_code != 0:
                     yield f"Build failed with exit code {exec_result.exit_code}\n"
+                    container_logs = container.logs(tail=100).decode('utf-8')
+                    yield f"Container logs:\n{container_logs}\n"
                     raise Exception("Build process failed")
 
                 yield "Build completed successfully.\n"
@@ -596,7 +627,6 @@ class DeployToProductionView_prod(View):
                 # 5. Return the new URL to the client
                 production_url = f"http://{request.get_host()}/deployed/{app_name}/"
                 yield f"Deployment completed. Production URL: {production_url}\n"
-
 
                 yield json.dumps({
                     "status": "success",

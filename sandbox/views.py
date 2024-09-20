@@ -230,6 +230,8 @@ def check_or_create_container(request):
     file_name = data.get('file_name', 'component.js')
     main_file_path = data.get('main_file_path', "Root/Project/DailyInspirationApp/component.js")
 
+    logger.info(f"Received request to check or create container for user {user_id}, file {file_name}")
+
     if not all([code, language, file_name]):
         return JsonResponse({'error': 'Missing required fields'}, status=400)
     if language != 'react':
@@ -240,14 +242,20 @@ def check_or_create_container(request):
 
     try:
         container = client.containers.get(container_name)
+        logger.info(f"Existing container found: {container_name}")
+
         if container.status != 'running':
+            logger.info(f"Starting existing container: {container_name}")
             container.start()
+
         container.reload()
         host_port = container.ports.get('3001/tcp')[0]['HostPort']
-        logger.info(f"Existing container found and started: {container_name}")
+        logger.info(f"Container {container_name} is running on port {host_port}")
+
     except docker.errors.NotFound:
+        logger.info(f"Container {container_name} not found. Creating new container.")
         host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
-        logger.info(f"Creating new container: {container_name} on port {host_port}")
+        logger.info(f"Selected port {host_port} for new container")
 
         try:
             container = client.containers.run(
@@ -258,7 +266,8 @@ def check_or_create_container(request):
                     'USER_ID': user_id,
                     'REACT_APP_USER_ID': user_id,
                     'FILE_NAME': file_name,
-                    'PORT': str(3001)
+                    'PORT': str(3001),
+                    'NODE_OPTIONS': '--max_old_space_size=4096'  # Increase Node.js memory limit
                 },
                 volumes={
                     os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
@@ -268,25 +277,28 @@ def check_or_create_container(request):
                                                                              'mode': 'ro'},
                 },
                 ports={'3001/tcp': host_port},
-                mem_limit='512m',
+                mem_limit='4g',  # Increased from 512m to 4g
+                memswap_limit='6g',  # Added memswap limit
                 cpu_quota=50000,  # 50% of CPU
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
+            logger.info(f"New container created: {container_name}")
         except docker.errors.APIError as e:
-            logger.error(f"Failed to create container: {str(e)}")
-            return JsonResponse({'error': 'Failed to create container'}, status=500)
+            logger.error(f"Failed to create container: {str(e)}", exc_info=True)
+            return JsonResponse({'error': f'Failed to create container: {str(e)}'}, status=500)
 
     try:
         update_code_internal(container, code, user_id, file_name, main_file_path)
+        logger.info(f"Code updated in container {container_name}")
     except Exception as e:
-        logger.error(f"Failed to update code in container: {str(e)}")
-        return JsonResponse({'error': 'Failed to update code in container'}, status=500)
+        logger.error(f"Failed to update code in container: {str(e)}", exc_info=True)
+        return JsonResponse({'error': f'Failed to update code in container: {str(e)}'}, status=500)
 
     container.reload()
     port_mapping = container.ports.get('3001/tcp')
     if port_mapping:
         dynamic_url = f"http://{host_port}.{HOST_URL}/{user_id}/{file_name}"
-        logger.info(f"Container running successfully: {dynamic_url}")
+        logger.info(f"Container {container_name} running successfully: {dynamic_url}")
         return JsonResponse({
             'status': 'success',
             'message': 'Container is running',
@@ -295,7 +307,7 @@ def check_or_create_container(request):
             'can_deploy': True,
         })
     else:
-        logger.error("Failed to get port mapping")
+        logger.error(f"Failed to get port mapping for container {container_name}")
         return JsonResponse({'error': 'Failed to get port mapping'}, status=500)
 
 
@@ -527,13 +539,8 @@ logger = logging.getLogger(__name__)
 class DeployToProductionView_prod(View):
     def post(self, request, *args, **kwargs):
         def stream_deployment():
-            start_time = time.time()
-            yield f"Deployment started at {start_time}\n"
-
             try:
                 data = json.loads(request.body)
-                yield f"Received data: {data}\n"
-
                 container_id = data.get('container_id')
                 user_id = data.get('user_id')
                 file_name = data.get('file_name')
@@ -544,30 +551,16 @@ class DeployToProductionView_prod(View):
 
                 yield f"Starting deployment for container: {container_id}, user: {user_id}, file: {file_name}\n"
 
-                # 1. Run npm build in the container
-                yield "Running npm build in container...\n"
-                build_start = time.time()
                 client = docker.from_env()
                 container = client.containers.get(container_id)
-                exec_result = container.exec_run("npm run build", stream=True)
-                for line in exec_result.output:
-                    yield line.decode('utf-8')
 
-                yield "Checking Node.js and npm versions...\n"
-                exec_result = container.exec_run("node --version && npm --version")
-                yield f"Node.js and npm versions:\n{exec_result.output.decode('utf-8')}\n"
+                yield "Checking Node.js version...\n"
+                exec_result = container.exec_run("node --version")
+                yield f"Node.js version: {exec_result.output.decode().strip()}\n"
 
-                yield "Displaying package.json contents...\n"
-                exec_result = container.exec_run("cat package.json")
-                yield f"package.json contents:\n{exec_result.output.decode('utf-8')}\n"
-
-                yield "Clearing npm cache and reinstalling dependencies...\n"
-                exec_result = container.exec_run("npm cache clean --force && rm -rf node_modules && npm install")
-                yield f"Dependency reinstallation result:\n{exec_result.output.decode('utf-8')}\n"
-
-                yield "Running npm build with increased memory limit and verbosity...\n"
+                yield "Running npm build with increased memory limit...\n"
                 exec_result = container.exec_run(
-                    "export NODE_OPTIONS=--max_old_space_size=4096 && npm run build -- --verbose",
+                    "/bin/sh -c 'export NODE_OPTIONS=--max_old_space_size=4096 && npm run build'",
                     stream=True
                 )
                 for line in exec_result.output:
@@ -575,9 +568,9 @@ class DeployToProductionView_prod(View):
 
                 if exec_result.exit_code != 0:
                     yield f"Build failed with exit code {exec_result.exit_code}\n"
-                    container_logs = container.logs(tail=100).decode('utf-8')
-                    yield f"Container logs:\n{container_logs}\n"
                     raise Exception("Build process failed")
+
+                yield "Build completed successfully.\n"
 
                 # 2. Copy the build files from the container to the React apps directory
                 yield "Copying build files...\n"

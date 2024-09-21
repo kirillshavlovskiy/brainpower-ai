@@ -582,13 +582,13 @@ class DeployToProductionView_prod(View):
                     "logs": logs
                 })
 
-            # Copy build files from the container
-            logs.append("Copying build files...")
+            # Copy build files
             app_name = f"{user_id}_{file_name.replace('.', '-')}"
             production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
+            os.makedirs(production_dir, exist_ok=True)
 
-            # Ensure the parent directory exists
-            os.makedirs(settings.DEPLOYED_COMPONENTS_ROOT, exist_ok=True)
+            copy_command = f"docker cp {container_id}:/app/build/. {production_dir}"
+            subprocess.run(copy_command, shell=True, check=True)
 
             if os.path.exists(production_dir):
                 shutil.rmtree(production_dir)

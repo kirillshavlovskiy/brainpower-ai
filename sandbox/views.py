@@ -551,27 +551,12 @@ class DeployToProductionView_prod(View):
             logs.append("Container found. Starting build process...")
 
             build_command = """
-            cd /app &&
-            echo "Current directory:" &&
-            pwd &&
-            echo "Contents of current directory:" &&
-            ls -la &&
-            echo "Contents of package.json:" &&
-            cat package.json &&
-            echo "Node version:" &&
-            node --version &&
-            echo "NPM version:" &&
-            npm --version &&
-            echo "Installing dependencies..." &&
-            npm install &&
-            echo "Starting production build..." &&
-            export NODE_OPTIONS="--max-old-space-size=8192" &&
-            export GENERATE_SOURCEMAP=false &&
+            
             npm run build
             """
 
             exec_result = container.exec_run(
-                cmd=["/bin/sh", "-c", build_command],
+                cmd=["/bin/sh", "-c", "npm run build"],
                 workdir="/app",
                 environment={"NODE_ENV": "production"}
             )

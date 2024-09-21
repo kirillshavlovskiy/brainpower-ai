@@ -568,9 +568,6 @@ class DeployToProductionView_prod(View):
             # Use docker cp to copy files from container to host
             os.system(f"docker cp {container_id}:/app/build/. {production_dir}")
 
-            # Update index.html to use relative paths
-            index_path = os.path.join(production_dir, 'index.html')
-            self.update_index_html(index_path)
 
             # Set correct permissions for the production directory
             os.system(f"chmod -R 755 {production_dir}")

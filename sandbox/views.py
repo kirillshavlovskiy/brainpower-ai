@@ -570,81 +570,81 @@ class DeployToProductionView_prod(View):
             raise Exception(f"Failed to create deployment container: {str(e)}")
 
     def post(self, request, *args, **kwargs):
-        def stream_deployment():
-            deployment_container = None
-            build_successful = False
-            try:
-                data = json.loads(request.body)
-                user_id = data.get('user_id')
-                file_name = data.get('file_name')
+        return StreamingHttpResponse(self.stream_deployment(request), content_type='text/plain')
 
-                if not all([user_id, file_name]):
-                    yield "Error: Missing required data\n"
-                    return
+    def stream_deployment(self, request):
+        deployment_container = None
+        build_successful = False
+        try:
+            data = json.loads(request.body)
+            user_id = data.get('user_id')
+            file_name = data.get('file_name')
 
-                yield f"Starting deployment for user: {user_id}, file: {file_name}\n"
+            if not all([user_id, file_name]):
+                yield "Error: Missing required data\n"
+                return
 
-                deployment_container = self.create_deployment_container(user_id, file_name)
+            yield f"Starting deployment for user: {user_id}, file: {file_name}\n"
 
-                yield "Deployment container created. Starting build process...\n"
-                build_command = """
-                cd /app && 
-                export NODE_OPTIONS="--max-old-space-size=8192" &&
-                export GENERATE_SOURCEMAP=false &&
-                npm run build -- --verbose
-                """
-                exec_result = deployment_container.exec_run(
-                    f"sh -c '{build_command}'",
-                    stream=True
-                )
-                for line in exec_result.output:
-                    decoded_line = line.decode()
-                    yield f"Build process: {decoded_line}\n"
-                    if "Compiled successfully." in decoded_line:
-                        build_successful = True
+            deployment_container = self.create_deployment_container(user_id, file_name)
 
-                if not build_successful:
-                    yield f"Build failed. Check the logs above for errors.\n"
-                    raise Exception("Build process failed")
+            yield "Deployment container created. Starting build process...\n"
+            build_command = """
+            cd /app && 
+            export NODE_OPTIONS="--max-old-space-size=8192" &&
+            export GENERATE_SOURCEMAP=false &&
+            npm run build -- --verbose
+            """
+            exec_result = deployment_container.exec_run(
+                f"sh -c '{build_command}'",
+                stream=True
+            )
+            for line in exec_result.output:
+                decoded_line = line.decode()
+                yield f"Build process: {decoded_line}\n"
+                if "Compiled successfully." in decoded_line:
+                    build_successful = True
 
-                yield "Build completed successfully.\n"
+            if not build_successful:
+                yield f"Build failed. Check the logs above for errors.\n"
+                raise Exception("Build process failed")
 
-                # Copy build files from the deployment container
-                yield "Copying build files...\n"
-                copy_start = time.time()
-                app_name = f"{user_id}_{file_name.replace('.', '-')}"
-                production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
+            yield "Build completed successfully.\n"
 
-                if os.path.exists(production_dir):
-                    shutil.rmtree(production_dir)
-                os.makedirs(production_dir, exist_ok=True)
+            # Copy build files from the deployment container
+            yield "Copying build files...\n"
+            copy_start = time.time()
+            app_name = f"{user_id}_{file_name.replace('.', '-')}"
+            production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
 
-                subprocess.run(["docker", "cp", f"{deployment_container.id}:/app/build/.", production_dir], check=True)
-                yield f"Files copied successfully in {time.time() - copy_start:.2f} seconds\n"
+            if os.path.exists(production_dir):
+                shutil.rmtree(production_dir)
+            os.makedirs(production_dir, exist_ok=True)
 
-                # Generate the URL for the deployed application
-                production_url = f"http://{request.get_host()}/deployed/{app_name}/"
-                yield f"Deployment completed. Production URL: {production_url}\n"
+            subprocess.run(["docker", "cp", f"{deployment_container.id}:/app/build/.", production_dir], check=True)
+            yield f"Files copied successfully in {time.time() - copy_start:.2f} seconds\n"
 
-                yield json.dumps({
-                    "status": "success",
-                    "message": "Application deployed successfully",
-                    "production_url": production_url
-                })
+            # Generate the URL for the deployed application
+            production_url = f"http://{request.get_host()}/deployed/{app_name}/"
+            yield f"Deployment completed. Production URL: {production_url}\n"
 
-            except Exception as e:
-                yield f"Error in deployment: {str(e)}\n"
-                yield json.dumps({"status": "error", "message": str(e)})
-            finally:
-                if deployment_container:
-                    try:
-                        deployment_container.stop()
-                        deployment_container.remove()
-                        logger.info(f"Stopped and removed deployment container: {deployment_container.name}")
-                    except Exception as e:
-                        logger.error(f"Error stopping deployment container: {str(e)}")
+            yield json.dumps({
+                "status": "success",
+                "message": "Application deployed successfully",
+                "production_url": production_url
+            })
 
-        return StreamingHttpResponse(stream_deployment(), content_type='text/plain')
+        except Exception as e:
+            yield f"Error in deployment: {str(e)}\n"
+            yield json.dumps({"status": "error", "message": str(e)})
+        finally:
+            if deployment_container:
+                try:
+                    deployment_container.stop()
+                    deployment_container.remove()
+                    yield f"Stopped and removed deployment container: {deployment_container.name}\n"
+                except Exception as e:
+                    yield f"Error stopping deployment container: {str(e)}\n"
 
     def create_nginx_config(self, app_name, app_path):
         logger.info(f"Creating Nginx config for {app_name}")

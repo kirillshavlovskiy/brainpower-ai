@@ -538,156 +538,62 @@ from django.conf import settings
 
 @method_decorator(csrf_exempt, name='dispatch')
 class DeployToProductionView_prod(View):
-    def create_deployment_container(self, user_id, file_name):
-        client = docker.from_env()
-        container_name = f'deploy_container_{user_id}_{file_name}_{int(time.time())}'
-
-        try:
-            container = client.containers.run(
-                'react_renderer',
-                name=container_name,
-                command='tail -f /dev/null',  # Keep container running
-                detach=True,
-                environment={
-                    'NODE_OPTIONS': '--max-old-space-size=8192',
-                    'USER_ID': user_id,
-                    'FILE_NAME': file_name,
-                },
-                mem_limit='8g',
-                memswap_limit='16g',
-                cpu_quota=100000,  # 100% of CPU
-                volumes={
-                    '/home/ubuntu/brainpower-ai/react_renderer/src': {'bind': '/app/src', 'mode': 'rw'},
-                    '/home/ubuntu/brainpower-ai/react_renderer/public': {'bind': '/app/public', 'mode': 'rw'},
-                    '/home/ubuntu/brainpower-ai/react_renderer/package.json': {'bind': '/app/package.json',
-                                                                               'mode': 'ro'},
-                    '/home/ubuntu/brainpower-ai/react_renderer/package-lock.json': {'bind': '/app/package-lock.json',
-                                                                                    'mode': 'ro'},
-                }
-            )
-            return container
-        except docker.errors.APIError as e:
-            raise Exception(f"Failed to create deployment container: {str(e)}")
-
     def post(self, request, *args, **kwargs):
-        return StreamingHttpResponse(self.stream_deployment(request), content_type='text/plain')
-
-    def stream_deployment(self, request):
-        deployment_container = None
-        build_successful = False
         try:
             data = json.loads(request.body)
+            container_id = data.get('container_id')
             user_id = data.get('user_id')
             file_name = data.get('file_name')
 
-            if not all([user_id, file_name]):
-                yield "Error: Missing required data\n"
-                return
+            if not all([container_id, user_id, file_name]):
+                return JsonResponse({'error': 'Missing required data'}, status=400)
 
-            yield f"Starting deployment for user: {user_id}, file: {file_name}\n"
+            # 1. Run npm build in the container
+            client = docker.from_env()
+            container = client.containers.get(container_id)
+            exec_result = container.exec_run("npm run build")
+            if exec_result.exit_code != 0:
+                raise Exception(f"Build failed: {exec_result.output.decode()}")
 
-            deployment_container = self.create_deployment_container(user_id, file_name)
-
-            yield "Deployment container created. Starting build process...\n"
-            build_command = """
-            cd /app && 
-            export NODE_OPTIONS="--max-old-space-size=8192" &&
-            export GENERATE_SOURCEMAP=false &&
-            npm run build -- --verbose
-            """
-            exec_result = deployment_container.exec_run(
-                f"sh -c '{build_command}'",
-                stream=True
-            )
-            for line in exec_result.output:
-                decoded_line = line.decode()
-                yield f"Build process: {decoded_line}\n"
-                if "Compiled successfully." in decoded_line:
-                    build_successful = True
-
-            if not build_successful:
-                yield f"Build failed. Check the logs above for errors.\n"
-                raise Exception("Build process failed")
-
-            yield "Build completed successfully.\n"
-
-            # Copy build files from the deployment container
-            yield "Copying build files...\n"
-            copy_start = time.time()
+            # 2. Copy the build files from the container to the production directory
             app_name = f"{user_id}_{file_name.replace('.', '-')}"
             production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
 
-            # Ensure the parent directory exists
-            os.makedirs(settings.DEPLOYED_COMPONENTS_ROOT, exist_ok=True)
-
+            # Remove existing directory if it exists
             if os.path.exists(production_dir):
                 shutil.rmtree(production_dir)
+
             os.makedirs(production_dir, exist_ok=True)
 
-            # Copy files from container to host
-            subprocess.run(["docker", "cp", f"{deployment_container.id}:/app/build/.", production_dir], check=True)
-            yield f"Files copied successfully in {time.time() - copy_start:.2f} seconds\n"
+            # Use docker cp to copy files from container to host
+            os.system(f"docker cp {container_id}:/app/build/. {production_dir}")
 
-            # Set permissions (this should now work as the ubuntu user)
+            # Update index.html to use relative paths
+            index_path = os.path.join(production_dir, 'index.html')
+            self.update_index_html(index_path)
+
+            # Set correct permissions for the production directory
+            os.system(f"chmod -R 755 {production_dir}")
+
+            # Print directory contents for debugging
+            logger.info(f"Contents of {production_dir}:")
             for root, dirs, files in os.walk(production_dir):
-                for dir in dirs:
-                    os.chmod(os.path.join(root, dir), 0o755)
-                for file in files:
-                    os.chmod(os.path.join(root, file), 0o644)
+                level = root.replace(production_dir, '').count(os.sep)
+                indent = ' ' * 4 * level
+                logger.info(f"{indent}{os.path.basename(root)}/")
+                subindent = ' ' * 4 * (level + 1)
+                for f in files:
+                    logger.info(f"{subindent}{f}")
 
-            yield "Permissions set successfully.\n"
-
-            # Generate the URL for the deployed application
+            # Return the new URL to the client
             production_url = f"https://{request.get_host()}/deployed/{app_name}/"
-            yield f"Deployment completed. Production URL: {production_url}\n"
-
-            yield f"Deployed files:\n"
-            for root, dirs, files in os.walk(production_dir):
-                for file in files:
-                    yield f"  {os.path.join(root, file)}\n"
-
-            yield json.dumps({
-                "status": "success",
-                "message": "Application deployed successfully",
-                "production_url": production_url
+            return JsonResponse({
+                'status': 'success',
+                'message': 'Application deployed successfully',
+                'production_url': production_url
             })
 
         except Exception as e:
-            import traceback
-            yield f"Error in deployment: {str(e)}\n"
-            yield f"Traceback: {traceback.format_exc()}\n"
-            yield json.dumps({"status": "error", "message": str(e)})
-        finally:
-            if deployment_container:
-                try:
-                    deployment_container.stop()
-                    deployment_container.remove()
-                    yield f"Stopped and removed deployment container: {deployment_container.name}\n"
-                except Exception as e:
-                    yield f"Error stopping deployment container: {str(e)}\n"
-
-    def create_nginx_config(self, app_name, app_path):
-        logger.info(f"Creating Nginx config for {app_name}")
-        config_content = f"""
-    server {{
-        listen 80;
-        server_name {app_name}.{self.request.get_host()};
-
-        location / {{
-            alias {app_path};
-            try_files $uri $uri/ /index.html;
-        }}
-    }}
-        """
-
-        config_file = os.path.join(NGINX_SITES_PATH, f"{app_name}")
-        with open(config_file, 'w') as f:
-            f.write(config_content)
-
-        # Create symlink in sites-enabled if it doesn't exist
-        symlink_path = os.path.join(NGINX_SITES_ENABLED_PATH, app_name)
-        if not os.path.exists(symlink_path):
-            os.symlink(config_file, symlink_path)
-
-        logger.info(f"Nginx config created for {app_name}")
+            logger.error(f"Error in production deployment: {str(e)}")
+            return JsonResponse({'error': str(e)}, status=500)
 

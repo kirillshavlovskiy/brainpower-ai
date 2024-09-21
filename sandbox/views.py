@@ -550,10 +550,6 @@ class DeployToProductionView_prod(View):
 
             logs.append("Container found. Starting build process...")
 
-            build_command = """
-            
-            npm run build
-            """
 
             exec_result = container.exec_run(
                 cmd=["/bin/sh", "-c", "npm run build"],

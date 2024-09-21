@@ -539,6 +539,9 @@ from django.conf import settings
 @method_decorator(csrf_exempt, name='dispatch')
 class DeployToProductionView_prod(View):
     def post(self, request, *args, **kwargs):
+        return StreamingHttpResponse(self.stream_deployment(request), content_type='text/plain')
+
+    def stream_deployment(self, request):
         try:
             data = json.loads(request.body)
             container_id = data.get('container_id')
@@ -546,51 +549,82 @@ class DeployToProductionView_prod(View):
             file_name = data.get('file_name')
 
             if not all([container_id, user_id, file_name]):
-                return JsonResponse({'error': 'Missing required data'}, status=400)
+                yield "Error: Missing required data\n"
+                return
 
-            # 1. Run npm build in the container
+            yield f"Starting deployment for user: {user_id}, file: {file_name}\n"
+
             client = docker.from_env()
             container = client.containers.get(container_id)
-            exec_result = container.exec_run("npm run build")
-            if exec_result.exit_code != 0:
-                raise Exception(f"Build failed: {exec_result.output.decode()}")
 
-            # 2. Copy the build files from the container to the production directory
+            yield "Starting build process...\n"
+            build_command = """
+            cd /app && 
+            export NODE_OPTIONS="--max-old-space-size=8192" &&
+            export GENERATE_SOURCEMAP=false &&
+            npm run build -- --verbose
+            """
+            exec_result = container.exec_run(
+                f"sh -c '{build_command}'",
+                stream=True
+            )
+            build_successful = False
+            for line in exec_result.output:
+                decoded_line = line.decode()
+                yield f"Build process: {decoded_line}\n"
+                if "Compiled successfully." in decoded_line:
+                    build_successful = True
+
+            if not build_successful:
+                yield f"Build failed. Check the logs above for errors.\n"
+                raise Exception("Build process failed")
+
+            yield "Build completed successfully.\n"
+
+            # Copy build files from the container
+            yield "Copying build files...\n"
+            copy_start = time.time()
             app_name = f"{user_id}_{file_name.replace('.', '-')}"
             production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
 
-            # Remove existing directory if it exists
+            # Ensure the parent directory exists
+            os.makedirs(settings.DEPLOYED_COMPONENTS_ROOT, exist_ok=True)
+
             if os.path.exists(production_dir):
                 shutil.rmtree(production_dir)
-
             os.makedirs(production_dir, exist_ok=True)
 
-            # Use docker cp to copy files from container to host
-            os.system(f"docker cp {container_id}:/app/build/. {production_dir}")
+            # Copy files from container to host
+            subprocess.run(["docker", "cp", f"{container_id}:/app/build/.", production_dir], check=True)
+            yield f"Files copied successfully in {time.time() - copy_start:.2f} seconds\n"
 
-
-            # Set correct permissions for the production directory
-            os.system(f"chmod -R 755 {production_dir}")
-
-            # Print directory contents for debugging
-            logger.info(f"Contents of {production_dir}:")
+            # Set permissions
             for root, dirs, files in os.walk(production_dir):
-                level = root.replace(production_dir, '').count(os.sep)
-                indent = ' ' * 4 * level
-                logger.info(f"{indent}{os.path.basename(root)}/")
-                subindent = ' ' * 4 * (level + 1)
-                for f in files:
-                    logger.info(f"{subindent}{f}")
+                for dir in dirs:
+                    os.chmod(os.path.join(root, dir), 0o755)
+                for file in files:
+                    os.chmod(os.path.join(root, file), 0o644)
 
-            # Return the new URL to the client
+            yield "Permissions set successfully.\n"
+
+            # Generate the URL for the deployed application
             production_url = f"https://{request.get_host()}/deployed/{app_name}/"
-            return JsonResponse({
-                'status': 'success',
-                'message': 'Application deployed successfully',
-                'production_url': production_url
+            yield f"Deployment completed. Production URL: {production_url}\n"
+
+            yield f"Deployed files:\n"
+            for root, dirs, files in os.walk(production_dir):
+                for file in files:
+                    yield f"  {os.path.join(root, file)}\n"
+
+            yield json.dumps({
+                "status": "success",
+                "message": "Application deployed successfully",
+                "production_url": production_url
             })
 
         except Exception as e:
-            logger.error(f"Error in production deployment: {str(e)}")
-            return JsonResponse({'error': str(e)}, status=500)
+            import traceback
+            yield f"Error in deployment: {str(e)}\n"
+            yield f"Traceback: {traceback.format_exc()}\n"
+            yield json.dumps({"status": "error", "message": str(e)})
 

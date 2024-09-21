@@ -539,46 +539,31 @@ from django.conf import settings
 @method_decorator(csrf_exempt, name='dispatch')
 class DeployToProductionView_prod(View):
     def post(self, request, *args, **kwargs):
-        def stream_deployment():
+        def stream_deployment(request):
             deployment_container = None
-            build_successful = False
             try:
                 data = json.loads(request.body)
+                container_id = data.get('container_id')
                 user_id = data.get('user_id')
                 file_name = data.get('file_name')
 
-                if not all([user_id, file_name]):
+                if not all([container_id, user_id, file_name]):
                     yield "Error: Missing required data\n"
                     return
 
-                yield f"Starting deployment for user: {user_id}, file: {file_name}\n"
+                yield f"Starting deployment for container: {container_id}, user: {user_id}, file: {file_name}\n"
 
-                deployment_container = self.create_deployment_container(user_id, file_name)
+                client = docker.from_env()
+                container = client.containers.get(container_id)
 
-                yield "Deployment container created. Starting build process...\n"
-                build_command = """
-                cd /app && 
-                export NODE_OPTIONS="--max-old-space-size=8192" &&
-                export GENERATE_SOURCEMAP=false &&
-                npm run build -- --verbose
-                """
-                exec_result = deployment_container.exec_run(
-                    f"sh -c '{build_command}'",
-                    stream=True
-                )
+                yield "Running npm build in container...\n"
+                exec_result = container.exec_run("npm run build", stream=True)
                 for line in exec_result.output:
-                    decoded_line = line.decode()
-                    yield f"Build process: {decoded_line}\n"
-                    if "Compiled successfully." in decoded_line:
-                        build_successful = True
+                    yield f"Build process: {line.decode()}\n"
 
-                if not build_successful:
-                    yield f"Build failed. Check the logs above for errors.\n"
-                    raise Exception("Build process failed")
+                yield "Build process completed.\n"
 
-                yield "Build completed successfully.\n"
-
-                # Copy build files from the deployment container
+                # Copy the build files from the container to the React apps directory
                 yield "Copying build files...\n"
                 copy_start = time.time()
                 app_name = f"{user_id}_{file_name.replace('.', '-')}"
@@ -588,13 +573,14 @@ class DeployToProductionView_prod(View):
                     shutil.rmtree(production_dir)
                 os.makedirs(production_dir, exist_ok=True)
 
-                subprocess.run(["docker", "cp", f"{deployment_container.id}:/app/build/.", production_dir], check=True)
+                subprocess.run(["docker", "cp", f"{container_id}:/app/build/.", production_dir], check=True)
                 yield f"Files copied successfully in {time.time() - copy_start:.2f} seconds\n"
 
                 # Generate the URL for the deployed application
                 production_url = f"http://{request.get_host()}/deployed/{app_name}/"
                 yield f"Deployment completed. Production URL: {production_url}\n"
 
+                # Return the final JSON response with the production URL
                 yield json.dumps({
                     "status": "success",
                     "message": "Application deployed successfully",
@@ -604,14 +590,6 @@ class DeployToProductionView_prod(View):
             except Exception as e:
                 yield f"Error in deployment: {str(e)}\n"
                 yield json.dumps({"status": "error", "message": str(e)})
-            finally:
-                if deployment_container:
-                    try:
-                        deployment_container.stop()
-                        deployment_container.remove()
-                        logger.info(f"Stopped and removed deployment container: {deployment_container.name}")
-                    except Exception as e:
-                        logger.error(f"Error stopping deployment container: {str(e)}")
 
         return StreamingHttpResponse(stream_deployment(), content_type='text/plain')
 

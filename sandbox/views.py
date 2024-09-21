@@ -538,77 +538,20 @@ from django.conf import settings
 
 @method_decorator(csrf_exempt, name='dispatch')
 class DeployToProductionView_prod(View):
-    def post(self, request, *args, **kwargs):
-        def stream_deployment(request):
-            deployment_container = None
-            try:
-                data = json.loads(request.body)
-                container_id = data.get('container_id')
-                user_id = data.get('user_id')
-                file_name = data.get('file_name')
-
-                if not all([container_id, user_id, file_name]):
-                    yield "Error: Missing required data\n"
-                    return
-
-                yield f"Starting deployment for container: {container_id}, user: {user_id}, file: {file_name}\n"
-
-                client = docker.from_env()
-                container = client.containers.get(container_id)
-
-                yield "Running npm build in container...\n"
-                exec_result = container.exec_run("npm run build", stream=True)
-                for line in exec_result.output:
-                    yield f"Build process: {line.decode()}\n"
-
-                yield "Build process completed.\n"
-
-                # Copy the build files from the container to the React apps directory
-                yield "Copying build files...\n"
-                copy_start = time.time()
-                app_name = f"{user_id}_{file_name.replace('.', '-')}"
-                production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
-
-                if os.path.exists(production_dir):
-                    shutil.rmtree(production_dir)
-                os.makedirs(production_dir, exist_ok=True)
-
-                subprocess.run(["docker", "cp", f"{container_id}:/app/build/.", production_dir], check=True)
-                yield f"Files copied successfully in {time.time() - copy_start:.2f} seconds\n"
-
-                # Generate the URL for the deployed application
-                production_url = f"http://{request.get_host()}/deployed/{app_name}/"
-                yield f"Deployment completed. Production URL: {production_url}\n"
-
-                # Return the final JSON response with the production URL
-                yield json.dumps({
-                    "status": "success",
-                    "message": "Application deployed successfully",
-                    "production_url": production_url
-                })
-
-            except Exception as e:
-                yield f"Error in deployment: {str(e)}\n"
-                yield json.dumps({"status": "error", "message": str(e)})
-
-        return StreamingHttpResponse(stream_deployment(), content_type='text/plain')
-
     def create_deployment_container(self, user_id, file_name):
         client = docker.from_env()
         container_name = f'deploy_container_{user_id}_{file_name}_{int(time.time())}'
 
         try:
             container = client.containers.run(
-                'react_renderer',  # This is your custom image name
+                'react_renderer',
                 name=container_name,
                 command='tail -f /dev/null',  # Keep container running
                 detach=True,
-                remove=True,
                 environment={
                     'NODE_OPTIONS': '--max-old-space-size=8192',
                     'USER_ID': user_id,
                     'FILE_NAME': file_name,
-                    'PORT': '3001'
                 },
                 mem_limit='8g',
                 memswap_limit='16g',
@@ -620,14 +563,77 @@ class DeployToProductionView_prod(View):
                                                                                'mode': 'ro'},
                     '/home/ubuntu/brainpower-ai/react_renderer/package-lock.json': {'bind': '/app/package-lock.json',
                                                                                     'mode': 'ro'},
-                },
-                ports={'3001/tcp': None}  # This will assign a random port
+                }
             )
-            logger.info(f"Created deployment container: {container_name}")
             return container
         except docker.errors.APIError as e:
-            logger.error(f"Failed to create deployment container: {str(e)}")
-            raise
+            raise Exception(f"Failed to create deployment container: {str(e)}")
+
+    def post(self, request, *args, **kwargs):
+        def stream_deployment():
+            deployment_container = None
+            try:
+                data = json.loads(request.body)
+                user_id = data.get('user_id')
+                file_name = data.get('file_name')
+
+                if not all([user_id, file_name]):
+                    yield "Error: Missing required data\n"
+                    return
+
+                yield f"Starting deployment for user: {user_id}, file: {file_name}\n"
+
+                deployment_container = self.create_deployment_container(user_id, file_name)
+                yield f"Deployment container created: {deployment_container.name}\n"
+
+                yield "Running npm install...\n"
+                exec_result = deployment_container.exec_run("npm install", workdir="/app")
+                yield f"npm install output: {exec_result.output.decode()}\n"
+
+                yield "Running npm build...\n"
+                exec_result = deployment_container.exec_run("npm run build", workdir="/app")
+                yield f"Build output: {exec_result.output.decode()}\n"
+
+                if exec_result.exit_code != 0:
+                    raise Exception("Build process failed")
+
+                yield "Build completed successfully.\n"
+
+                # Copy build files from the deployment container
+                yield "Copying build files...\n"
+                app_name = f"{user_id}_{file_name.replace('.', '-')}"
+                production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
+
+                if os.path.exists(production_dir):
+                    shutil.rmtree(production_dir)
+                os.makedirs(production_dir, exist_ok=True)
+
+                os.system(f"docker cp {deployment_container.id}:/app/build/. {production_dir}")
+                yield "Files copied successfully\n"
+
+                # Generate the URL for the deployed application
+                production_url = f"http://{request.get_host()}/deployed/{app_name}/"
+                yield f"Deployment completed. Production URL: {production_url}\n"
+
+                yield json.dumps({
+                    "status": "success",
+                    "message": "Application deployed successfully",
+                    "production_url": production_url
+                })
+
+            except Exception as e:
+                yield f"Error in deployment: {str(e)}\n"
+                yield json.dumps({"status": "error", "message": str(e)})
+            finally:
+                if deployment_container:
+                    try:
+                        deployment_container.stop()
+                        deployment_container.remove()
+                        yield f"Deployment container stopped and removed: {deployment_container.name}\n"
+                    except Exception as e:
+                        yield f"Error stopping deployment container: {str(e)}\n"
+
+        return StreamingHttpResponse(stream_deployment(), content_type='text/plain')
 
     def create_nginx_config(self, app_name, app_path):
         logger.info(f"Creating Nginx config for {app_name}")

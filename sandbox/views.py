@@ -547,19 +547,7 @@ class DeployToProductionView_prod(View):
             logs.append("Container found. Starting build process...")
 
             build_command = """
-            cd /app &&
-            echo "Current directory:" &&
-            pwd &&
-            echo "Contents of current directory:" &&
-            ls -la &&
-            echo "Contents of package.json:" &&
-            cat package.json &&
-            echo "Node version:" &&
-            node --version &&
-            echo "NPM version:" &&
-            npm --version &&
-            echo "Installing dependencies..." &&
-            npm install &&
+            
             echo "Starting build process..." &&
             export NODE_OPTIONS="--max-old-space-size=8192" &&
             export GENERATE_SOURCEMAP=false &&

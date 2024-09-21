@@ -561,14 +561,27 @@ class DeployToProductionView_prod(View):
                 return
 
             yield "Starting build process...\n"
+
             build_command = """
             cd /app &&
+            echo "Current directory:" &&
+            pwd &&
+            echo "Contents of current directory:" &&
             ls -la &&
+            echo "Contents of package.json:" &&
+            cat package.json &&
+            echo "Node version:" &&
+            node --version &&
+            echo "NPM version:" &&
+            npm --version &&
+            echo "Installing dependencies..." &&
             npm install &&
+            echo "Starting build process..." &&
             export NODE_OPTIONS="--max-old-space-size=8192" &&
             export GENERATE_SOURCEMAP=false &&
             npm run build
             """
+
             exec_result = container.exec_run(
                 f"sh -c '{build_command}'",
                 stream=True

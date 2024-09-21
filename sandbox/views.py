@@ -142,10 +142,11 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                     else:
                         logger.info(f"Created empty file {import_path} in container")
 
-        exec_result = container.exec_run(["touch", "/app/src/component.js"])
+        exec_result = container.exec_run(["sh", "-c", "cd /app && yarn build"])
         if exec_result.exit_code != 0:
-            raise Exception(f"Failed to touch component.js in container: {exec_result.output.decode()}")
-        logger.info("Touched component.js in container")
+            raise Exception(f"Failed to rebuild project: {exec_result.output.decode()}")
+        logger.info("Project rebuilt successfully")
+
 
     except Exception as e:
         logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
@@ -256,10 +257,10 @@ def check_or_create_container(request):
         logger.info(f"Container {container_name} not found. Creating new container.")
         host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
         logger.info(f"Selected port {host_port} for new container")
-
         try:
             container = client.containers.run(
                 'react_renderer',
+                command=["sh", "-c", "yarn build && serve -s build -l 3001"],  # Build and serve production
                 detach=True,
                 name=container_name,
                 environment={
@@ -267,7 +268,8 @@ def check_or_create_container(request):
                     'REACT_APP_USER_ID': user_id,
                     'FILE_NAME': file_name,
                     'PORT': str(3001),
-                    'NODE_OPTIONS': '--max-old-space-size=8192'  # Increase Node.js memory limit
+                    'NODE_ENV': 'production',  # Set to production
+                    'NODE_OPTIONS': '--max-old-space-size=8192'
                 },
                 volumes={
                     os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
@@ -275,11 +277,12 @@ def check_or_create_container(request):
                     os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
                     os.path.join(react_renderer_path, 'package-lock.json'): {'bind': '/app/package-lock.json',
                                                                              'mode': 'ro'},
+                    os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},  # Add this line
                 },
                 ports={'3001/tcp': host_port},
-                mem_limit='8g',  # Increased to 8g
-                memswap_limit='16g',  # Increased swap
-                cpu_quota=100000,  # Increased to 100% of CPU
+                mem_limit='8g',
+                memswap_limit='16g',
+                cpu_quota=100000,
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
             logger.info(f"New container created: {container_name}")

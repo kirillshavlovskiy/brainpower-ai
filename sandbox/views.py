@@ -625,7 +625,7 @@ class DeployToProductionView_prod(View):
             yield f"Files copied successfully in {time.time() - copy_start:.2f} seconds\n"
 
             # Generate the URL for the deployed application
-            production_url = f"http://{request.get_host()}/deployed/{app_name}/"
+            production_url = f"https://{request.get_host()}/deployed/{app_name}/"
             yield f"Deployment completed. Production URL: {production_url}\n"
 
             yield json.dumps({

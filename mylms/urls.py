@@ -1,13 +1,17 @@
 from django.contrib import admin
 from django.urls import path, include, re_path
 from django.views.generic import TemplateView
-from django.views.static import serve
 from django.conf import settings
 from django.conf.urls.static import static
+from django.views.static import serve
 
 def serve_react_app(request, app_name):
-    path = f'{settings.DEPLOYED_COMPONENTS_ROOT}/{app_name}/index.html'
-    return serve(request, path, document_root='/')
+    index_path = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name, 'index.html')
+    if os.path.exists(index_path):
+        with open(index_path, 'r') as file:
+            content = file.read()
+            return HttpResponse(content, content_type='text/html')
+    return HttpResponse("App not found", status=404)
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -27,4 +31,3 @@ urlpatterns = [
 
 if settings.DEBUG:
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
-    urlpatterns += static(settings.DEPLOYED_COMPONENTS_URL, document_root=settings.DEPLOYED_COMPONENTS_ROOT)

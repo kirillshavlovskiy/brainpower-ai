@@ -29,8 +29,9 @@ DEPLOYED_COMPONENTS_ROOT = os.path.join(BASE_DIR, 'deployed_apps')
 
 STATICFILES_DIRS = [
     os.path.join(BASE_DIR, 'static'),
-    DEPLOYED_COMPONENTS_ROOT,
 ]
+
+
 
 # Add the DEPLOYED_COMPONENTS_ROOT to STATICFILES_DIRS
 
@@ -92,6 +93,20 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+# Add WhiteNoise to middleware if not already present
+MIDDLEWARE = [
+    'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',  # Add this line if not present
+    # ... other middleware ...
+]
+
+# Configure WhiteNoise
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+# Ensure Django serves files from DEPLOYED_COMPONENTS_ROOT in development
+if DJANGO_ENV == 'development':
+    STATICFILES_DIRS.append(DEPLOYED_COMPONENTS_ROOT)
 
 CORS_ALLOW_ALL_ORIGINS = True  # For development only. Set to False in production.
 

@@ -519,22 +519,20 @@ class ServeReactApp(TemplateView):
         return [template_path]
 
 
-import json
+import logging
 import os
+import json
 import shutil
 import time
-import logging
 import docker
 import subprocess
-import psutil
-
-
 from django.views import View
-from django.http import JsonResponse, StreamingHttpResponse
+from django.http import StreamingHttpResponse
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 
+logger = logging.getLogger(__name__)
 
 @method_decorator(csrf_exempt, name='dispatch')
 class DeployToProductionView_prod(View):
@@ -542,6 +540,8 @@ class DeployToProductionView_prod(View):
         return StreamingHttpResponse(self.stream_deployment(request), content_type='text/plain')
 
     def stream_deployment(self, request):
+        client = docker.from_env()
+        container = None
         try:
             data = json.loads(request.body)
             container_id = data.get('container_id')
@@ -554,15 +554,20 @@ class DeployToProductionView_prod(View):
 
             yield f"Starting deployment for user: {user_id}, file: {file_name}\n"
 
-            client = docker.from_env()
-            container = client.containers.get(container_id)
+            try:
+                container = client.containers.get(container_id)
+            except docker.errors.NotFound:
+                yield f"Error: Container with ID {container_id} not found\n"
+                return
 
             yield "Starting build process...\n"
             build_command = """
-            cd /app && 
+            cd /app &&
+            ls -la &&
+            npm install &&
             export NODE_OPTIONS="--max-old-space-size=8192" &&
             export GENERATE_SOURCEMAP=false &&
-            npm run build -- --verbose
+            npm run build
             """
             exec_result = container.exec_run(
                 f"sh -c '{build_command}'",
@@ -595,8 +600,22 @@ class DeployToProductionView_prod(View):
             os.makedirs(production_dir, exist_ok=True)
 
             # Copy files from container to host
-            subprocess.run(["docker", "cp", f"{container_id}:/app/build/.", production_dir], check=True)
+            copy_result = subprocess.run(
+                ["docker", "cp", f"{container_id}:/app/build/.", production_dir],
+                capture_output=True,
+                text=True
+            )
+            if copy_result.returncode != 0:
+                yield f"Error copying files: {copy_result.stderr}\n"
+                raise Exception("Failed to copy build files")
+
             yield f"Files copied successfully in {time.time() - copy_start:.2f} seconds\n"
+
+            # List copied files
+            yield "Copied files:\n"
+            for root, dirs, files in os.walk(production_dir):
+                for file in files:
+                    yield f"  {os.path.join(root, file)}\n"
 
             # Set permissions
             for root, dirs, files in os.walk(production_dir):
@@ -611,11 +630,6 @@ class DeployToProductionView_prod(View):
             production_url = f"https://{request.get_host()}/deployed/{app_name}/"
             yield f"Deployment completed. Production URL: {production_url}\n"
 
-            yield f"Deployed files:\n"
-            for root, dirs, files in os.walk(production_dir):
-                for file in files:
-                    yield f"  {os.path.join(root, file)}\n"
-
             yield json.dumps({
                 "status": "success",
                 "message": "Application deployed successfully",
@@ -623,8 +637,12 @@ class DeployToProductionView_prod(View):
             })
 
         except Exception as e:
-            import traceback
+            logger.exception("Error in deployment")
             yield f"Error in deployment: {str(e)}\n"
-            yield f"Traceback: {traceback.format_exc()}\n"
             yield json.dumps({"status": "error", "message": str(e)})
+
+        finally:
+            if container:
+                container.reload()
+                yield f"Container status after deployment: {container.status}\n"
 

@@ -551,28 +551,20 @@ class DeployToProductionView_prod(View):
             logs.append("Container found. Starting build process...")
 
             build_command = """
-                cd /app &&
-                echo "Current directory:" &&
-                pwd &&
-                echo "Contents of current directory:" &&
-                ls -la &&
-                echo "Contents of package.json:" &&
-                cat package.json &&
-                echo "Node version:" &&
-                node --version &&
-                echo "NPM version:" &&
-                npm --version &&
-                echo "Removing node_modules (if exists)..." &&
-                rm -rf node_modules &&
-                echo "Clearing npm cache..." &&
-                npm cache clean --force &&
-                echo "Installing dependencies..." &&
-                yarn install &&
-                echo "Starting production build..." &&
-                export NODE_OPTIONS="--max-old-space-size=8192" &&
-                export GENERATE_SOURCEMAP=false &&
-                npm run build
-                """
+            cd /app &&
+            echo "Node version:" &&
+            node --version &&
+            echo "NPM version:" &&
+            npm --version &&
+            echo "Contents of /app directory:" &&
+            ls -la /app &&
+            echo "Contents of /app/node_modules:" &&
+            ls -la /app/node_modules &&
+            echo "Starting production build..." &&
+            export NODE_OPTIONS="--max-old-space-size=8192" &&
+            export GENERATE_SOURCEMAP=false &&
+            yarn build
+            """
 
             exec_result = container.exec_run(
                 cmd=["/bin/sh", "-c", build_command],
@@ -582,6 +574,8 @@ class DeployToProductionView_prod(View):
             logs.append(f"Build output: {exec_result.output.decode()}")
 
             if exec_result.exit_code != 0:
+                logs.append(f"Build command exit code: {exec_result.exit_code}")
+                logs.append(f"Build command output: {exec_result.output.decode()}")
                 return JsonResponse({
                     "status": "error",
                     "message": "Build failed",

@@ -520,29 +520,16 @@ class ServeReactApp(TemplateView):
 
 
 import logging
-import os
-import json
-import shutil
 import time
-import docker
 import subprocess
-from django.views import View
-from django.http import StreamingHttpResponse
-from django.utils.decorators import method_decorator
-from django.views.decorators.csrf import csrf_exempt
-from django.conf import settings
+
 
 logger = logging.getLogger(__name__)
-
-import sys
-
 
 @method_decorator(csrf_exempt, name='dispatch')
 class DeployToProductionView_prod(View):
     def post(self, request, *args, **kwargs):
-        return StreamingHttpResponse(self.stream_deployment(request), content_type='text/plain')
-
-    def stream_deployment(self, request):
+        logs = []
         client = docker.from_env()
         container = None
         try:
@@ -552,21 +539,12 @@ class DeployToProductionView_prod(View):
             file_name = data.get('file_name')
 
             if not all([container_id, user_id, file_name]):
-                yield "Error: Missing required data\n"
-                return
+                return JsonResponse({"status": "error", "message": "Missing required data"})
 
-            yield "Starting deployment for user: {}, file: {}\n".format(user_id, file_name)
-            sys.stdout.flush()
+            logs.append(f"Starting deployment for user: {user_id}, file: {file_name}")
 
-            try:
-                container = client.containers.get(container_id)
-            except docker.errors.NotFound:
-                yield "Error: Container with ID {} not found\n".format(container_id)
-                sys.stdout.flush()
-                return
-
-            yield "Starting build process...\n"
-            sys.stdout.flush()
+            container = client.containers.get(container_id)
+            logs.append("Container found. Starting build process...")
 
             build_command = """
             cd /app &&
@@ -588,27 +566,18 @@ class DeployToProductionView_prod(View):
             npm run build
             """
 
-            exec_result = container.exec_run(
-                f"sh -c '{build_command}'",
-                stream=True
-            )
-            build_successful = False
-            for line in exec_result.output:
-                logger.info(f"Build process: {line.decode()}")
-                decoded_line = line.decode()
-                yield f"Build process: {decoded_line}\n"
-                if "Compiled successfully." in decoded_line:
-                    build_successful = True
+            exec_result = container.exec_run(build_command, stream=False)
+            logs.append(f"Build output: {exec_result.output.decode()}")
 
-            if not build_successful:
-                yield f"Build failed. Check the logs above for errors.\n"
-                raise Exception("Build process failed")
-
-            yield "Build completed successfully.\n"
+            if exec_result.exit_code != 0:
+                return JsonResponse({
+                    "status": "error",
+                    "message": "Build failed",
+                    "logs": logs
+                })
 
             # Copy build files from the container
-            yield "Copying build files...\n"
-            copy_start = time.time()
+            logs.append("Copying build files...")
             app_name = f"{user_id}_{file_name.replace('.', '-')}"
             production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
 
@@ -620,22 +589,8 @@ class DeployToProductionView_prod(View):
             os.makedirs(production_dir, exist_ok=True)
 
             # Copy files from container to host
-            copy_result = subprocess.run(
-                ["docker", "cp", f"{container_id}:/app/build/.", production_dir],
-                capture_output=True,
-                text=True
-            )
-            if copy_result.returncode != 0:
-                yield f"Error copying files: {copy_result.stderr}\n"
-                raise Exception("Failed to copy build files")
-
-            yield f"Files copied successfully in {time.time() - copy_start:.2f} seconds\n"
-
-            # List copied files
-            yield "Copied files:\n"
-            for root, dirs, files in os.walk(production_dir):
-                for file in files:
-                    yield f"  {os.path.join(root, file)}\n"
+            subprocess.run(["docker", "cp", f"{container_id}:/app/build/.", production_dir], check=True)
+            logs.append("Files copied successfully")
 
             # Set permissions
             for root, dirs, files in os.walk(production_dir):
@@ -644,27 +599,24 @@ class DeployToProductionView_prod(View):
                 for file in files:
                     os.chmod(os.path.join(root, file), 0o644)
 
-            yield "Permissions set successfully.\n"
+            logs.append("Permissions set successfully")
 
-            # Generate the URL for the deployed application
             production_url = f"https://{request.get_host()}/deployed/{app_name}/"
-            yield f"Deployment completed. Production URL: {production_url}\n"
+            logs.append(f"Deployment completed. Production URL: {production_url}")
 
-            yield json.dumps({
+            return JsonResponse({
                 "status": "success",
                 "message": "Application deployed successfully",
-                "production_url": production_url
+                "production_url": production_url,
+                "logs": logs
             })
-            sys.stdout.flush()
 
         except Exception as e:
-            yield "Error in deployment: {}\n".format(str(e))
-            yield json.dumps({"status": "error", "message": str(e)})
-            sys.stdout.flush()
+            logs.append(f"Error in deployment: {str(e)}")
+            return JsonResponse({"status": "error", "message": str(e), "logs": logs})
 
         finally:
             if container:
                 container.reload()
-                yield "Container status after deployment: {}\n".format(container.status)
-                sys.stdout.flush()
+                logs.append(f"Container status after deployment: {container.status}")
 

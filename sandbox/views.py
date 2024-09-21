@@ -543,18 +543,38 @@ class DeployToProductionView_prod(View):
 
             logs.append(f"Starting deployment for user: {user_id}, file: {file_name}")
 
-            container = client.containers.get(container_id)
+            try:
+                container = client.containers.get(container_id)
+            except docker.errors.NotFound:
+                return JsonResponse({"status": "error", "message": f"Container {container_id} not found"})
+
             logs.append("Container found. Starting build process...")
 
             build_command = """
-            
-            echo "Starting build process..." &&
+            cd /app &&
+            echo "Current directory:" &&
+            pwd &&
+            echo "Contents of current directory:" &&
+            ls -la &&
+            echo "Contents of package.json:" &&
+            cat package.json &&
+            echo "Node version:" &&
+            node --version &&
+            echo "NPM version:" &&
+            npm --version &&
+            echo "Installing dependencies..." &&
+            npm install &&
+            echo "Starting production build..." &&
             export NODE_OPTIONS="--max-old-space-size=8192" &&
             export GENERATE_SOURCEMAP=false &&
             npm run build
             """
 
-            exec_result = container.exec_run(build_command, stream=False)
+            exec_result = container.exec_run(
+                cmd=["/bin/sh", "-c", build_command],
+                workdir="/app",
+                environment={"NODE_ENV": "production"}
+            )
             logs.append(f"Build output: {exec_result.output.decode()}")
 
             if exec_result.exit_code != 0:
@@ -577,8 +597,17 @@ class DeployToProductionView_prod(View):
             os.makedirs(production_dir, exist_ok=True)
 
             # Copy files from container to host
-            subprocess.run(["docker", "cp", f"{container_id}:/app/build/.", production_dir], check=True)
+            copy_result = subprocess.run(["docker", "cp", f"{container_id}:/app/build/.", production_dir], capture_output=True, text=True)
+            if copy_result.returncode != 0:
+                logs.append(f"Error copying files: {copy_result.stderr}")
+                raise Exception(f"Failed to copy build files: {copy_result.stderr}")
             logs.append("Files copied successfully")
+
+            # List the contents of the production directory
+            logs.append("Contents of production directory:")
+            for root, dirs, files in os.walk(production_dir):
+                for file in files:
+                    logs.append(os.path.join(root, file))
 
             # Set permissions
             for root, dirs, files in os.walk(production_dir):

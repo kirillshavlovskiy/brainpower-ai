@@ -616,6 +616,7 @@ class DeployToProductionView_prod(View):
             copy_start = time.time()
             app_name = f"{user_id}_{file_name.replace('.', '-')}"
             production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
+            subprocess.run(["chmod", "-R", "755", production_dir])
 
             if os.path.exists(production_dir):
                 shutil.rmtree(production_dir)
@@ -624,9 +625,14 @@ class DeployToProductionView_prod(View):
             subprocess.run(["docker", "cp", f"{deployment_container.id}:/app/build/.", production_dir], check=True)
             yield f"Files copied successfully in {time.time() - copy_start:.2f} seconds\n"
 
+
             # Generate the URL for the deployed application
             production_url = f"https://{request.get_host()}/deployed/{app_name}/"
             yield f"Deployment completed. Production URL: {production_url}\n"
+            yield f"Deployed files:\n"
+            for root, dirs, files in os.walk(production_dir):
+                for file in files:
+                    yield f"  {os.path.join(root, file)}\n"
 
             yield json.dumps({
                 "status": "success",

@@ -25,7 +25,6 @@ urlpatterns = [
     # Serve static files for the React app
     re_path(r'^deployed/(?P<path>.*)$', serve, {
         'document_root': settings.DEPLOYED_COMPONENTS_ROOT,
-        'show_indexes': settings.DEBUG
     }),
 ]
 

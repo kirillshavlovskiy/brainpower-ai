@@ -4,6 +4,8 @@ from django.views.generic import TemplateView
 from django.conf import settings
 from django.conf.urls.static import static
 from django.views.static import serve
+import os
+from django.http import JsonResponse, HttpResponse
 
 def serve_react_app(request, app_name):
     index_path = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name, 'index.html')
@@ -25,6 +27,7 @@ urlpatterns = [
     # Serve static files for the React app
     re_path(r'^deployed/(?P<path>.*)$', serve, {
         'document_root': settings.DEPLOYED_COMPONENTS_ROOT,
+        'show_indexes': settings.DEBUG
     }),
 ]
 

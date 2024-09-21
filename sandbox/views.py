@@ -617,9 +617,8 @@ class DeployToProductionView_prod(View):
             app_name = f"{user_id}_{file_name.replace('.', '-')}"
             production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
 
-            # Ensure the parent directory exists and has correct permissions
+            # Ensure the parent directory exists
             os.makedirs(settings.DEPLOYED_COMPONENTS_ROOT, exist_ok=True)
-            os.chmod(settings.DEPLOYED_COMPONENTS_ROOT, 0o755)
 
             if os.path.exists(production_dir):
                 shutil.rmtree(production_dir)
@@ -629,7 +628,7 @@ class DeployToProductionView_prod(View):
             subprocess.run(["docker", "cp", f"{deployment_container.id}:/app/build/.", production_dir], check=True)
             yield f"Files copied successfully in {time.time() - copy_start:.2f} seconds\n"
 
-            # Set permissions
+            # Set permissions (this should now work as the ubuntu user)
             for root, dirs, files in os.walk(production_dir):
                 for dir in dirs:
                     os.chmod(os.path.join(root, dir), 0o755)

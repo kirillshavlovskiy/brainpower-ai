@@ -534,6 +534,9 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
+import sys
+
+
 @method_decorator(csrf_exempt, name='dispatch')
 class DeployToProductionView_prod(View):
     def post(self, request, *args, **kwargs):
@@ -552,15 +555,18 @@ class DeployToProductionView_prod(View):
                 yield "Error: Missing required data\n"
                 return
 
-            yield f"Starting deployment for user: {user_id}, file: {file_name}\n"
+            yield "Starting deployment for user: {}, file: {}\n".format(user_id, file_name)
+            sys.stdout.flush()
 
             try:
                 container = client.containers.get(container_id)
             except docker.errors.NotFound:
-                yield f"Error: Container with ID {container_id} not found\n"
+                yield "Error: Container with ID {} not found\n".format(container_id)
+                sys.stdout.flush()
                 return
 
             yield "Starting build process...\n"
+            sys.stdout.flush()
 
             build_command = """
             cd /app &&
@@ -588,6 +594,7 @@ class DeployToProductionView_prod(View):
             )
             build_successful = False
             for line in exec_result.output:
+                logger.info(f"Build process: {line.decode()}")
                 decoded_line = line.decode()
                 yield f"Build process: {decoded_line}\n"
                 if "Compiled successfully." in decoded_line:
@@ -648,14 +655,16 @@ class DeployToProductionView_prod(View):
                 "message": "Application deployed successfully",
                 "production_url": production_url
             })
+            sys.stdout.flush()
 
         except Exception as e:
-            logger.exception("Error in deployment")
-            yield f"Error in deployment: {str(e)}\n"
+            yield "Error in deployment: {}\n".format(str(e))
             yield json.dumps({"status": "error", "message": str(e)})
+            sys.stdout.flush()
 
         finally:
             if container:
                 container.reload()
-                yield f"Container status after deployment: {container.status}\n"
+                yield "Container status after deployment: {}\n".format(container.status)
+                sys.stdout.flush()
 

@@ -585,11 +585,27 @@ class DeployToProductionView_prod(View):
                 raise Exception(f"Failed to copy build files: {copy_result.stderr}")
             logs.append("Files copied successfully")
 
-            logs.append("Contents of production directory:")
+            # Update index.html
+            index_path = os.path.join(production_dir, 'index.html')
+            with open(index_path, 'r') as f:
+                content = f.read()
+            content = content.replace('="/static/', f'="/deployed/{app_name}/static/')
+            with open(index_path, 'w') as f:
+                f.write(content)
+            logs.append("index.html updated with correct static file paths")
+
+            # Update other static files (JS, CSS)
             for root, dirs, files in os.walk(production_dir):
                 for file in files:
-                    logs.append(os.path.join(root, file))
-
+                    if file.endswith('.js') or file.endswith('.css'):
+                        file_path = os.path.join(root, file)
+                        with open(file_path, 'r') as f:
+                            content = f.read()
+                        content = content.replace('/static/', f'/deployed/{app_name}/static/')
+                        with open(file_path, 'w') as f:
+                            f.write(content)
+            logs.append("Static file paths updated")
+            # Set permissions
             for root, dirs, files in os.walk(production_dir):
                 for dir in dirs:
                     os.chmod(os.path.join(root, dir), 0o755)
@@ -598,7 +614,7 @@ class DeployToProductionView_prod(View):
 
             logs.append("Permissions set successfully")
 
-            production_url = f"https://{request.get_host()}/deployed/{app_name}/"
+            production_url = f"https://{request.get_host()}/deployed/{app_name}/index.html"
             logs.append(f"Deployment completed. Production URL: {production_url}")
 
             return JsonResponse({

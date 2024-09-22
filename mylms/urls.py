@@ -7,7 +7,13 @@ from django.views.static import serve
 import os
 from django.http import JsonResponse, HttpResponse
 
-def serve_react_app(request, app_name):
+
+def serve_react_app(request, app_name, file_path=''):
+    if file_path:
+        file_path = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name, file_path)
+        if os.path.exists(file_path):
+            return serve(request, os.path.basename(file_path), os.path.dirname(file_path))
+
     index_path = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name, 'index.html')
     if os.path.exists(index_path):
         with open(index_path, 'r') as file:
@@ -15,21 +21,17 @@ def serve_react_app(request, app_name):
             return HttpResponse(content, content_type='text/html')
     return HttpResponse("App not found", status=404)
 
+
 urlpatterns = [
-    path('admin/', admin.site.urls),
-    path('courses/', include('courses.urls')),
-    path('sandbox/', include('sandbox.urls')),
-    path('', TemplateView.as_view(template_name='home.html'), name='home'),
+                  path('admin/', admin.site.urls),
+                  path('courses/', include('courses.urls')),
+                  path('sandbox/', include('sandbox.urls')),
+                  path('', TemplateView.as_view(template_name='home.html'), name='home'),
 
-    # Serve the React app's index.html
-    re_path(r'^deployed/(?P<app_name>[^/]+)/$', serve_react_app, name='serve_react_app'),
+                  # Serve the React app and its static files
+                  re_path(r'^deployed/(?P<app_name>[^/]+)/(?P<file_path>.*)$', serve_react_app, name='serve_react_app'),
+              ] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 
-    # Serve static files for the React app
-    re_path(r'^deployed/(?P<path>.*)$', serve, {
-        'document_root': settings.DEPLOYED_COMPONENTS_ROOT,
-        'show_indexes': settings.DEBUG
-    }),
-]
-
+# Serve media files in debug mode
 if settings.DEBUG:
-    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

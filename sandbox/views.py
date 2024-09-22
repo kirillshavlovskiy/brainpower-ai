@@ -29,33 +29,38 @@ HOST_PORT_RANGE_END = 60999
 NGINX_SITES_DYNAMIC = '/etc/nginx/sites-dynamic'
 
 
-@csrf_exempt
-@async_api_view(['POST'])
-def check_container(request):
-    user_id = request.data.get('user_id', '0')
-    file_name = request.data.get('file_name', 'rendered_component')
-    if not file_name:
-        return JsonResponse({'error': 'Missing file_name'}, status=400)
-    container_name = f'react_renderer_{user_id}_{file_name}'
+@api_view(['GET'])
+def check_container_ready(request):
+    container_id = request.GET.get('container_id')
+    user_id = request.GET.get('user_id', 'default')
+    file_name = request.GET.get('file_name')
+
+    if not container_id:
+        return JsonResponse({'error': 'No container ID provided'}, status=400)
+
     try:
-        container = client.containers.get(container_name)
-        if container.status == 'running':
-            container.reload()
+        container = client.containers.get(container_id)
+        container.reload()
+
+        logs = container.logs(tail=50).decode('utf-8').strip()
+        if "Accepting connections at http://localhost:3001" in logs:
             port_mapping = container.ports.get('3001/tcp')
             if port_mapping:
                 host_port = port_mapping[0]['HostPort']
-                dynamic_url = f"{HOST_URL}:{host_port}/{user_id}/{file_name}"
                 return JsonResponse({
-                    'status': 'running',
-                    'container_id': container.id,
-                    'url': dynamic_url,
+                    'status': 'ready',
+                    'url': f"http://{host_port}.{HOST_URL}/{user_id}/{file_name}",
+                    'log': "Server is ready"
                 })
-        return JsonResponse({'status': 'stopped'})
+            else:
+                return JsonResponse({'status': 'waiting_for_port', 'log': "Waiting for port mapping"})
+        else:
+            return JsonResponse({'status': 'not_ready', 'log': logs.split('\n')[-1]})
+
     except docker.errors.NotFound:
-        return JsonResponse({'status': 'not_found'})
+        return JsonResponse({'error': 'Container not found', 'log': 'Container not found'}, status=404)
     except Exception as e:
-        logger.error(f"Error checking container status: {str(e)}", exc_info=True)
-        return JsonResponse({'error': str(e)}, status=500)
+        return JsonResponse({'error': 'Error checking container status', 'details': str(e), 'log': str(e)}, status=500)
 
 
 def update_code_internal(container, code, user, file_name, main_file_path):
@@ -142,10 +147,16 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                     else:
                         logger.info(f"Created empty file {import_path} in container")
 
-        exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"])
+        exec_result = container.exec_run(["sh", "-c", "cd /app && yarn build"])
         if exec_result.exit_code != 0:
             raise Exception(f"Failed to rebuild project: {exec_result.output.decode()}")
-        logger.info("Project rebuilt successfully")
+
+        exec_result = container.exec_run(
+            ["sh", "-c", "cd /app && pkill -f serve && serve -s build -l 3001 &"],
+            detach=True
+        )
+        if exec_result.exit_code != 0:
+            raise Exception(f"Failed to restart server: {exec_result.output.decode()}")
 
         logger.info("Project rebuilt and server restarted successfully")
 
@@ -196,6 +207,15 @@ def check_container_ready(request):
                 'url': dynamic_url,
                 'log': "Compiled successfully!"
             })
+        if "Accepting connections at http://localhost:3001" in all_logs:
+            return JsonResponse({
+                'status': 'ready',
+                'url': dynamic_url,
+                'log': "Server is ready"
+            })
+        elif "Creating an optimized production build..." in all_logs:
+            return JsonResponse({'status': 'building', 'log': "Creating an optimized production build..."})
+
         elif "Starting the development server..." in all_logs:
             return JsonResponse({'status': 'compiling', 'log': "Starting the development server..."})
         else:
@@ -250,7 +270,8 @@ def check_or_create_container(request):
             logger.info(f"Starting existing container: {container_name}")
             container.start()
             # Ensure the container builds and serves the production build
-            container.exec_run(["sh", "-c", "cd /app && yarn start"], detach=True)
+            command = ["sh", "-c", "yarn build && serve -s build -l 3001"],  # Build and serve production
+            container.exec_run(command, detach=True)
 
         container.reload()
         host_port = container.ports.get('3001/tcp')[0]['HostPort']
@@ -321,39 +342,18 @@ def check_or_create_container(request):
 @api_view(['POST'])
 def stop_container(request):
     container_id = request.data.get('container_id')
-    user_id = request.data.get('user_id')
-    file_name = request.data.get('file_name')
 
     if not container_id:
         return JsonResponse({'error': 'No container ID provided'}, status=400)
 
     try:
         container = client.containers.get(container_id)
-    except docker.errors.NotFound:
-        logger.info(f"Container {container_id} not found, considering it already removed")
-        return JsonResponse({'status': 'Container not found, possibly already removed'})
-
-    try:
-        logger.info(f"Attempting to stop container {container_id}")
-        container.stop(timeout=10)  # Give it 10 seconds to stop gracefully
-
-        # Wait for the container to stop
-        max_wait = 15
-        start_time = time.time()
-        while time.time() - start_time < max_wait:
-            container.reload()
-            if container.status == 'exited':
-                break
-            time.sleep(1)
-
-        if container.status != 'exited':
-            logger.warning(f"Container {container_id} did not stop gracefully, forcing removal")
-
+        container.stop(timeout=10)
         container.remove(force=True)
-        logger.info(f"Container {container_id} stopped and removed successfully")
         return JsonResponse({'status': 'Container stopped and removed'})
+    except docker.errors.NotFound:
+        return JsonResponse({'status': 'Container not found, possibly already removed'})
     except Exception as e:
-        logger.error(f"Error stopping container {container_id}: {str(e)}", exc_info=True)
         return JsonResponse({'error': f"Failed to stop container: {str(e)}"}, status=500)
 
 

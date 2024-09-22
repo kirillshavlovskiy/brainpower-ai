@@ -554,19 +554,13 @@ class DeployToProductionView_prod(View):
                 return JsonResponse({"status": "error", "message": f"Container {container_id} not found"})
 
             build_command = """
-                echo
-                "Starting production build..." & &
-                export
-                NODE_OPTIONS = "--max-old-space-size=8192" & &
-                export
-                GENERATE_SOURCEMAP = false & &
-                yarn
-                build
-                """
+                echo "Starting production build..." &&
+                export NODE_OPTIONS="--max-old-space-size=8192" &&
+                export GENERATE_SOURCEMAP=false &&
+                yarn build
+            """
 
-
-                # Start serving the built project
-            exec_result = container.exec_run(["sh", "-c", build_command], detach=True)
+            exec_result = container.exec_run(["sh", "-c", build_command])
             if exec_result.exit_code != 0:
                 logs.append(f"Build command exit code: {exec_result.exit_code}")
                 logs.append(f"Build command output: {exec_result.output.decode()}")
@@ -578,32 +572,24 @@ class DeployToProductionView_prod(View):
 
             logs.append(f"Build output: {exec_result.output.decode()}")
 
-            # Copy build files
             app_name = f"{user_id}_{file_name.replace('.', '-')}"
             production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
-            os.makedirs(production_dir, exist_ok=True)
-
-            copy_command = f"docker cp {container_id}:/app/build/. {production_dir}"
-            subprocess.run(copy_command, shell=True, check=True)
-
             if os.path.exists(production_dir):
                 shutil.rmtree(production_dir)
             os.makedirs(production_dir, exist_ok=True)
 
-            # Copy files from container to host
-            copy_result = subprocess.run(["docker", "cp", f"{container_id}:/app/build/.", production_dir], capture_output=True, text=True)
+            copy_command = f"docker cp {container_id}:/app/build/. {production_dir}"
+            copy_result = subprocess.run(copy_command, shell=True, capture_output=True, text=True)
             if copy_result.returncode != 0:
                 logs.append(f"Error copying files: {copy_result.stderr}")
                 raise Exception(f"Failed to copy build files: {copy_result.stderr}")
             logs.append("Files copied successfully")
 
-            # List the contents of the production directory
             logs.append("Contents of production directory:")
             for root, dirs, files in os.walk(production_dir):
                 for file in files:
                     logs.append(os.path.join(root, file))
 
-            # Set permissions
             for root, dirs, files in os.walk(production_dir):
                 for dir in dirs:
                     os.chmod(os.path.join(root, dir), 0o755)

@@ -30,7 +30,7 @@ NGINX_SITES_DYNAMIC = '/etc/nginx/sites-dynamic'
 
 
 @api_view(['GET'])
-def check_container_ready(request):
+def check_container(request):
     container_id = request.GET.get('container_id')
     user_id = request.GET.get('user_id', 'default')
     file_name = request.GET.get('file_name')

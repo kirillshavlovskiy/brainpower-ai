@@ -146,7 +146,11 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         if exec_result.exit_code != 0:
             raise Exception(f"Failed to rebuild project: {exec_result.output.decode()}")
         logger.info("Project rebuilt successfully")
+        # Restart the serve process
+        container.exec_run(["pkill", "-f", "serve"])
+        container.exec_run(["serve", "-s", "build", "-l", "3001"], detach=True)
 
+        logger.info("Project rebuilt and server restarted successfully")
 
     except Exception as e:
         logger.error(f"Error updating code in container: {str(e)}", exc_info=True)

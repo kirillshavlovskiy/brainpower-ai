@@ -265,7 +265,7 @@ def check_or_create_container(request):
         logger.info(f"Selected port {host_port} for new container")
         try:
             container = client.containers.run(
-                'react_renderer',
+                'react_renderer_prod',
                 command=["sh", "-c", "yarn build && serve -s build -l 3001"],  # Build and serve production
                 detach=True,
                 name=container_name,

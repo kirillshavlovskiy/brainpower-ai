@@ -28,10 +28,8 @@ DEPLOYED_COMPONENTS_URL = '/deployed/'
 DEPLOYED_COMPONENTS_ROOT = '/home/ubuntu/brainpower-ai/deployed_apps'
 
 STATICFILES_DIRS = [
-    os.path.join(BASE_DIR, 'static'),
+    os.path.join(DEPLOYED_COMPONENTS_ROOT),
 ]
-
-
 
 # Add the DEPLOYED_COMPONENTS_ROOT to STATICFILES_DIRS
 

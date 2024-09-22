@@ -40,6 +40,5 @@ EXPOSE 3001
 # Set environment variable for create-react-app to use the correct port
 ENV PORT=3001
 
-
 # Start the app using serve
 CMD ["serve", "-s", "build", "-l", "3001"]

@@ -553,31 +553,20 @@ class DeployToProductionView_prod(View):
             except docker.errors.NotFound:
                 return JsonResponse({"status": "error", "message": f"Container {container_id} not found"})
 
-            logs.append("Container found. Starting build process...")
-
             build_command = """
-            cd /app &&
-            echo "Node version:" &&
-            node --version &&
-            echo "NPM version:" &&
-            npm --version &&
-            echo "Contents of /app directory:" &&
-            ls -la /app &&
-            echo "Contents of /app/node_modules:" &&
-            ls -la /app/node_modules &&
-            echo "Starting production build..." &&
-            export NODE_OPTIONS="--max-old-space-size=8192" &&
-            export GENERATE_SOURCEMAP=false &&
-            yarn build
-            """
+                echo
+                "Starting production build..." & &
+                export
+                NODE_OPTIONS = "--max-old-space-size=8192" & &
+                export
+                GENERATE_SOURCEMAP = false & &
+                yarn
+                build
+                """
 
-            exec_result = container.exec_run(
-                cmd=["/bin/sh", "-c", build_command],
-                workdir="/app",
-                environment={"NODE_ENV": "production"}
-            )
-            logs.append(f"Build output: {exec_result.output.decode()}")
 
+                # Start serving the built project
+            exec_result = container.exec_run(["sh", "-c", build_command], detach=True)
             if exec_result.exit_code != 0:
                 logs.append(f"Build command exit code: {exec_result.exit_code}")
                 logs.append(f"Build command output: {exec_result.output.decode()}")
@@ -586,6 +575,8 @@ class DeployToProductionView_prod(View):
                     "message": "Build failed",
                     "logs": logs
                 })
+
+            logs.append(f"Build output: {exec_result.output.decode()}")
 
             # Copy build files
             app_name = f"{user_id}_{file_name.replace('.', '-')}"

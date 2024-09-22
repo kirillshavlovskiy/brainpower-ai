@@ -25,12 +25,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 DEPLOYED_COMPONENTS_URL = '/deployed/'
+DEPLOYED_COMPONENTS_ROOT = '/home/ubuntu/brainpower-ai/deployed_apps'
 
-MEDIA_URL = '/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+STATICFILES_DIRS = [
+    os.path.join(BASE_DIR, 'static'),
+]
 
 
-DEPLOYED_COMPONENTS_ROOT = os.path.join(BASE_DIR, 'deployed_apps')
+
+# Add the DEPLOYED_COMPONENTS_ROOT to STATICFILES_DIRS
+
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 

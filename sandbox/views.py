@@ -589,7 +589,7 @@ class DeployToProductionView_prod(View):
             index_path = os.path.join(production_dir, 'index.html')
             with open(index_path, 'r') as f:
                 content = f.read()
-            content = content.replace('="/static/', f'="/deployed/{app_name}/static/')
+            content = content.replace('="/static/', f'="/deployed_apps/{app_name}/static/')
             with open(index_path, 'w') as f:
                 f.write(content)
             logs.append("index.html updated with correct static file paths")
@@ -601,7 +601,7 @@ class DeployToProductionView_prod(View):
                         file_path = os.path.join(root, file)
                         with open(file_path, 'r') as f:
                             content = f.read()
-                        content = content.replace('/static/', f'/deployed/{app_name}/static/')
+                        content = content.replace('/static/', f'/deployed_apps/{app_name}/static/')
                         with open(file_path, 'w') as f:
                             f.write(content)
             logs.append("Static file paths updated")

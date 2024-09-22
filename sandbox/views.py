@@ -203,12 +203,13 @@ def check_container_ready(request):
         dynamic_url = f"http://{host_port}.{HOST_URL}/{user_id}/{file_name}"
 
         # Check for compilation status
-        if "Compiled successfully!" in all_logs:
+        if "Compiled successfully!" or "Compiled with warnings" in all_logs:
             return JsonResponse({
                 'status': 'ready',
                 'url': dynamic_url,
                 'log': "Compiled successfully!"
             })
+
         if "Accepting connections at http://localhost:3001" in all_logs:
             return JsonResponse({
                 'status': 'ready',
@@ -319,25 +320,27 @@ def check_or_create_container(request):
     try:
         update_code_internal(container, code, user_id, file_name, main_file_path)
         logger.info(f"Code updated in container {container_name}")
+        port_mapping = container.ports.get('3001/tcp')
+        if port_mapping:
+            dynamic_url = f"http://{host_port}.{HOST_URL}/{user_id}/{file_name}"
+            logger.info(f"Container {container_name} running successfully: {dynamic_url}")
+            return JsonResponse({
+                'status': 'success',
+                'message': 'Container is running',
+                'container_id': container.id,
+                'url': dynamic_url,
+                'can_deploy': True,
+            })
+        else:
+            logger.error(f"Failed to get port mapping for container {container_name}")
+            return JsonResponse({'error': 'Failed to get port mapping'}, status=500)
+
     except Exception as e:
         logger.error(f"Failed to update code in container: {str(e)}", exc_info=True)
         return JsonResponse({'error': f'Failed to update code in container: {str(e)}'}, status=500)
 
-    container.reload()
-    port_mapping = container.ports.get('3001/tcp')
-    if port_mapping:
-        dynamic_url = f"http://{host_port}.{HOST_URL}/{user_id}/{file_name}"
-        logger.info(f"Container {container_name} running successfully: {dynamic_url}")
-        return JsonResponse({
-            'status': 'success',
-            'message': 'Container is running',
-            'container_id': container.id,
-            'url': dynamic_url,
-            'can_deploy': True,
-        })
-    else:
-        logger.error(f"Failed to get port mapping for container {container_name}")
-        return JsonResponse({'error': 'Failed to get port mapping'}, status=500)
+
+
 
 
 @csrf_exempt

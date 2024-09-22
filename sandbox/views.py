@@ -142,13 +142,10 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                     else:
                         logger.info(f"Created empty file {import_path} in container")
 
-        exec_result = container.exec_run(["sh", "-c", "cd /app && yarn build"])
+        exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"])
         if exec_result.exit_code != 0:
             raise Exception(f"Failed to rebuild project: {exec_result.output.decode()}")
         logger.info("Project rebuilt successfully")
-        # Restart the serve process
-        container.exec_run(["pkill", "-f", "serve"])
-        container.exec_run(["serve", "-s", "build", "-l", "3001"], detach=True)
 
         logger.info("Project rebuilt and server restarted successfully")
 
@@ -253,7 +250,7 @@ def check_or_create_container(request):
             logger.info(f"Starting existing container: {container_name}")
             container.start()
             # Ensure the container builds and serves the production build
-            container.exec_run(["sh", "-c", "cd /app && yarn build && serve -s build -l 3001"], detach=True)
+            container.exec_run(["sh", "-c", "cd /app && yarn start"], detach=True)
 
         container.reload()
         host_port = container.ports.get('3001/tcp')[0]['HostPort']
@@ -266,7 +263,7 @@ def check_or_create_container(request):
         try:
             container = client.containers.run(
                 'react_renderer_prod',
-                command=["sh", "-c", "yarn build && serve -s build -l 3001"],  # Build and serve production
+                command=["sh", "-c", "yarn start"],  # Build and serve production
                 detach=True,
                 name=container_name,
                 environment={

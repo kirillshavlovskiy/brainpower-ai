@@ -320,9 +320,6 @@ def check_or_create_container(request):
         return JsonResponse({'error': 'Failed to get port mapping'}, status=500)
 
 
-import time
-
-
 @csrf_exempt
 @api_view(['POST'])
 def stop_container(request):

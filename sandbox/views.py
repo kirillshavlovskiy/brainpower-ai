@@ -147,16 +147,18 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                     else:
                         logger.info(f"Created empty file {import_path} in container")
 
-        exec_result = container.exec_run(["sh", "-c", "cd /app && yarn build"])
-        if exec_result.exit_code != 0:
-            raise Exception(f"Failed to rebuild project: {exec_result.output.decode()}")
+            # Build the project
+            exec_result = container.exec_run(["sh", "-c", "cd /app && yarn build"])
+            if exec_result.exit_code != 0:
+                raise Exception(f"Failed to build project: {exec_result.output.decode()}")
 
-        exec_result = container.exec_run(
-            ["sh", "-c", "cd /app && pkill -f serve && serve -s build -l 3001 &"],
-            detach=True
-        )
-        if exec_result.exit_code != 0:
-            raise Exception(f"Failed to restart server: {exec_result.output.decode()}")
+            # Kill any existing serve processes
+            container.exec_run(["sh", "-c", "pkill -f 'serve -s build'"])
+
+            # Start serving the built project
+            exec_result = container.exec_run(["sh", "-c", "serve -s build -l 3001"], detach=True)
+            if exec_result.exit_code != 0:
+                raise Exception(f"Failed to start server: {exec_result.output.decode()}")
 
         logger.info("Project rebuilt and server restarted successfully")
 

@@ -248,6 +248,8 @@ def check_or_create_container(request):
         if container.status != 'running':
             logger.info(f"Starting existing container: {container_name}")
             container.start()
+            # Ensure the container builds and serves the production build
+            container.exec_run(["sh", "-c", "cd /app && yarn build && serve -s build -l 3001"], detach=True)
 
         container.reload()
         host_port = container.ports.get('3001/tcp')[0]['HostPort']

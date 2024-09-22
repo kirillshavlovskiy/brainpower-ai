@@ -633,3 +633,7 @@ class DeployToProductionView_prod(View):
                 container.reload()
                 logs.append(f"Container status after deployment: {container.status}")
 
+    def get(self, request, *args, **kwargs):
+        # This method will be used to fetch logs if needed
+        # For now, we'll just return an empty response
+        return JsonResponse({"status": "success", "logs": []})

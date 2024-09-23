@@ -49,7 +49,7 @@ def check_container(request):
                 host_port = port_mapping[0]['HostPort']
                 return JsonResponse({
                     'status': 'ready',
-                    'url': f"http://{host_port}.{HOST_URL}/{user_id}/{file_name}",
+                    'url': f"http://{host_port}.{HOST_URL}/dev",
                     'log': "Server is ready"
                 })
             else:
@@ -200,7 +200,7 @@ def check_container_ready(request):
             return JsonResponse({'status': 'waiting_for_port', 'log': latest_log})
 
         host_port = port_mapping[0]['HostPort']
-        dynamic_url = f"http://{host_port}.{HOST_URL}/{user_id}/{file_name}"
+        dynamic_url = f"http://{host_port}.{HOST_URL}/dev"
 
         # Check for compilation status
         if "Compiled successfully!" in all_logs:
@@ -335,7 +335,7 @@ def check_or_create_container(request):
     container.reload()
     port_mapping = container.ports.get('3001/tcp')
     if port_mapping:
-        dynamic_url = f"http://{host_port}.{HOST_URL}/{user_id}/{file_name}"
+        dynamic_url = f"http://{host_port}.{HOST_URL}/dev"
         logger.info(f"Container {container_name} running successfully: {dynamic_url}")
         return JsonResponse({
             'status': 'success',
@@ -512,7 +512,7 @@ class DeployToProductionView_dev(View):
             # Instead, we'll assume we're serving these files directly through Django
 
             # 4. Return the new URL to the client
-            production_url = f"http://{request.get_host()}/deployed/{app_name}/"
+            production_url = f"http://{request.get_host()}/deployed_apps/{app_name}/"
             return JsonResponse({
                 'status': 'success',
                 'message': 'Application deployed locally',
@@ -623,7 +623,7 @@ class DeployToProductionView_prod(View):
 
             logs.append("Permissions set successfully")
 
-            production_url = f"https://{request.get_host()}/deployed/{app_name}/index.html"
+            production_url = f"https://{request.get_host()}/deployed_apps/{app_name}/index.html"
             logs.append(f"Deployment completed. Production URL: {production_url}")
 
             return JsonResponse({

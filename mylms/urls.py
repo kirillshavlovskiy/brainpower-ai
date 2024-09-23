@@ -15,6 +15,12 @@ def serve_react_app(request, app_name):
             return HttpResponse(content, content_type='text/html')
     return HttpResponse("App not found", status=404)
 
+def serve_static(request, app_name, path):
+    full_path = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name, 'static', path)
+    if os.path.exists(full_path):
+        return serve(request, os.path.basename(full_path), os.path.dirname(full_path))
+    return HttpResponse("App not found", status=404)
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('courses/', include('courses.urls')),
@@ -22,14 +28,11 @@ urlpatterns = [
     path('', TemplateView.as_view(template_name='home.html'), name='home'),
 
     # Serve the React app's index.html
-    re_path(r'^deployed/(?P<app_name>[^/]+)/$', serve_react_app, name='serve_react_app'),
 
-    # Serve static files for the React app
-    re_path(r'^deployed/(?P<path>.*)$', serve, {
-        'document_root': settings.DEPLOYED_COMPONENTS_ROOT,
-        'show_indexes': settings.DEBUG
-    }),
+    re_path(r'^deployed/(?P<app_name>[^/]+)/(?P<path>.*)$', serve_react_app, name='serve_react_app'),
+    re_path(r'^deployed_apps/(?P<app_name>[^/]+)/static/(?P<path>.*)$', serve_static, name='serve_static'),
 ]
+
 
 if settings.DEBUG:
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

@@ -37,8 +37,7 @@ urlpatterns = [
     path('', TemplateView.as_view(template_name='home.html'), name='home'),
 
     # Serve the React app's index.html
-
-    re_path(r'^deployed/(?P<app_name>[^/]+)/(?P<path>.*)$', serve_react_app, name='serve_react_app'),
+    re_path(r'^deployed/(?P<app_name>[^/]+)(?P<path>/.*)?$', serve_react_app, name='serve_react_app'),
     re_path(r'^deployed_apps/(?P<app_name>[^/]+)/static/(?P<path>.*)$', serve_static, name='serve_static'),
 ]
 

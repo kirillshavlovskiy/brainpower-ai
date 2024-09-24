@@ -261,9 +261,9 @@ def check_or_create_container(request):
     language = data.get('language')
     user_id = data.get('user_id', '0')
     file_name = data.get('file_name', 'component.js')
-    main_file_path = data.get('main_file_path', "Root/Project/DailyInspirationApp/component.js")
+    main_file_path = data.get('main_file_path')
 
-    logger.info(f"Received request to check or create container for user {user_id}, file {file_name}")
+    logger.info(f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
 
     if not all([code, language, file_name]):
         return JsonResponse({'error': 'Missing required fields'}, status=400)
@@ -272,7 +272,7 @@ def check_or_create_container(request):
 
     react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'
     container_name = f'react_renderer_{user_id}_{file_name}'
-
+    app_name = f"{user_id}_{file_name.replace('.', '-')}"
     try:
         container = client.containers.get(container_name)
         logger.info(f"Existing container found: {container_name}")
@@ -281,7 +281,9 @@ def check_or_create_container(request):
             logger.info(f"Starting existing container: {container_name}")
             container.start()
             # Ensure the container builds and serves the production build
-            command = ["sh", "-c", "yarn build && serve -s build -l 3001"],  # Build and serve production
+            command = [
+                "sh", "-c", f"PUBLIC_URL=/deployed/{app_name} yarn build && serve -s build -l 3001"
+            ]
             container.exec_run(command, detach=True)
 
         container.reload()
@@ -295,7 +297,9 @@ def check_or_create_container(request):
         try:
             container = client.containers.run(
                 'react_renderer_prod',
-                command=["sh", "-c", "yarn start"],  # Build and serve production
+                command=[
+                    "sh", "-c", f"PUBLIC_URL=/deployed/{app_name} yarn build && serve -s build -l 3001"
+                ],  # Build and serve production
                 detach=True,
                 name=container_name,
                 environment={

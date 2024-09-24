@@ -148,7 +148,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                         logger.info(f"Created empty file {import_path} in container")
 
             # Build the project
-            exec_result = container.exec_run(["sh", "-c", "cd /app && yarn build"])
+            exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"])
             if exec_result.exit_code != 0:
                 raise Exception(f"Failed to build project: {exec_result.output.decode()}")
 
@@ -282,7 +282,7 @@ def check_or_create_container(request):
             container.start()
             # Ensure the container builds and serves the production build
             command = [
-                "sh", "-c", f"PUBLIC_URL=/deployed/{app_name} yarn build && serve -s build -l 3001"
+                "sh", "-c", "yarn start"
             ]
             container.exec_run(command, detach=True)
 
@@ -298,7 +298,7 @@ def check_or_create_container(request):
             container = client.containers.run(
                 'react_renderer_prod',
                 command=[
-                    "sh", "-c", f"PUBLIC_URL=/deployed/{app_name} yarn build && serve -s build -l 3001"
+                    "sh", "-c", "yarn start"
                 ],  # Build and serve production
                 detach=True,
                 name=container_name,

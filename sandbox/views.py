@@ -1,4 +1,5 @@
 import random
+import traceback
 from socket import socket
 import requests
 import os
@@ -529,6 +530,113 @@ class ServeReactApp(TemplateView):
         return [template_path]
 
 
+import logging
+import traceback
+import sys
+
+logger = logging.getLogger(__name__)
+
+
+class DeployToProductionView_prod(View):
+    def post(self, request, *args, **kwargs):
+        try:
+            data = json.loads(request.body)
+            container_id = data.get('container_id')
+            user_id = data.get('user_id')
+            file_name = data.get('file_name')
+
+            logger.info(f"Deployment requested for user {user_id}, file {file_name}, container {container_id}")
+
+            if not all([container_id, user_id, file_name]):
+                logger.error("Missing required data for deployment")
+                return JsonResponse({"status": "error", "message": "Missing required data"})
+
+            # Start the deployment process
+            self.deploy_app(container_id, user_id, file_name)
+
+            return JsonResponse({
+                "status": "processing",
+                "message": "Deployment started"
+            })
+
+        except Exception as e:
+            logger.error(f"Error starting deployment: {str(e)}")
+            logger.error(traceback.format_exc())
+            return JsonResponse({"status": "error", "message": str(e)})
+
+    def deploy_app(self, container_id, user_id, file_name):
+        try:
+            logger.info(f"Starting deployment for user {user_id}, file {file_name}")
+
+            client = docker.from_env()
+            container = client.containers.get(container_id)
+
+            logger.info(f"Running build command in container {container_id}")
+            build_command = "npm run build"
+            build_exec = container.exec_run(build_command, stream=True)
+
+            for line in build_exec.output:
+                logger.info(f"Build output: {line.decode().strip()}")
+
+            if build_exec.exit_code != 0:
+                logger.error(f"Build failed with exit code: {build_exec.exit_code}")
+                raise Exception("Build failed")
+
+            logger.info("Build completed successfully")
+
+            # Continue with the rest of your deployment process
+            app_name = f"{user_id}_{file_name.replace('.', '-')}"
+            production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
+
+            logger.info(f"Copying files to {production_dir}")
+            copy_command = f"docker cp {container.id}:/app/build/. {production_dir}"
+            copy_result = subprocess.run(copy_command, shell=True, capture_output=True, text=True)
+
+            if copy_result.returncode != 0:
+                logger.error(f"Error copying files: {copy_result.stderr}")
+                raise Exception(f"Failed to copy build files: {copy_result.stderr}")
+
+            logger.info("Files copied successfully")
+
+            # Update file paths
+            logger.info("Updating file paths")
+            self.update_file_paths(production_dir, app_name)
+
+            # Set permissions
+            logger.info("Setting file permissions")
+            self.set_permissions(production_dir)
+
+            production_url = f"https://{settings.ALLOWED_HOSTS[0]}/deployed/{app_name}/"
+            logger.info(f"Deployment completed. Production URL: {production_url}")
+
+        except Exception as e:
+            logger.error(f"Error in deployment: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def update_file_paths(self, production_dir, app_name):
+        try:
+            # Implementation here
+            logger.info("File paths updated successfully")
+        except Exception as e:
+            logger.error(f"Error updating file paths: {str(e)}")
+            raise
+
+    def set_permissions(self, production_dir):
+        try:
+            # Implementation here
+            logger.info("Permissions set successfully")
+        except Exception as e:
+            logger.error(f"Error setting permissions: {str(e)}")
+            raise
+
+
+# Add this at the end of the file
+def get_recent_logs(num_lines=100):
+    logger = logging.getLogger(__name__)
+    log_file = logger.handlers[0].baseFilename
+    with open(log_file, 'r') as f:
+        lines = f.readlines()
+    return ''.join(lines[-num_lines:])
 
 
 

@@ -568,7 +568,7 @@ class DeployToProductionView_prod(View):
                 yarn build 
             """
             command = [
-                "sh", "-c", "yarn build && serve -s build -l 3001"
+                "sh", "-c", "npm run build && serve -s build -l 3001"
             ]
             exec_result = container.exec_run(command)
 

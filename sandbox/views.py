@@ -152,14 +152,6 @@ def update_code_internal(container, code, user, file_name, main_file_path):
             if exec_result.exit_code != 0:
                 raise Exception(f"Failed to build project: {exec_result.output.decode()}")
 
-            # Kill any existing serve processes
-            container.exec_run(["sh", "-c", "pkill -f 'serve -s build'"])
-
-            # Start serving the built project
-            exec_result = container.exec_run(["sh", "-c", "serve -s build -l 3001"], detach=True)
-            if exec_result.exit_code != 0:
-                raise Exception(f"Failed to start server: {exec_result.output.decode()}")
-
         logger.info("Project rebuilt and server restarted successfully")
 
     except Exception as e:
@@ -572,8 +564,23 @@ class DeployToProductionView_prod(View):
                 export GENERATE_SOURCEMAP=false &&
                 yarn build
             """
-
-            exec_result = container.exec_run(["sh", "-c", build_command])
+            command = [
+                "sh", "-c",
+                f"PUBLIC_URL=/deployed/{user_id}-{file_name.replace('.', '-')}/ yarn build && serve -s build -l 3001"
+            ]
+            exec_result = container.exec_run(command)
+            if exec_result.exit_code != 0:
+                logs.append(f"Build command exit code: {exec_result.exit_code}")
+                logs.append(f"Build command output: {exec_result.output.decode()}")
+                return JsonResponse({
+                    "status": "error",
+                    "message": "Build failed",
+                    "logs": logs
+                })
+            # Kill any existing serve processes
+            container.exec_run(["sh", "-c", "pkill -f 'serve -s build'"])
+            # Start serving the built project
+            exec_result = container.exec_run(["sh", "-c", "serve -s build -l 3001"], detach=True)
             if exec_result.exit_code != 0:
                 logs.append(f"Build command exit code: {exec_result.exit_code}")
                 logs.append(f"Build command output: {exec_result.output.decode()}")
@@ -584,13 +591,11 @@ class DeployToProductionView_prod(View):
                 })
 
             logs.append(f"Build output: {exec_result.output.decode()}")
-
             app_name = f"{user_id}_{file_name.replace('.', '-')}"
             production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
             if os.path.exists(production_dir):
                 shutil.rmtree(production_dir)
             os.makedirs(production_dir, exist_ok=True)
-
             copy_command = f"docker cp {container_id}:/app/build/. {production_dir}"
             copy_result = subprocess.run(copy_command, shell=True, capture_output=True, text=True)
             if copy_result.returncode != 0:

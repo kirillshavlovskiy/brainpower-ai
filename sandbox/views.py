@@ -433,6 +433,7 @@ import docker
 import json
 from django.conf import settings
 from django.views.generic import TemplateView
+from channels.layers import get_channel_layer
 
 logger = logging.getLogger(__name__)
 
@@ -529,49 +530,59 @@ class ServeReactApp(TemplateView):
         template_path = f'{settings.DEPLOYED_COMPONENTS_ROOT}/{app_name}/index.html'
         return [template_path]
 
-
-from django.views.decorators.csrf import csrf_exempt
-from django.utils.decorators import method_decorator
-from django.views import View
-from django.http import JsonResponse
-import logging
-import json
+import asyncio
+import traceback
 import os
 import shutil
 import subprocess
 import docker
+from django.views import View
+from django.http import JsonResponse
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
 from django.conf import settings
+import logging
 
 logger = logging.getLogger(__name__)
+client = docker.from_env()
 
-@method_decorator(csrf_exempt, name='dispatch')
 class DeployToProductionView_prod(View):
     def post(self, request, *args, **kwargs):
-        logs = []
-        client = docker.from_env()
-        container = None
         try:
             data = json.loads(request.body)
             container_id = data.get('container_id')
             user_id = data.get('user_id')
             file_name = data.get('file_name')
-            if not all([container_id, user_id, file_name]):
-                return JsonResponse({"status": "error", "message": "Missing required data"})
-            logs.append(f"Starting deployment for user: {user_id}, file: {file_name}")
-            try:
-                container = client.containers.get(container_id)
-            except docker.errors.NotFound:
-                return JsonResponse({"status": "error", "message": f"Container {container_id} not found"})
 
-            # Stop the yarn start process
+            if not all([container_id, user_id, file_name]):
+                return JsonResponse({"status": "error", "message": "Missing required data"}, status=400)
+
+            task_id = f"deploy_{user_id}_{file_name}"
+            asyncio.create_task(self.deploy_async(container_id, user_id, file_name, task_id))
+
+            return JsonResponse({
+                "status": "processing",
+                "task_id": task_id,
+                "message": "Deployment started"
+            })
+        except Exception as e:
+            logger.error(f"Error initiating deployment: {str(e)}")
+            return JsonResponse({"status": "error", "message": str(e)}, status=500)
+
+    async def deploy_async(self, container_id, user_id, file_name, task_id):
+        channel_layer = get_channel_layer()
+        try:
+            await self.send_update(channel_layer, task_id, "Starting deployment process...")
+
+            container = client.containers.get(container_id)
+            app_name = f"{user_id}_{file_name.replace('.', '-')}"
+
+            await self.send_update(channel_layer, task_id, "Stopping yarn start process...")
             stop_command = "pkill -f 'react-scripts start'"
             exec_result = container.exec_run(["sh", "-c", stop_command])
-            logs.append("Stopped yarn start process before building")
 
-            # Proceed with the build
-            app_name = f"{user_id}_{file_name.replace('.', '-')}"
+            await self.send_update(channel_layer, task_id, "Starting production build...")
             build_command = f"""
-            echo "Starting production build..." && \
             export NODE_OPTIONS="--max-old-space-size=8192" && \
             export GENERATE_SOURCEMAP=false && \
             export PUBLIC_URL="/deployed_apps/{app_name}" && \
@@ -580,51 +591,44 @@ class DeployToProductionView_prod(View):
             exec_result = container.exec_run(["sh", "-c", build_command])
 
             if exec_result.exit_code != 0:
-                logs.append(f"Build command exit code: {exec_result.exit_code}")
-                logs.append(f"Build command output: {exec_result.output.decode()}")
-                return JsonResponse({
-                    "status": "error",
-                    "message": "Build failed",
-                    "logs": logs
-                })
-            logs.append(f"Build output: {exec_result.output.decode()}")
+                raise Exception(f"Build failed: {exec_result.output.decode()}")
 
-            # Copy the build files from the container to the host
+            await self.send_update(channel_layer, task_id, "Copying build files...")
             production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
             if os.path.exists(production_dir):
                 shutil.rmtree(production_dir)
             os.makedirs(production_dir, exist_ok=True)
+
             copy_command = f"docker cp {container_id}:/app/build/. {production_dir}"
             copy_result = subprocess.run(copy_command, shell=True, capture_output=True, text=True)
             if copy_result.returncode != 0:
-                logs.append(f"Error copying files: {copy_result.stderr}")
                 raise Exception(f"Failed to copy build files: {copy_result.stderr}")
-            logs.append("Files copied successfully")
 
-            # Set permissions for the copied files
+            await self.send_update(channel_layer, task_id, "Setting file permissions...")
             for root, dirs, files in os.walk(production_dir):
                 for dir in dirs:
                     os.chmod(os.path.join(root, dir), 0o755)
                 for file in files:
                     os.chmod(os.path.join(root, file), 0o644)
-            logs.append("Permissions set successfully")
 
-            production_url = f"https://{request.get_host()}/deployed_apps/{app_name}/index.html"
-            logs.append(f"Deployment completed. Production URL: {production_url}")
-            return JsonResponse({
-                "status": "success",
-                "message": "Application deployed successfully",
-                "production_url": production_url,
-                "logs": logs
-            })
+            production_url = f"/deployed_apps/{app_name}/index.html"
+            await self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)
+
         except Exception as e:
-            logs.append(f"Error in deployment: {str(e)}")
             logger.error(f"Error in deployment: {str(e)}")
-            return JsonResponse({"status": "error", "message": str(e), "logs": logs})
-        finally:
-            if container:
-                container.reload()
-                logs.append(f"Container status after deployment: {container.status}")
+            await self.send_update(channel_layer, task_id, f"Error: {str(e)}", error_trace=traceback.format_exc())
+
+    async def send_update(self, channel_layer, task_id, message, production_url=None, error_trace=None):
+        update = {
+            "type": "deployment_update",
+            "message": message
+        }
+        if production_url:
+            update["production_url"] = production_url
+        if error_trace:
+            update["error_trace"] = error_trace
+
+        await channel_layer.group_send(f"deployment_{task_id}", update)
 
 
 

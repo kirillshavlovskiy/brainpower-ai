@@ -605,38 +605,35 @@ class DeployToProductionView_prod(View):
                 error_message = stderr.decode() if stderr else 'Unknown error'
                 raise Exception(f"Build failed: {error_message}")
 
-            # Copy build files
-            app_name = f"{user_id}_{file_name.replace('.', '-')}"
-            production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
-            os.makedirs(production_dir, exist_ok=True)
-
-            copy_command = f"docker cp {container_id}:/app/build/. {production_dir}"
-            subprocess.run(copy_command, shell=True, check=True)
-
+            # Remove existing production_dir using sudo
             if os.path.exists(production_dir):
-                shutil.rmtree(production_dir)
+                self.send_update(channel_layer, task_id, "Removing existing production directory...")
+                delete_command = ['sudo', 'rm', '-rf', production_dir]
+                subprocess.run(delete_command, check=True)
+
+            # Create production_dir
             os.makedirs(production_dir, exist_ok=True)
 
-            # Copy files from container to host
-            copy_result = subprocess.run(["docker", "cp", f"{container_id}:/app/build/.", production_dir],
-                                         capture_output=True, text=True)
+            # Copy files from container to host using sudo
+            self.send_update(channel_layer, task_id, "Copying build files...")
+            copy_command = ['sudo', 'docker', 'cp', f"{container_id}:/app/build/.", production_dir]
+            copy_result = subprocess.run(copy_command, capture_output=True, text=True)
             if copy_result.returncode != 0:
                 logs.append(f"Error copying files: {copy_result.stderr}")
                 raise Exception(f"Failed to copy build files: {copy_result.stderr}")
             logs.append("Files copied successfully")
 
-            # List the contents of the production directory
-            logs.append("Contents of production directory:")
-            for root, dirs, files in os.walk(production_dir):
-                for file in files:
-                    logs.append(os.path.join(root, file))
+            # Change ownership of production_dir to the web server user (e.g., www-data)
+            self.send_update(channel_layer, task_id, "Changing ownership of production files...")
+            chown_command = ['sudo', 'chown', '-R', 'www-data:www-data', production_dir]
+            subprocess.run(chown_command, check=True)
 
             # Set permissions
-            for root, dirs, files in os.walk(production_dir):
-                for dir in dirs:
-                    os.chmod(os.path.join(root, dir), 0o755)
-                for file in files:
-                    os.chmod(os.path.join(root, file), 0o644)
+            self.send_update(channel_layer, task_id, "Setting file permissions...")
+            chmod_command_dirs = ['sudo', 'find', production_dir, '-type', 'd', '-exec', 'chmod', '755', '{}', '+']
+            chmod_command_files = ['sudo', 'find', production_dir, '-type', 'f', '-exec', 'chmod', '644', '{}', '+']
+            subprocess.run(chmod_command_dirs, check=True)
+            subprocess.run(chmod_command_files, check=True)
 
             logs.append("Permissions set successfully")
 

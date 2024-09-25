@@ -558,7 +558,7 @@ class DeployToProductionView_prod(View):
                 container = client.containers.get(container_id)
             except docker.errors.NotFound:
                 return JsonResponse({"status": "error", "message": f"Container {container_id} not found"})
-
+            app_name = f"{user_id}_{file_name.replace('.', '-')}"
             build_command = f"""
             echo "Starting production build..." && \
             export NODE_OPTIONS="--max-old-space-size=8192" && \
@@ -579,7 +579,7 @@ class DeployToProductionView_prod(View):
 
             logs.append(f"Build output: {exec_result.output.decode()}")
 
-            app_name = f"{user_id}_{file_name.replace('.', '-')}"
+
             production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
             if os.path.exists(production_dir):
                 shutil.rmtree(production_dir)

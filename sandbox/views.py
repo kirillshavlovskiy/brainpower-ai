@@ -550,7 +550,7 @@ import threading
 client = docker_from_env()
 logger = logging.getLogger(__name__)
 
-
+@method_decorator(csrf_exempt, name='dispatch')
 class DeployToProductionView_prod(View):
     def post(self, request, *args, **kwargs):
         try:

@@ -578,6 +578,7 @@ class DeployToProductionView_prod(View):
             return JsonResponse({"status": "error", "message": str(e)}, status=500)
 
     def deploy_async(self, container_id, user_id, file_name, task_id):
+        logs = []
         channel_layer = get_channel_layer()
         try:
             self.send_update(channel_layer, task_id, "Starting deployment process...")
@@ -605,30 +606,39 @@ class DeployToProductionView_prod(View):
                 raise Exception(f"Build failed: {error_message}")
 
             # Copy build files
-            self.send_update(channel_layer, task_id, "Copying build files...")
+            app_name = f"{user_id}_{file_name.replace('.', '-')}"
+            production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
+            os.makedirs(production_dir, exist_ok=True)
+
+            copy_command = f"docker cp {container_id}:/app/build/. {production_dir}"
+            subprocess.run(copy_command, shell=True, check=True)
+
             if os.path.exists(production_dir):
                 shutil.rmtree(production_dir)
             os.makedirs(production_dir, exist_ok=True)
 
-            copy_command = f"docker cp {container_id}:/app/build/. {production_dir}"
-            copy_result = subprocess.run(copy_command, shell=True, capture_output=True, text=True)
+            # Copy files from container to host
+            copy_result = subprocess.run(["docker", "cp", f"{container_id}:/app/build/.", production_dir],
+                                         capture_output=True, text=True)
             if copy_result.returncode != 0:
+                logs.append(f"Error copying files: {copy_result.stderr}")
                 raise Exception(f"Failed to copy build files: {copy_result.stderr}")
+            logs.append("Files copied successfully")
 
-            # Set file ownership and permissions
-            self.send_update(channel_layer, task_id, "Setting file permissions...")
-            uid = pwd.getpwnam('www-data').pw_uid
-            gid = grp.getgrnam('www-data').gr_gid
-
+            # List the contents of the production directory
+            logs.append("Contents of production directory:")
             for root, dirs, files in os.walk(production_dir):
-                for dir_name in dirs:
-                    dir_path = os.path.join(root, dir_name)
-                    os.chown(dir_path, uid, gid)
-                    os.chmod(dir_path, 0o755)
-                for file_name in files:
-                    file_path = os.path.join(root, file_name)
-                    os.chown(file_path, uid, gid)
-                    os.chmod(file_path, 0o644)
+                for file in files:
+                    logs.append(os.path.join(root, file))
+
+            # Set permissions
+            for root, dirs, files in os.walk(production_dir):
+                for dir in dirs:
+                    os.chmod(os.path.join(root, dir), 0o755)
+                for file in files:
+                    os.chmod(os.path.join(root, file), 0o644)
+
+            logs.append("Permissions set successfully")
 
             production_url = f"/deployed_apps/{app_name}/index.html"
             self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)

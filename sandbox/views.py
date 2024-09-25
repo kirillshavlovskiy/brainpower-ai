@@ -530,17 +530,17 @@ class ServeReactApp(TemplateView):
         return [template_path]
 
 
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
+from django.views import View
+from django.http import JsonResponse
 import logging
 import json
 import os
 import shutil
 import subprocess
-from django.views.decorators.csrf import csrf_exempt
-from django.utils.decorators import method_decorator
-from django.views import View
-from django.http import JsonResponse
-from django.conf import settings
 import docker
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
@@ -625,6 +625,7 @@ class DeployToProductionView_prod(View):
             if container:
                 container.reload()
                 logs.append(f"Container status after deployment: {container.status}")
+
 
 
 

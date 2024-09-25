@@ -531,11 +531,18 @@ class ServeReactApp(TemplateView):
 
 
 import logging
-import traceback
-import sys
+import json
+import os
+import shutil
+import subprocess
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
+from django.views import View
+from django.http import JsonResponse
+from django.conf import settings
+import docker
 
 logger = logging.getLogger(__name__)
-
 
 @method_decorator(csrf_exempt, name='dispatch')
 class DeployToProductionView_prod(View):
@@ -548,16 +555,20 @@ class DeployToProductionView_prod(View):
             container_id = data.get('container_id')
             user_id = data.get('user_id')
             file_name = data.get('file_name')
-
             if not all([container_id, user_id, file_name]):
                 return JsonResponse({"status": "error", "message": "Missing required data"})
-
             logs.append(f"Starting deployment for user: {user_id}, file: {file_name}")
-
             try:
                 container = client.containers.get(container_id)
             except docker.errors.NotFound:
                 return JsonResponse({"status": "error", "message": f"Container {container_id} not found"})
+
+            # Stop the yarn start process
+            stop_command = "pkill -f 'react-scripts start'"
+            exec_result = container.exec_run(["sh", "-c", stop_command])
+            logs.append("Stopped yarn start process before building")
+
+            # Proceed with the build
             app_name = f"{user_id}_{file_name.replace('.', '-')}"
             build_command = f"""
             echo "Starting production build..." && \
@@ -566,8 +577,8 @@ class DeployToProductionView_prod(View):
             export PUBLIC_URL="/deployed_apps/{app_name}" && \
             yarn build
             """
-
             exec_result = container.exec_run(["sh", "-c", build_command])
+
             if exec_result.exit_code != 0:
                 logs.append(f"Build command exit code: {exec_result.exit_code}")
                 logs.append(f"Build command output: {exec_result.output.decode()}")
@@ -576,15 +587,13 @@ class DeployToProductionView_prod(View):
                     "message": "Build failed",
                     "logs": logs
                 })
-
             logs.append(f"Build output: {exec_result.output.decode()}")
 
-
+            # Copy the build files from the container to the host
             production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
             if os.path.exists(production_dir):
                 shutil.rmtree(production_dir)
             os.makedirs(production_dir, exist_ok=True)
-
             copy_command = f"docker cp {container_id}:/app/build/. {production_dir}"
             copy_result = subprocess.run(copy_command, shell=True, capture_output=True, text=True)
             if copy_result.returncode != 0:
@@ -592,38 +601,31 @@ class DeployToProductionView_prod(View):
                 raise Exception(f"Failed to copy build files: {copy_result.stderr}")
             logs.append("Files copied successfully")
 
-            # Set permissions
+            # Set permissions for the copied files
             for root, dirs, files in os.walk(production_dir):
                 for dir in dirs:
                     os.chmod(os.path.join(root, dir), 0o755)
                 for file in files:
                     os.chmod(os.path.join(root, file), 0o644)
-
             logs.append("Permissions set successfully")
 
             production_url = f"https://{request.get_host()}/deployed_apps/{app_name}/index.html"
             logs.append(f"Deployment completed. Production URL: {production_url}")
-
             return JsonResponse({
                 "status": "success",
                 "message": "Application deployed successfully",
                 "production_url": production_url,
                 "logs": logs
             })
-
         except Exception as e:
             logs.append(f"Error in deployment: {str(e)}")
+            logger.error(f"Error in deployment: {str(e)}")
             return JsonResponse({"status": "error", "message": str(e), "logs": logs})
-
         finally:
             if container:
                 container.reload()
                 logs.append(f"Container status after deployment: {container.status}")
 
-    def get(self, request, *args, **kwargs):
-        # This method will be used to fetch logs if needed
-        # For now, we'll just return an empty response
-        return JsonResponse({"status": "success", "logs": []})
 
 
 

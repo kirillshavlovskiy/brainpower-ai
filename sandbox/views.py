@@ -567,7 +567,7 @@ class DeployToProductionView_prod(View):
                 echo "Starting production build..." &&
                 export NODE_OPTIONS="--max-old-space-size=8192" &&
                 export GENERATE_SOURCEMAP=false &&
-                yarn build
+                PUBLIC_URL=/deployed_apps/0_test_component-js npm run build
             """
 
             exec_result = container.exec_run(["sh", "-c", build_command])

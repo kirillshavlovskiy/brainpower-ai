@@ -537,106 +537,112 @@ import sys
 logger = logging.getLogger(__name__)
 
 
+@method_decorator(csrf_exempt, name='dispatch')
 class DeployToProductionView_prod(View):
     def post(self, request, *args, **kwargs):
+        logs = []
+        client = docker.from_env()
+        container = None
         try:
             data = json.loads(request.body)
             container_id = data.get('container_id')
             user_id = data.get('user_id')
             file_name = data.get('file_name')
 
-            logger.info(f"Deployment requested for user {user_id}, file {file_name}, container {container_id}")
-
             if not all([container_id, user_id, file_name]):
-                logger.error("Missing required data for deployment")
                 return JsonResponse({"status": "error", "message": "Missing required data"})
 
-            # Start the deployment process
-            self.deploy_app(container_id, user_id, file_name)
+            logs.append(f"Starting deployment for user: {user_id}, file: {file_name}")
+
+            try:
+                container = client.containers.get(container_id)
+            except docker.errors.NotFound:
+                return JsonResponse({"status": "error", "message": f"Container {container_id} not found"})
+
+            build_command = """
+                echo "Starting production build..." &&
+                export NODE_OPTIONS="--max-old-space-size=8192" &&
+                export GENERATE_SOURCEMAP=false &&
+                yarn build
+            """
+
+            exec_result = container.exec_run(["sh", "-c", build_command])
+            if exec_result.exit_code != 0:
+                logs.append(f"Build command exit code: {exec_result.exit_code}")
+                logs.append(f"Build command output: {exec_result.output.decode()}")
+                return JsonResponse({
+                    "status": "error",
+                    "message": "Build failed",
+                    "logs": logs
+                })
+
+            logs.append(f"Build output: {exec_result.output.decode()}")
+
+            app_name = f"{user_id}_{file_name.replace('.', '-')}"
+            production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
+            if os.path.exists(production_dir):
+                shutil.rmtree(production_dir)
+            os.makedirs(production_dir, exist_ok=True)
+
+            copy_command = f"docker cp {container_id}:/app/build/. {production_dir}"
+            copy_result = subprocess.run(copy_command, shell=True, capture_output=True, text=True)
+            if copy_result.returncode != 0:
+                logs.append(f"Error copying files: {copy_result.stderr}")
+                raise Exception(f"Failed to copy build files: {copy_result.stderr}")
+            logs.append("Files copied successfully")
+
+            # Update index.html
+            index_path = os.path.join(production_dir, 'index.html')
+            with open(index_path, 'r') as f:
+                content = f.read()
+            content = content.replace('="/static/', f'="/deployed_apps/{app_name}/static/')
+            with open(index_path, 'w') as f:
+                f.write(content)
+            logs.append("index.html updated with correct static file paths")
+
+            # Update other static files (JS, CSS)
+            for root, dirs, files in os.walk(production_dir):
+                for file in files:
+                    if file.endswith('.js') or file.endswith('.css'):
+                        file_path = os.path.join(root, file)
+                        with open(file_path, 'r') as f:
+                            content = f.read()
+                        content = content.replace('/static/', f'/deployed_apps/{app_name}/static/')
+                        with open(file_path, 'w') as f:
+                            f.write(content)
+            logs.append("Static file paths updated")
+            # Set permissions
+            for root, dirs, files in os.walk(production_dir):
+                for dir in dirs:
+                    os.chmod(os.path.join(root, dir), 0o755)
+                for file in files:
+                    os.chmod(os.path.join(root, file), 0o644)
+
+            logs.append("Permissions set successfully")
+
+            production_url = f"https://{request.get_host()}/deployed_apps/{app_name}/index.html"
+            logs.append(f"Deployment completed. Production URL: {production_url}")
 
             return JsonResponse({
-                "status": "processing",
-                "message": "Deployment started"
+                "status": "success",
+                "message": "Application deployed successfully",
+                "production_url": production_url,
+                "logs": logs
             })
 
         except Exception as e:
-            logger.error(f"Error starting deployment: {str(e)}")
-            logger.error(traceback.format_exc())
-            return JsonResponse({"status": "error", "message": str(e)})
+            logs.append(f"Error in deployment: {str(e)}")
+            return JsonResponse({"status": "error", "message": str(e), "logs": logs})
 
-    def deploy_app(self, container_id, user_id, file_name):
-        try:
-            logger.info(f"Starting deployment for user {user_id}, file {file_name}")
+        finally:
+            if container:
+                container.reload()
+                logs.append(f"Container status after deployment: {container.status}")
 
-            client = docker.from_env()
-            container = client.containers.get(container_id)
-
-            logger.info(f"Running build command in container {container_id}")
-            build_command = "npm run build"
-            build_exec = container.exec_run(build_command, stream=True)
-
-            for line in build_exec.output:
-                logger.info(f"Build output: {line.decode().strip()}")
-
-            if build_exec.exit_code != 0:
-                logger.error(f"Build failed with exit code: {build_exec.exit_code}")
-                raise Exception("Build failed")
-
-            logger.info("Build completed successfully")
-
-            # Continue with the rest of your deployment process
-            app_name = f"{user_id}_{file_name.replace('.', '-')}"
-            production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
-
-            logger.info(f"Copying files to {production_dir}")
-            copy_command = f"docker cp {container.id}:/app/build/. {production_dir}"
-            copy_result = subprocess.run(copy_command, shell=True, capture_output=True, text=True)
-
-            if copy_result.returncode != 0:
-                logger.error(f"Error copying files: {copy_result.stderr}")
-                raise Exception(f"Failed to copy build files: {copy_result.stderr}")
-
-            logger.info("Files copied successfully")
-
-            # Update file paths
-            logger.info("Updating file paths")
-            self.update_file_paths(production_dir, app_name)
-
-            # Set permissions
-            logger.info("Setting file permissions")
-            self.set_permissions(production_dir)
-
-            production_url = f"https://{settings.ALLOWED_HOSTS[0]}/deployed/{app_name}/"
-            logger.info(f"Deployment completed. Production URL: {production_url}")
-
-        except Exception as e:
-            logger.error(f"Error in deployment: {str(e)}")
-            logger.error(traceback.format_exc())
-
-    def update_file_paths(self, production_dir, app_name):
-        try:
-            # Implementation here
-            logger.info("File paths updated successfully")
-        except Exception as e:
-            logger.error(f"Error updating file paths: {str(e)}")
-            raise
-
-    def set_permissions(self, production_dir):
-        try:
-            # Implementation here
-            logger.info("Permissions set successfully")
-        except Exception as e:
-            logger.error(f"Error setting permissions: {str(e)}")
-            raise
-
-
-# Add this at the end of the file
-def get_recent_logs(num_lines=100):
-    logger = logging.getLogger(__name__)
-    log_file = logger.handlers[0].baseFilename
-    with open(log_file, 'r') as f:
-        lines = f.readlines()
-    return ''.join(lines[-num_lines:])
+    def get(self, request, *args, **kwargs):
+        # This method will be used to fetch logs if needed
+        # For now, we'll just return an empty response
+        return JsonResponse({"status": "success", "logs": []})
 
 
 

@@ -22,6 +22,28 @@ import shutil
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
+
+class DeploymentConsumer(AsyncWebsocketConsumer):
+    async def connect(self):
+        self.task_id = self.scope['url_route']['kwargs']['task_id']
+        self.group_name = f"deployment_{self.task_id}"
+
+        await self.channel_layer.group_add(
+            self.group_name,
+            self.channel_name
+        )
+
+        await self.accept()
+
+    async def disconnect(self, close_code):
+        await self.channel_layer.group_discard(
+            self.group_name,
+            self.channel_name
+        )
+
+    async def deployment_update(self, event):
+        await self.send(text_data=json.dumps(event))
+
 class AsyncChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         self.room_group_name = 'chat'
@@ -685,23 +707,3 @@ class DeployToProduction_prod(AsyncWebsocketConsumer):
         await channel_layer.group_send(channel_name, log_data)
         logger.info(f"Deployment log: {message}")  # Add this line to log to the server console as well
 
-class DeploymentConsumer(AsyncWebsocketConsumer):
-    async def connect(self):
-        self.task_id = self.scope['url_route']['kwargs']['task_id']
-        self.group_name = f"deployment_{self.task_id}"
-
-        await self.channel_layer.group_add(
-            self.group_name,
-            self.channel_name
-        )
-
-        await self.accept()
-
-    async def disconnect(self, close_code):
-        await self.channel_layer.group_discard(
-            self.group_name,
-            self.channel_name
-        )
-
-    async def deployment_update(self, event):
-        await self.send(text_data=json.dumps(event))

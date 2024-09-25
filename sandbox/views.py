@@ -530,21 +530,24 @@ class ServeReactApp(TemplateView):
         template_path = f'{settings.DEPLOYED_COMPONENTS_ROOT}/{app_name}/index.html'
         return [template_path]
 
-import asyncio
-import traceback
-import os
-import shutil
-import subprocess
-import docker
-from django.views import View
-from django.http import JsonResponse
-from channels.layers import get_channel_layer
-from asgiref.sync import async_to_sync
-from django.conf import settings
-import logging
+# File: your_app/views.py
 
+import os
+import json
+import asyncio
+import shutil
+import logging
+import traceback
+import subprocess
+from django.conf import settings
+from django.http import JsonResponse
+from django.views import View
+from channels.layers import get_channel_layer
+from docker import from_env as docker_from_env
+
+# Initialize Docker client
+client = docker_from_env()
 logger = logging.getLogger(__name__)
-client = docker.from_env()
 
 class DeployToProductionView_prod(View):
     def post(self, request, *args, **kwargs):
@@ -576,27 +579,36 @@ class DeployToProductionView_prod(View):
 
             container = client.containers.get(container_id)
             app_name = f"{user_id}_{file_name.replace('.', '-')}"
+            production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
 
+            # Stop the yarn start process
             await self.send_update(channel_layer, task_id, "Stopping yarn start process...")
             stop_command = "pkill -f 'react-scripts start'"
-            exec_result = container.exec_run(["sh", "-c", stop_command])
+            exec_result = container.exec_run(["sh", "-c", stop_command], demux=True)
+            stdout, stderr = exec_result.output
+            if exec_result.exit_code != 0:
+                logger.warning(f"Failed to stop yarn start: {stderr.decode()}")
+            else:
+                logger.info(f"Yarn start stopped: {stdout.decode()}")
 
+            # Start production build
             await self.send_update(channel_layer, task_id, "Starting production build...")
-            app_name = f"{user_id}_{file_name.replace('.', '-')}"
             build_command = f"""
-            echo "Starting production build..." && \
             export NODE_OPTIONS="--max-old-space-size=8192" && \
             export GENERATE_SOURCEMAP=false && \
             export PUBLIC_URL="/deployed_apps/{app_name}" && \
             yarn build
             """
-            exec_result = container.exec_run(["sh", "-c", build_command])
-
+            exec_result = container.exec_run(["sh", "-c", build_command], demux=True)
+            stdout, stderr = exec_result.output
             if exec_result.exit_code != 0:
-                raise Exception(f"Build failed: {exec_result.output.decode()}")
+                error_message = stderr.decode() if stderr else 'Unknown error'
+                raise Exception(f"Build failed: {error_message}")
+            else:
+                logger.info(f"Build successful: {stdout.decode()}")
 
+            # Copy build files
             await self.send_update(channel_layer, task_id, "Copying build files...")
-            production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
             if os.path.exists(production_dir):
                 shutil.rmtree(production_dir)
             os.makedirs(production_dir, exist_ok=True)
@@ -605,13 +617,26 @@ class DeployToProductionView_prod(View):
             copy_result = subprocess.run(copy_command, shell=True, capture_output=True, text=True)
             if copy_result.returncode != 0:
                 raise Exception(f"Failed to copy build files: {copy_result.stderr}")
+            else:
+                logger.info("Build files copied successfully.")
 
+            # Set file permissions and ownership
             await self.send_update(channel_layer, task_id, "Setting file permissions...")
+            import pwd
+            import grp
+            uid = pwd.getpwnam('www-data').pw_uid
+            gid = grp.getgrnam('www-data').gr_gid
+
             for root, dirs, files in os.walk(production_dir):
-                for dir in dirs:
-                    os.chmod(os.path.join(root, dir), 0o755)
-                for file in files:
-                    os.chmod(os.path.join(root, file), 0o644)
+                for dir_name in dirs:
+                    dir_path = os.path.join(root, dir_name)
+                    os.chown(dir_path, uid, gid)
+                    os.chmod(dir_path, 0o755)
+                for file_name in files:
+                    file_path = os.path.join(root, file_name)
+                    os.chown(file_path, uid, gid)
+                    os.chmod(file_path, 0o644)
+            logger.info("File permissions and ownership set successfully.")
 
             production_url = f"/deployed_apps/{app_name}/index.html"
             await self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)
@@ -631,6 +656,7 @@ class DeployToProductionView_prod(View):
             update["error_trace"] = error_trace
 
         await channel_layer.group_send(f"deployment_{task_id}", update)
+
 
 
 

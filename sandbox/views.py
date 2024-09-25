@@ -284,7 +284,7 @@ def check_or_create_container(request):
 
         # Build the application without serving it
         command = [
-            "sh", "-c", f"PUBLIC_URL=/deployed/{user_id}-{file_name.replace('.', '-')}/ yarn build"
+            "sh", "-c", f"PUBLIC_URL=/deployed/{user_id}_{file_name.replace('.', '-')}/ yarn build"
         ]
         exec_result = container.exec_run(command)
 
@@ -337,7 +337,7 @@ def check_or_create_container(request):
                 os.chmod(os.path.join(root, file), 0o644)
         logger.info("Permissions set successfully")
 
-        production_url = f"https://{request.get_host()}/deployed_apps/{user_id}-{file_name.replace('.', '-')}/index.html"
+        production_url = f"https://{request.get_host()}/deployed_apps/{user_id}_{file_name.replace('.', '-')}/index.html"
         logger.info(f"Deployment completed. Production URL: {production_url}")
 
         return JsonResponse({

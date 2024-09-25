@@ -281,7 +281,7 @@ def check_or_create_container(request):
             logger.info(f"Starting existing container: {container_name}")
             container.start()
             # Ensure the container builds and serves the production build
-            command = ["sh", "-c", "yarn build"],  # Build and serve production
+            command = ["sh", "-c", "yarn build && serve -s build -l 3001"],  # Build and serve production
             container.exec_run(command, detach=True)
 
         container.reload()
@@ -296,7 +296,7 @@ def check_or_create_container(request):
         try:
             container = client.containers.run(
                 'react_renderer_prod',
-                command=["sh", "-c", "yarn build"],  # Build and serve production
+                command=["sh", "-c", f"PUBLIC_URL=/deployed_apps/{app_name} yarn start"],  # Build and serve production
                 detach=True,
                 name=container_name,
                 environment={

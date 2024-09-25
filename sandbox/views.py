@@ -296,7 +296,7 @@ def check_or_create_container(request):
         try:
             container = client.containers.run(
                 'react_renderer_prod',
-                command=["sh", "-c", "yarn build"],  # Build and serve production
+                command=["sh", "-c", f"PUBLIC_URL=/deployed_apps/{app_name} yarn build"],  # Build and serve production
                 detach=True,
                 name=container_name,
                 environment={

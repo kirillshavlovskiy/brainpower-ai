@@ -615,20 +615,20 @@ class DeployToProductionView_prod(View):
             if copy_result.returncode != 0:
                 raise Exception(f"Failed to copy build files: {copy_result.stderr}")
 
-            # Set file ownership and permissions
-            self.send_update(channel_layer, task_id, "Setting file permissions...")
-            uid = pwd.getpwnam('www-data').pw_uid
-            gid = grp.getgrnam('www-data').gr_gid
-
-            for root, dirs, files in os.walk(production_dir):
-                for dir_name in dirs:
-                    dir_path = os.path.join(root, dir_name)
-                    os.chown(dir_path, uid, gid)
-                    os.chmod(dir_path, 0o755)
-                for file_name in files:
-                    file_path = os.path.join(root, file_name)
-                    os.chown(file_path, uid, gid)
-                    os.chmod(file_path, 0o644)
+            # # Set file ownership and permissions
+            # self.send_update(channel_layer, task_id, "Setting file permissions...")
+            # uid = pwd.getpwnam('www-data').pw_uid
+            # gid = grp.getgrnam('www-data').gr_gid
+            #
+            # for root, dirs, files in os.walk(production_dir):
+            #     for dir_name in dirs:
+            #         dir_path = os.path.join(root, dir_name)
+            #         os.chown(dir_path, uid, gid)
+            #         os.chmod(dir_path, 0o755)
+            #     for file_name in files:
+            #         file_path = os.path.join(root, file_name)
+            #         os.chown(file_path, uid, gid)
+            #         os.chmod(file_path, 0o644)
 
             production_url = f"/deployed_apps/{app_name}/index.html"
             self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)

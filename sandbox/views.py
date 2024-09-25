@@ -586,9 +586,14 @@ class DeployToProductionView_prod(View):
             app_name = f"{user_id}_{file_name.replace('.', '-')}"
             production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
 
-            # Stop the yarn start process
-            container.exec_run(["sh", "-c", "RUN apt-get update && apt-get install -y procps"])
+            # Install procps inside the container to get pkill
+            self.send_update(channel_layer, task_id, "Installing procps inside the container...")
+            install_command = "apt-get update && apt-get install -y procps"
+            exec_result = container.exec_run(["sh", "-c", install_command])
+            if exec_result.exit_code != 0:
+                logger.warning(f"Failed to install procps: {exec_result.output.decode()}")
 
+            # Stop the yarn start process
             self.send_update(channel_layer, task_id, "Stopping yarn start process...")
             stop_command = "pkill -f 'react-scripts start'"
             exec_result = container.exec_run(["sh", "-c", stop_command])
@@ -598,7 +603,6 @@ class DeployToProductionView_prod(View):
             # Start production build
             self.send_update(channel_layer, task_id, "Starting production build...")
             build_command = f"""
-            RUN apt-get update && apt-get install -y procps
             export NODE_OPTIONS="--max-old-space-size=8192" && \
             export GENERATE_SOURCEMAP=false && \
             export PUBLIC_URL="/deployed_apps/{app_name}" && \
@@ -625,10 +629,14 @@ class DeployToProductionView_prod(View):
             gid = grp.getgrnam('www-data').gr_gid
 
             for root, dirs, files in os.walk(production_dir):
-                for dir in dirs:
-                    os.chmod(os.path.join(root, dir), 0o755)
-                for file in files:
-                    os.chmod(os.path.join(root, file), 0o644)
+                for dir_name in dirs:
+                    dir_path = os.path.join(root, dir_name)
+                    os.chown(dir_path, uid, gid)
+                    os.chmod(dir_path, 0o755)
+                for file_name in files:
+                    file_path = os.path.join(root, file_name)
+                    os.chown(file_path, uid, gid)
+                    os.chmod(file_path, 0o644)
 
             production_url = f"/deployed_apps/{app_name}/index.html"
             self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)

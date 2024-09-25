@@ -582,7 +582,9 @@ class DeployToProductionView_prod(View):
             exec_result = container.exec_run(["sh", "-c", stop_command])
 
             await self.send_update(channel_layer, task_id, "Starting production build...")
+            app_name = f"{user_id}_{file_name.replace('.', '-')}"
             build_command = f"""
+            echo "Starting production build..." && \
             export NODE_OPTIONS="--max-old-space-size=8192" && \
             export GENERATE_SOURCEMAP=false && \
             export PUBLIC_URL="/deployed_apps/{app_name}" && \

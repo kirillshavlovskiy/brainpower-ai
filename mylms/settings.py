@@ -25,7 +25,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 DEPLOYED_COMPONENTS_URL = '/deployed/'
-DEPLOYED_COMPONENTS_ROOT = '/home/ubuntu/brainpower-ai/deployed_apps'
+DEPLOYED_COMPONENTS_ROOT = '/home/ubuntu/brainpower-ai/deployed_apps/'
+
 
 STATICFILES_DIRS = [
     os.path.join(BASE_DIR, 'static'),

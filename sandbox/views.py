@@ -585,14 +585,14 @@ class DeployToProductionView_prod(View):
             app_name = f"{user_id}_{file_name.replace('.', '-')}"
             production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
 
-            # Stop the yarn start process
-            container.exec_run(["sh", "-c", "RUN apt-get update && apt-get install -y procps"])
-
-            self.send_update(channel_layer, task_id, "Stopping yarn start process...")
-            stop_command = "pkill -f 'react-scripts start'"
-            exec_result = container.exec_run(["sh", "-c", stop_command])
-            if exec_result.exit_code != 0:
-                logger.warning(f"Failed to stop yarn start: {exec_result.output.decode()}")
+            # # Stop the yarn start process
+            # container.exec_run(["sh", "-c", "RUN apt-get update && apt-get install -y procps"])
+            #
+            # self.send_update(channel_layer, task_id, "Stopping yarn start process...")
+            # stop_command = "pkill -f 'react-scripts start'"
+            # exec_result = container.exec_run(["sh", "-c", stop_command])
+            # if exec_result.exit_code != 0:
+            #     logger.warning(f"Failed to stop yarn start: {exec_result.output.decode()}")
 
             # Start production build
             self.send_update(channel_layer, task_id, "Starting production build...")

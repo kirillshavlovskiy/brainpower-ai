@@ -585,7 +585,8 @@ class DeployToProductionView_prod(View):
             container = client.containers.get(container_id)
             app_name = f"{user_id}_{file_name.replace('.', '-')}"
             production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
-
+            if container.status != 'running':
+                raise Exception(f"Container {container_id} is not running.")
             # Install procps inside the container to get pkill
             self.send_update(channel_layer, task_id, "Installing procps inside the container...")
             install_command = "apt-get update && apt-get install -y procps"

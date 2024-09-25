@@ -597,9 +597,7 @@ class DeployToProductionView_prod(View):
             # Start production build
             self.send_update(channel_layer, task_id, "Starting production build...")
             build_command = f"""
-            RUN apt-get update && apt-get install -y procps
-            export NODE_OPTIONS="--max-old-space-size=8192" && \
-            export GENERATE_SOURCEMAP=false && \
+            
             export PUBLIC_URL="/deployed_apps/{app_name}" && \
             yarn build
             """

@@ -70,7 +70,6 @@ class AsyncChatConsumer(AsyncWebsocketConsumer):
             }
         }))
 
-
 class FileStructureConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         logger.info("Attempting to connect...")

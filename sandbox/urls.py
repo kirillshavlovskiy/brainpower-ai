@@ -3,7 +3,7 @@ from . import views
 from django.views.static import serve
 from django.conf import settings
 from django.conf.urls.static import static
-from .views import DeployToProductionView_dev, DeployToProductionView_prod, get_recent_logs
+from .views import DeployToProductionView_dev, DeployToProductionView_prod
 from django.http import HttpResponse
 import os
 

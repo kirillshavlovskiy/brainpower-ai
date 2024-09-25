@@ -15,5 +15,5 @@ urlpatterns = [
     path('deploy_to_production/', DeployToProductionView_dev.as_view(), name='deploy_to_production'),
     path('deploy_to_server/', DeployToProductionView_prod.as_view(), name='deploy_to_server'),
     path('check_container_ready/', views.check_container_ready, name='check_container_ready'),
-    path('get_deployment_logs/', lambda request: HttpResponse(get_recent_logs(), content_type='text/plain')),
+#    path('get_deployment_logs/', lambda request: HttpResponse(get_recent_logs(), content_type='text/plain')),
 ] + static(settings.DEPLOYED_COMPONENTS_URL, document_root=settings.DEPLOYED_COMPONENTS_ROOT)

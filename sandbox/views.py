@@ -578,7 +578,6 @@ class DeployToProductionView_prod(View):
             return JsonResponse({"status": "error", "message": str(e)}, status=500)
 
     def deploy_async(self, container_id, user_id, file_name, task_id):
-        logs = []
         channel_layer = get_channel_layer()
         try:
             self.send_update(channel_layer, task_id, "Starting deployment process...")
@@ -605,37 +604,25 @@ class DeployToProductionView_prod(View):
                 error_message = stderr.decode() if stderr else 'Unknown error'
                 raise Exception(f"Build failed: {error_message}")
 
-            # Remove existing production_dir using sudo
+            # Remove existing production_dir if it exists
             if os.path.exists(production_dir):
                 self.send_update(channel_layer, task_id, "Removing existing production directory...")
-                delete_command = ['sudo', 'rm', '-rf', production_dir]
-                subprocess.run(delete_command, check=True)
+                shutil.rmtree(production_dir)
 
             # Create production_dir
             os.makedirs(production_dir, exist_ok=True)
 
-            # Copy files from container to host using sudo
+            # Copy files from container to host
             self.send_update(channel_layer, task_id, "Copying build files...")
-            copy_command = ['sudo', 'docker', 'cp', f"{container_id}:/app/build/.", production_dir]
+            copy_command = ["docker", "cp", f"{container_id}:/app/build/.", production_dir]
             copy_result = subprocess.run(copy_command, capture_output=True, text=True)
             if copy_result.returncode != 0:
-                logs.append(f"Error copying files: {copy_result.stderr}")
+                logger.error(f"Error copying files: {copy_result.stderr}")
                 raise Exception(f"Failed to copy build files: {copy_result.stderr}")
-            logs.append("Files copied successfully")
 
-            # Change ownership of production_dir to the web server user (e.g., www-data)
-            self.send_update(channel_layer, task_id, "Changing ownership of production files...")
-            chown_command = ['sudo', 'chown', '-R', 'www-data:www-data', production_dir]
-            subprocess.run(chown_command, check=True)
+            logger.info("Files copied successfully")
 
-            # Set permissions
-            self.send_update(channel_layer, task_id, "Setting file permissions...")
-            chmod_command_dirs = ['sudo', 'find', production_dir, '-type', 'd', '-exec', 'chmod', '755', '{}', '+']
-            chmod_command_files = ['sudo', 'find', production_dir, '-type', 'f', '-exec', 'chmod', '644', '{}', '+']
-            subprocess.run(chmod_command_dirs, check=True)
-            subprocess.run(chmod_command_files, check=True)
-
-            logs.append("Permissions set successfully")
+            # No need to adjust permissions since we're running as root
 
             production_url = f"/deployed_apps/{app_name}/index.html"
             self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)

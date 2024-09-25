@@ -585,25 +585,12 @@ class DeployToProductionView_prod(View):
             container = client.containers.get(container_id)
             app_name = f"{user_id}_{file_name.replace('.', '-')}"
             production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
+
+            # Ensure the container is running
             if container.status != 'running':
                 raise Exception(f"Container {container_id} is not running.")
-            # Install procps inside the container to get pkill
-            self.send_update(channel_layer, task_id, "Installing procps inside the container...")
-            install_command = "apt-get update && apt-get install -y procps"
-            exec_result = container.exec_run(["sh", "-c", install_command])
-            if exec_result.exit_code != 0:
-                logger.warning(f"Failed to install procps: {exec_result.output.decode()}")
 
-            # Stop the yarn start process
-            self.send_update(channel_layer, task_id, "Stopping yarn start process...")
-            stop_command = "pkill -f 'react-scripts start'"
-            exec_result = container.exec_run(["sh", "-c", stop_command])
-            if exec_result.exit_code != 0:
-                logger.warning(f"Failed to stop yarn start: {exec_result.output.decode()}")
-            exec_result = container.exec_run(["ps", "aux"])
-            logger.info(f"Processes in container:\n{exec_result.output.decode()}")
-
-            # Start production build
+            # Start production build without stopping yarn start
             self.send_update(channel_layer, task_id, "Starting production build...")
             build_command = f"""
             export NODE_OPTIONS="--max-old-space-size=8192" && \
@@ -611,9 +598,11 @@ class DeployToProductionView_prod(View):
             export PUBLIC_URL="/deployed_apps/{app_name}" && \
             yarn build
             """
-            exec_result = container.exec_run(["sh", "-c", build_command])
+            exec_result = container.exec_run(["sh", "-c", build_command], demux=True)
+            stdout, stderr = exec_result.output
             if exec_result.exit_code != 0:
-                raise Exception(f"Build failed: {exec_result.output.decode()}")
+                error_message = stderr.decode() if stderr else 'Unknown error'
+                raise Exception(f"Build failed: {error_message}")
 
             # Copy build files
             self.send_update(channel_layer, task_id, "Copying build files...")

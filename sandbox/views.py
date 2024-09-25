@@ -261,12 +261,13 @@ def check_or_create_container(request):
     language = data.get('language')
     user_id = data.get('user_id', '0')
     file_name = data.get('file_name', 'component.js')
-    main_file_path = data.get('main_file_path', "Root/Project/DailyInspirationApp/component.js")
+    main_file_path = data.get('main_file_path')
 
-    logger.info(f"Received request to check or create container for user {user_id}, file {file_name}")
+    logger.info(f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
 
     if not all([code, language, file_name]):
         return JsonResponse({'error': 'Missing required fields'}, status=400)
+
     if language != 'react':
         return JsonResponse({'error': 'Unsupported language'}, status=400)
 
@@ -280,73 +281,80 @@ def check_or_create_container(request):
         if container.status != 'running':
             logger.info(f"Starting existing container: {container_name}")
             container.start()
-            # Ensure the container builds and serves the production build
-            command = ["sh", "-c", "yarn build && serve -s build -l 3001"],  # Build and serve production
-            container.exec_run(command, detach=True)
 
-        container.reload()
-        host_port = container.ports.get('3001/tcp')[0]['HostPort']
-        logger.info(f"Container {container_name} is running on port {host_port}")
+        # Build the application without serving it
+        command = [
+            "sh", "-c", f"PUBLIC_URL=/deployed_apps/{user_id}_{file_name.replace('.', '-')}/ yarn build"
+        ]
+        exec_result = container.exec_run(command)
 
-    except docker.errors.NotFound:
-        logger.info(f"Container {container_name} not found. Creating new container.")
-        host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
-        logger.info(f"Selected port {host_port} for new container")
-        try:
-            container = client.containers.run(
-                'react_renderer_prod',
-                command=["sh", "-c", "yarn start"],  # Build and serve production
-                detach=True,
-                name=container_name,
-                environment={
-                    'USER_ID': user_id,
-                    'REACT_APP_USER_ID': user_id,
-                    'FILE_NAME': file_name,
-                    'PORT': str(3001),
-                    'NODE_ENV': 'production',  # Set to production
-                    'NODE_OPTIONS': '--max-old-space-size=8192'
-                },
-                volumes={
-                    os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
-                    os.path.join(react_renderer_path, 'package-lock.json'): {'bind': '/app/package-lock.json',
-                                                                             'mode': 'ro'},
-                    os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},  # Add this line
-                },
-                ports={'3001/tcp': host_port},
-                mem_limit='8g',
-                memswap_limit='16g',
-                cpu_quota=100000,
-                restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
-            )
-            logger.info(f"New container created: {container_name}")
-        except docker.errors.APIError as e:
-            logger.error(f"Failed to create container: {str(e)}", exc_info=True)
-            return JsonResponse({'error': f'Failed to create container: {str(e)}'}, status=500)
+        if exec_result.exit_code != 0:
+            logger.error(f"Build command exit code: {exec_result.exit_code}")
+            logger.error(f"Build command output: {exec_result.output.decode()}")
+            return JsonResponse({"status": "error", "message": "Build failed", "logs": exec_result.output.decode()})
 
-    try:
-        update_code_internal(container, code, user_id, file_name, main_file_path)
-        logger.info(f"Code updated in container {container_name}")
-    except Exception as e:
-        logger.error(f"Failed to update code in container: {str(e)}", exc_info=True)
-        return JsonResponse({'error': f'Failed to update code in container: {str(e)}'}, status=500)
+        # Prepare the production directory
+        production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, f"{user_id}-{file_name.replace('.', '-')}")
+        if os.path.exists(production_dir):
+            shutil.rmtree(production_dir)
+        os.makedirs(production_dir, exist_ok=True)
 
-    container.reload()
-    port_mapping = container.ports.get('3001/tcp')
-    if port_mapping:
-        dynamic_url = f"http://{host_port}.{HOST_URL}/dev"
-        logger.info(f"Container {container_name} running successfully: {dynamic_url}")
+        # Copy build files from the container to the production directory
+        copy_command = f"docker cp {container_name}:/app/build/. {production_dir}"
+        copy_result = subprocess.run(copy_command, shell=True, capture_output=True, text=True)
+        if copy_result.returncode != 0:
+            logger.error(f"Error copying files: {copy_result.stderr}")
+            raise Exception(f"Failed to copy build files: {copy_result.stderr}")
+
+        logger.info("Files copied successfully")
+
+        # Update index.html
+        index_path = os.path.join(production_dir, 'index.html')
+        with open(index_path, 'r') as f:
+            content = f.read()
+        content = content.replace('="/static/', f'="/deployed_apps/{user_id}_{file_name.replace(".", "-")}/static/')
+        with open(index_path, 'w') as f:
+            f.write(content)
+        logger.info("index.html updated with correct static file paths")
+
+        # Update other static files (JS, CSS)
+        for root, dirs, files in os.walk(production_dir):
+            for file in files:
+                if file.endswith('.js') or file.endswith('.css'):
+                    file_path = os.path.join(root, file)
+                    with open(file_path, 'r') as f:
+                        content = f.read()
+                    content = content.replace('/static/', f'/deployed_apps/{user_id}_{file_name.replace(".", "-")}/static/')
+                    with open(file_path, 'w') as f:
+                        f.write(content)
+                    logger.info(f"Static file paths updated for {file_path}")
+
+        # Set permissions for the files
+        for root, dirs, files in os.walk(production_dir):
+            for dir in dirs:
+                os.chmod(os.path.join(root, dir), 0o755)
+            for file in files:
+                os.chmod(os.path.join(root, file), 0o644)
+        logger.info("Permissions set successfully")
+
+        production_url = f"https://{request.get_host()}/deployed_apps/{user_id}_{file_name.replace('.', '-')}/index.html"
+        logger.info(f"Deployment completed. Production URL: {production_url}")
+
         return JsonResponse({
-            'status': 'success',
-            'message': 'Container is running',
-            'container_id': container.id,
-            'url': dynamic_url,
-            'can_deploy': True,
+            "status": "success",
+            "message": "Application deployed successfully",
+            "production_url": production_url,
+            "logs": ["Files copied successfully", "index.html updated", "Static file paths updated"]
         })
-    else:
-        logger.error(f"Failed to get port mapping for container {container_name}")
-        return JsonResponse({'error': 'Failed to get port mapping'}, status=500)
+
+    except Exception as e:
+        logger.error(f"Error in deployment: {str(e)}")
+        return JsonResponse({"status": "error", "message": str(e)})
+
+    finally:
+        if container:
+            container.reload()
+            logger.info(f"Container status after deployment: {container.status}")
 
 
 @csrf_exempt

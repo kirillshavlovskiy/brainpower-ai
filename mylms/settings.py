@@ -165,14 +165,15 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'mylms.wsgi.application'
-# Database
-# https://docs.djangoproject.com/en/4.2/ref/settings/#databases
+
 ASGI_APPLICATION = 'mylms.asgi.application'
+
 CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer"
     }
 }
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',

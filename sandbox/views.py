@@ -600,6 +600,8 @@ class DeployToProductionView_prod(View):
             exec_result = container.exec_run(["sh", "-c", stop_command])
             if exec_result.exit_code != 0:
                 logger.warning(f"Failed to stop yarn start: {exec_result.output.decode()}")
+            exec_result = container.exec_run(["ps", "aux"])
+            logger.info(f"Processes in container:\n{exec_result.output.decode()}")
 
             # Start production build
             self.send_update(channel_layer, task_id, "Starting production build...")

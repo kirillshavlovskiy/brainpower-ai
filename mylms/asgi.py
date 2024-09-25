@@ -12,7 +12,7 @@ django.setup()
 
 # Now import your custom middleware and routing
 from courses.middleware import UserIDAuthMiddleware
-from sandbox import routing
+from courses import routing
 
 application = ProtocolTypeRouter({
     "http": get_asgi_application(),

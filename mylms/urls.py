@@ -8,21 +8,20 @@ import os
 from django.http import JsonResponse, HttpResponse
 
 
-def serve_react_app(request, app_name, path=''):
-    if path.startswith('static/'):
-        # Serve static files
-        full_path = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name, path)
-        if os.path.exists(full_path):
-            return serve(request, os.path.basename(full_path), os.path.dirname(full_path))
+from django.contrib.staticfiles.views import serve as static_serve
 
-    # For all other requests, serve index.html
+def serve_react_app(request, app_name, path=''):
+    if path.startswith('/static/'):
+        return static_serve(request, path, document_root=os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name, 'static'))
+
+    # Serve index.html for all other routes
     index_path = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name, 'index.html')
     if os.path.exists(index_path):
         with open(index_path, 'r') as file:
             content = file.read()
         return HttpResponse(content, content_type='text/html')
-
     return HttpResponse("App not found", status=404)
+
 
 def serve_static(request, app_name, path):
     full_path = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name, 'static', path)
@@ -37,7 +36,7 @@ urlpatterns = [
     path('', TemplateView.as_view(template_name='home.html'), name='home'),
 
     # Serve the React app's index.html
-    re_path(r'^deployed/(?P<app_name>[^/]+)(?P<path>/.*)?$', serve_react_app, name='serve_react_app'),
+    re_path(r'^deployed_apps/(?P<app_name>[^/]+)(?P<path>/.*)?$', serve_react_app, name='serve_react_app'),
     re_path(r'^deployed_apps/(?P<app_name>[^/]+)/static/(?P<path>.*)$', serve_static, name='serve_static'),
 ]
 

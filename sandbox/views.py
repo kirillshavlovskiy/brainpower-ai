@@ -254,7 +254,7 @@ def check_or_create_container(request):
     language = data.get('language')
     user_id = data.get('user_id', '0')
     file_name = data.get('file_name', 'component.js')
-    main_file_path = data.get('main_file_path')
+    main_file_path = data.get('main_file_path', "Root/Project/DailyInspirationApp/component.js")
 
     logger.info(f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
 
@@ -572,7 +572,7 @@ class DeployToProductionView_prod(View):
             container = client.containers.get(container_id)
 
             logger.info(f"Running build command in container {container_id}")
-            build_command = "npm run build"
+            build_command = "yarn build"
             build_exec = container.exec_run(build_command, stream=True)
 
             for line in build_exec.output:

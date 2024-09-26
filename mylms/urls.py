@@ -26,7 +26,8 @@ def serve_react_app(request, app_name, path=''):
     return HttpResponse("App not found", status=404)
 
 def serve_static(request, app_name, path):
-    path = path.lstrip('/')  # Remove leading slash
+
+    logger.debug(f"Received request for static file: app_name={app_name}, path={path}")
     full_path = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name, 'static', path)
     logger.debug(f"Attempting to serve static file: {full_path}")
     if os.path.exists(full_path):

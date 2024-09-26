@@ -631,7 +631,7 @@ class DeployToProductionView_prod(View):
 
     def send_update(self, channel_layer, task_id, message, production_url=None, error_trace=None):
         update = {
-            "type": "deployment_update",
+            "type": "deployment_update",  # This should match the method name in the consumer
             "message": message
         }
         if production_url:

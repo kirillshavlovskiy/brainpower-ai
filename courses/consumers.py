@@ -63,6 +63,7 @@ class DeploymentConsumer(AsyncWebsocketConsumer):
 
         # Send message to WebSocket
         await self.send(text_data=json.dumps({
+            'type': 'deployment_update',
             'message': message
         }))
 

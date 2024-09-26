@@ -596,37 +596,36 @@ class DeployToProductionView_prod(View):
                 raise Exception(f"Build failed: {error_message}")
 
             # Remove existing directory if it exists
-            if os.path.exists(production_dir):
-                self.send_update(channel_layer, task_id, "Removing existing production directory...")
-                shutil.rmtree(production_dir)
+            self.send_update(channel_layer, task_id, "Removing existing production directory...")
+            subprocess.run(f"sudo rm -rf {production_dir}", shell=True, check=True)
 
             # Create production directory
-            os.makedirs(production_dir, exist_ok=True)
+            subprocess.run(f"sudo mkdir -p {production_dir}", shell=True, check=True)
 
             # Copy files from container to host
             self.send_update(channel_layer, task_id, "Copying build files...")
-            copy_command = f"docker cp {container_id}:/app/build/. {production_dir}"
-            result = subprocess.run(copy_command, shell=True, check=True, capture_output=True, text=True)
+            copy_command = f"sudo docker cp {container_id}:/app/build/. {production_dir}"
+            subprocess.run(copy_command, shell=True, check=True)
 
             # Ensure static directory exists
             static_dir = os.path.join(production_dir, 'static')
-            os.makedirs(static_dir, exist_ok=True)
+            subprocess.run(f"sudo mkdir -p {static_dir}", shell=True, check=True)
 
             # Move all files except index.html to static directory
-            for item in os.listdir(production_dir):
-                if item != 'index.html' and item != 'static':
-                    src = os.path.join(production_dir, item)
-                    dst = os.path.join(static_dir, item)
-                    shutil.move(src, dst)
+            move_command = f"""
+            sudo find {production_dir} -maxdepth 1 -type f ! -name 'index.html' -exec mv {{}} {static_dir} \;
+            """
+            subprocess.run(move_command, shell=True, check=True)
 
             # Update index.html to use correct static file paths
-            index_path = os.path.join(production_dir, 'index.html')
-            if os.path.exists(index_path):
-                with open(index_path, 'r') as file:
-                    content = file.read()
-                content = content.replace('"/static/', f'"/deployed_apps/{app_name}/static/')
-                with open(index_path, 'w') as file:
-                    file.write(content)
+            update_index_command = f"""
+            sudo sed -i 's|"/static/|"/deployed_apps/{app_name}/static/|g' {os.path.join(production_dir, 'index.html')}
+            """
+            subprocess.run(update_index_command, shell=True, check=True)
+
+            # Set correct permissions
+            subprocess.run(f"sudo chown -R ubuntu:ubuntu {production_dir}", shell=True, check=True)
+            subprocess.run(f"sudo chmod -R 755 {production_dir}", shell=True, check=True)
 
             production_url = f"https://8000.brainpower-ai.net/deployed_apps/{app_name}/"
             self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)

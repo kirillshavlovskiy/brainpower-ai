@@ -636,11 +636,12 @@ class DeployToProductionView_prod(View):
 
                 self.send_update(channel_layer, task_id, "Performing health check...")
                 try:
-                    response = requests.get(production_url, timeout=10)
-                    if response.status_code == 200:
+                    host_response = requests.get(production_url, timeout=10)
+                    logger.info(f"Server response: {host_response}")
+                    if host_response.status_code == 200:
                         self.send_update(channel_layer, task_id, "Health check passed")
                     else:
-                        raise Exception(f"Health check failed. Status code: {response.status_code}")
+                        raise Exception(f"Health check failed. Status code: {host_response.status_code}")
                 except requests.RequestException as e:
                     raise Exception(f"Health check failed. Error: {str(e)}")
 

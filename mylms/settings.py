@@ -44,10 +44,10 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 if DJANGO_ENV == 'production':
     DEBUG = False
     ALLOWED_HOSTS = [
-                     'brainpower-ai.net',
+                     '8000.brainpower-ai.net',
                      '.brainpower-ai.net',
+                     'brainpower-ai.net',
                      'www.brainpower-ai.net',
-                     'd1ruevvpet0k71.cloudfront.net',
                      'localhost',
                      '127.0.0.1',
                      ]

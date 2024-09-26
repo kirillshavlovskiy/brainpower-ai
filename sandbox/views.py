@@ -642,19 +642,19 @@ class DeployToProductionView_prod(View):
             self.send_update(channel_layer, task_id, f"Error: {str(e)}", error_trace=traceback.format_exc())
 
 
-def send_update(self, channel_layer, task_id, message, production_url=None, error_trace=None):
-        update = {
-            "type": "deployment_update",
-            "message": message
-        }
-        if production_url:
-            update["production_url"] = production_url
-        if error_trace:
-            update["error_trace"] = error_trace
+    def send_update(self, channel_layer, task_id, message, production_url=None, error_trace=None):
+            update = {
+                "type": "deployment_update",
+                "message": message
+            }
+            if production_url:
+                update["production_url"] = production_url
+            if error_trace:
+                update["error_trace"] = error_trace
 
-        logger.info(f"Sending update: {update}")
-        async_to_sync(channel_layer.group_send)(f"deployment_{task_id}", update)
-        logger.info(f"Sent update for task {task_id}: {message}")
+            logger.info(f"Sending update: {update}")
+            async_to_sync(channel_layer.group_send)(f"deployment_{task_id}", update)
+            logger.info(f"Sent update for task {task_id}: {message}")
 
 
 

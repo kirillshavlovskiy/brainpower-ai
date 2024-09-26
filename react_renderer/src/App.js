@@ -1,5 +1,4 @@
 import React, { useState, useEffect, Suspense } from 'react';
-import { BrowserRouter as Router, Route, Routes, useParams } from 'react-router-dom';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 
 const DynamicComponent = () => {
@@ -65,7 +64,7 @@ const theme = createTheme();
 
 function App() {
   return (
-    <Router>
+
     <ThemeProvider theme={theme}>
       <ErrorBoundary>
         <Suspense fallback={<div>Loading...</div>}>
@@ -73,7 +72,7 @@ function App() {
         </Suspense>
       </ErrorBoundary>
       </ThemeProvider>
-    </Router>
+
   );
 }
 

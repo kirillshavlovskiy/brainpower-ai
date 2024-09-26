@@ -545,6 +545,8 @@ from asgiref.sync import async_to_sync
 from docker import from_env as docker_from_env
 import threading
 
+
+@method_decorator(csrf_exempt, name='dispatch')
 class DeployToProductionView_prod(View):
     def post(self, request, *args, **kwargs):
         try:

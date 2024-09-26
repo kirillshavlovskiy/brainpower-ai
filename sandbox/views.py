@@ -581,15 +581,14 @@ class DeployToProductionView_prod(View):
             app_name = f"{user_id}_{file_name.replace('.', '-')}"
             production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
 
-            # Ensure the container is running
             if container.status != 'running':
                 raise Exception(f"Container {container_id} is not running.")
 
-            # Start production build
             self.send_update(channel_layer, task_id, "Starting production build...")
             build_command = f"""
             export NODE_OPTIONS="--max-old-space-size=8192" && \
             export GENERATE_SOURCEMAP=false && \
+            export PUBLIC_URL="/deployed_apps/{app_name}/" && \
             yarn build
             """
             exec_result = container.exec_run(["sh", "-c", build_command], demux=True)
@@ -598,72 +597,43 @@ class DeployToProductionView_prod(View):
                 error_message = stderr.decode() if stderr else 'Unknown error'
                 raise Exception(f"Build failed: {error_message}")
 
-            # Remove existing directory if it exists
             self.send_update(channel_layer, task_id, "Removing existing production directory...")
             subprocess.run(f"sudo rm -rf {production_dir}", shell=True, check=True)
 
-            # Create production directory
             subprocess.run(f"sudo mkdir -p {production_dir}", shell=True, check=True)
 
-            # Copy files from container to host
             self.send_update(channel_layer, task_id, "Copying build files...")
             copy_command = f"sudo docker cp {container_id}:/app/build/. {production_dir}"
-            copy_result = subprocess.run(copy_command, shell=True, capture_output=True, text=True)
-            if copy_result.returncode != 0:
-                logger.error(f"Error copying files: {copy_result.stderr}")
-                raise Exception(f"Failed to copy build files: {copy_result.stderr}")
-            logger.info("Files copied successfully")
+            subprocess.run(copy_command, shell=True, check=True)
 
-            # Ensure static directory exists
-            static_dir = os.path.join(production_dir, 'static')
-            subprocess.run(f"sudo mkdir -p {static_dir}", shell=True, check=True)
-
-            # # Move all files except index.html to static directory
-            # move_command = f"""
-            # sudo find {production_dir} -maxdepth 1 -type f ! -name 'index.html' -exec mv {{}} {static_dir} \;
-            # """
-            # move_result = subprocess.run(move_command, shell=True, check=True)
-            # if copy_result.returncode != 0:
-            #     logger.error(f"Error copying files: {move_result.stderr}")
-            #     raise Exception(f"Failed to copy build files: {move_result.stderr}")
-            # logger.info("Static files moved successfully")
-
-            # Update index.html to use correct static file paths
             update_index_command = f"""
             sudo sed -i 's|"/static/|"/deployed_apps/{app_name}/static/|g' {os.path.join(production_dir, 'index.html')}
             """
-            update_index_result = subprocess.run(update_index_command, shell=True, check=True)
-            if copy_result.returncode != 0:
-                logger.error(f"Error copying files: {update_index_result.stderr}")
-                raise Exception(f"Failed to copy build files: {update_index_result.stderr}")
-            logger.info("Index updated successfully")
-            index_path = os.path.join(production_dir, 'index.html')
+            subprocess.run(update_index_command, shell=True, check=True)
 
             self.send_update(channel_layer, task_id, "Verifying deployed files...")
             list_command = f"ls -R {production_dir}"
             result = subprocess.run(list_command, shell=True, capture_output=True, text=True)
             self.send_update(channel_layer, task_id, f"Deployed files:\n{result.stdout}")
 
-            # Update other static files (JS, CSS)
-            for root, dirs, files in os.walk(production_dir):
-                for file in files:
-                    if file.endswith('.js') or file.endswith('.css'):
-                        file_path = os.path.join(root, file)
-                        with open(file_path, 'r') as f:
-                            content = f.read()
-                        content = content.replace('/static/', f'/deployed_apps/{app_name}/static/')
-                        with open(file_path, 'w') as f:
-                            f.write(content)
+            self.send_update(channel_layer, task_id, "Updating static file paths...")
+            update_static_files_command = f"""
+                    sudo find {production_dir} -type f \( -name '*.js' -o -name '*.css' \) -exec sudo sed -i 's|/static/|/deployed_apps/{app_name}/static/|g' {{}} +
+                    """
+            subprocess.run(update_static_files_command, shell=True, check=True)
             logger.info("Static file paths updated")
 
-            if os.path.exists(index_path):
-                # Use the correct URL structure
-                production_url = f"https://8000.brainpower-ai.net/deployed_apps/{app_name}/"
+            # Set correct permissions
+            self.send_update(channel_layer, task_id, "Setting correct permissions...")
+            subprocess.run(f"sudo chown -R ubuntu:ubuntu {production_dir}", shell=True, check=True)
+            subprocess.run(f"sudo chmod -R 755 {production_dir}", shell=True, check=True)
 
+            index_path = os.path.join(production_dir, 'index.html')
+            if os.path.exists(index_path):
+                production_url = f"https://8000.brainpower-ai.net/deployed_apps/{app_name}/"
                 logger.info(f"Deployment completed. Production URL: {production_url}")
                 self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)
 
-                # Perform health check
                 self.send_update(channel_layer, task_id, "Performing health check...")
                 try:
                     response = requests.get(production_url, timeout=10)
@@ -674,7 +644,6 @@ class DeployToProductionView_prod(View):
                 except requests.RequestException as e:
                     raise Exception(f"Health check failed. Error: {str(e)}")
 
-                # Send final update
                 self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)
             else:
                 raise Exception(f"Deployment failed: index.html not found at {index_path}")

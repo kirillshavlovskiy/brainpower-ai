@@ -59,10 +59,6 @@ class DeploymentConsumer(AsyncWebsocketConsumer):
 
     # Receive message from room group
     async def deployment_update(self, event):
-        logger.info(f"Received deployment update: {event}")
-        await self.send(text_data=json.dumps(event))
-        logger.info(f"Sent deployment update to client: {event}")
-
         message = event['message']
 
         # Send message to WebSocket

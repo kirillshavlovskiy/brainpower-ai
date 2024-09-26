@@ -530,8 +530,6 @@ class ServeReactApp(TemplateView):
         template_path = f'{settings.DEPLOYED_COMPONENTS_ROOT}/{app_name}/index.html'
         return [template_path]
 
-import pwd
-import grp
 import os
 import json
 import asyncio
@@ -547,11 +545,6 @@ from asgiref.sync import async_to_sync
 from docker import from_env as docker_from_env
 import threading
 
-# Initialize Docker client and logger
-client = docker_from_env()
-logger = logging.getLogger(__name__)
-
-@method_decorator(csrf_exempt, name='dispatch')
 class DeployToProductionView_prod(View):
     def post(self, request, *args, **kwargs):
         try:
@@ -590,7 +583,7 @@ class DeployToProductionView_prod(View):
             if container.status != 'running':
                 raise Exception(f"Container {container_id} is not running.")
 
-            # Start production build without stopping yarn start
+            # Start production build
             self.send_update(channel_layer, task_id, "Starting production build...")
             build_command = f"""
             export NODE_OPTIONS="--max-old-space-size=8192" && \
@@ -607,22 +600,27 @@ class DeployToProductionView_prod(View):
             # Remove existing production_dir if it exists
             if os.path.exists(production_dir):
                 self.send_update(channel_layer, task_id, "Removing existing production directory...")
-                shutil.rmtree(production_dir)
+                sudo_command = f"sudo rm -rf {production_dir}"
+                subprocess.run(sudo_command, shell=True, check=True)
 
             # Create production_dir
-            os.makedirs(production_dir, exist_ok=True)
+            sudo_command = f"sudo mkdir -p {production_dir}"
+            subprocess.run(sudo_command, shell=True, check=True)
 
             # Copy files from container to host
             self.send_update(channel_layer, task_id, "Copying build files...")
-            copy_command = ["docker", "cp", f"{container_id}:/app/build/.", production_dir]
-            copy_result = subprocess.run(copy_command, capture_output=True, text=True)
+            copy_command = f"sudo docker cp {container_id}:/app/build/. {production_dir}"
+            copy_result = subprocess.run(copy_command, shell=True, capture_output=True, text=True)
             if copy_result.returncode != 0:
                 logger.error(f"Error copying files: {copy_result.stderr}")
                 raise Exception(f"Failed to copy build files: {copy_result.stderr}")
 
-            logger.info("Files copied successfully")
-
-            # No need to adjust permissions since we're running as root
+            # Set permissions
+            self.send_update(channel_layer, task_id, "Setting file permissions...")
+            sudo_command = f"sudo chown -R ubuntu:ubuntu {production_dir}"
+            subprocess.run(sudo_command, shell=True, check=True)
+            sudo_command = f"sudo chmod -R 755 {production_dir}"
+            subprocess.run(sudo_command, shell=True, check=True)
 
             production_url = f"/deployed_apps/{app_name}/index.html"
             self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)
@@ -630,7 +628,6 @@ class DeployToProductionView_prod(View):
         except Exception as e:
             logger.error(f"Error in deployment: {str(e)}")
             self.send_update(channel_layer, task_id, f"Error: {str(e)}", error_trace=traceback.format_exc())
-
 
     def send_update(self, channel_layer, task_id, message, production_url=None, error_trace=None):
         update = {

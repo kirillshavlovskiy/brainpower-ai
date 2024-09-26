@@ -65,7 +65,7 @@ const theme = createTheme();
 
 function App() {
   return (
-
+    <Router>
     <ThemeProvider theme={theme}>
       <ErrorBoundary>
         <Suspense fallback={<div>Loading...</div>}>
@@ -73,7 +73,7 @@ function App() {
         </Suspense>
       </ErrorBoundary>
       </ThemeProvider>
-
+    </Router>
   );
 }
 

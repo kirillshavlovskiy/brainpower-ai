@@ -1,5 +1,4 @@
 import random
-import traceback
 from socket import socket
 import requests
 import os
@@ -50,7 +49,7 @@ def check_container(request):
                 host_port = port_mapping[0]['HostPort']
                 return JsonResponse({
                     'status': 'ready',
-                    'url': f"http://{host_port}.{HOST_URL}/dev",
+                    'url': f"http://{host_port}.{HOST_URL}/{user_id}/{file_name}",
                     'log': "Server is ready"
                 })
             else:
@@ -149,9 +148,17 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                         logger.info(f"Created empty file {import_path} in container")
 
             # Build the project
-            exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"])
+            exec_result = container.exec_run(["sh", "-c", "cd /app && yarn build"])
             if exec_result.exit_code != 0:
                 raise Exception(f"Failed to build project: {exec_result.output.decode()}")
+
+            # Kill any existing serve processes
+            container.exec_run(["sh", "-c", "pkill -f 'serve -s build'"])
+
+            # Start serving the built project
+            exec_result = container.exec_run(["sh", "-c", "serve -s build -l 3001"], detach=True)
+            if exec_result.exit_code != 0:
+                raise Exception(f"Failed to start server: {exec_result.output.decode()}")
 
         logger.info("Project rebuilt and server restarted successfully")
 
@@ -193,7 +200,7 @@ def check_container_ready(request):
             return JsonResponse({'status': 'waiting_for_port', 'log': latest_log})
 
         host_port = port_mapping[0]['HostPort']
-        dynamic_url = f"http://{host_port}.{HOST_URL}/dev"
+        dynamic_url = f"http://{host_port}.{HOST_URL}/{user_id}/{file_name}"
 
         # Check for compilation status
         if "Compiled successfully!" in all_logs:
@@ -254,9 +261,9 @@ def check_or_create_container(request):
     language = data.get('language')
     user_id = data.get('user_id', '0')
     file_name = data.get('file_name', 'component.js')
-    main_file_path = data.get('main_file_path')
+    main_file_path = data.get('main_file_path', "Root/Project/DailyInspirationApp/component.js")
 
-    logger.info(f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
+    logger.info(f"Received request to check or create container for user {user_id}, file {file_name}")
 
     if not all([code, language, file_name]):
         return JsonResponse({'error': 'Missing required fields'}, status=400)
@@ -265,7 +272,7 @@ def check_or_create_container(request):
 
     react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'
     container_name = f'react_renderer_{user_id}_{file_name}'
-    app_name = f"{user_id}_{file_name.replace('.', '-')}"
+
     try:
         container = client.containers.get(container_name)
         logger.info(f"Existing container found: {container_name}")
@@ -274,9 +281,7 @@ def check_or_create_container(request):
             logger.info(f"Starting existing container: {container_name}")
             container.start()
             # Ensure the container builds and serves the production build
-            command = [
-                "sh", "-c", "yarn start"
-            ]
+            command = ["sh", "-c", "yarn build && serve -s build -l 3001"],  # Build and serve production
             container.exec_run(command, detach=True)
 
         container.reload()
@@ -290,9 +295,7 @@ def check_or_create_container(request):
         try:
             container = client.containers.run(
                 'react_renderer_prod',
-                command=[
-                    "sh", "-c", "yarn start"
-                ],  # Build and serve production
+                command=["sh", "-c", "yarn start"],  # Build and serve production
                 detach=True,
                 name=container_name,
                 environment={
@@ -332,7 +335,7 @@ def check_or_create_container(request):
     container.reload()
     port_mapping = container.ports.get('3001/tcp')
     if port_mapping:
-        dynamic_url = f"http://{host_port}.{HOST_URL}/dev"
+        dynamic_url = f"http://{host_port}.{HOST_URL}/{user_id}/{file_name}"
         logger.info(f"Container {container_name} running successfully: {dynamic_url}")
         return JsonResponse({
             'status': 'success',
@@ -433,7 +436,6 @@ import docker
 import json
 from django.conf import settings
 from django.views.generic import TemplateView
-from channels.layers import get_channel_layer
 
 logger = logging.getLogger(__name__)
 
@@ -510,7 +512,7 @@ class DeployToProductionView_dev(View):
             # Instead, we'll assume we're serving these files directly through Django
 
             # 4. Return the new URL to the client
-            production_url = f"http://{request.get_host()}/deployed_apps/{app_name}/"
+            production_url = f"http://{request.get_host()}/deployed/{app_name}/"
             return JsonResponse({
                 'status': 'success',
                 'message': 'Application deployed locally',
@@ -530,25 +532,20 @@ class ServeReactApp(TemplateView):
         template_path = f'{settings.DEPLOYED_COMPONENTS_ROOT}/{app_name}/index.html'
         return [template_path]
 
-import os
-import json
-import asyncio
-import shutil
-import logging
-import traceback
-import subprocess
-from django.conf import settings
-from django.http import JsonResponse
-from django.views import View
-from channels.layers import get_channel_layer
-from asgiref.sync import async_to_sync
-from docker import from_env as docker_from_env
-import threading
 
+import logging
+import time
+import subprocess
+
+
+logger = logging.getLogger(__name__)
 
 @method_decorator(csrf_exempt, name='dispatch')
 class DeployToProductionView_prod(View):
     def post(self, request, *args, **kwargs):
+        logs = []
+        client = docker.from_env()
+        container = None
         try:
             data = json.loads(request.body)
             container_id = data.get('container_id')
@@ -556,139 +553,96 @@ class DeployToProductionView_prod(View):
             file_name = data.get('file_name')
 
             if not all([container_id, user_id, file_name]):
-                return JsonResponse({"status": "error", "message": "Missing required data"}, status=400)
+                return JsonResponse({"status": "error", "message": "Missing required data"})
 
-            task_id = f"deploy_{user_id}_{file_name}"
+            logs.append(f"Starting deployment for user: {user_id}, file: {file_name}")
 
-            # Start the deployment process in a separate thread
-            threading.Thread(target=self.deploy_async, args=(container_id, user_id, file_name, task_id)).start()
+            try:
+                container = client.containers.get(container_id)
+            except docker.errors.NotFound:
+                return JsonResponse({"status": "error", "message": f"Container {container_id} not found"})
 
-            return JsonResponse({
-                "status": "processing",
-                "task_id": task_id,
-                "message": "Deployment started"
-            })
-        except Exception as e:
-            logger.error(f"Error initiating deployment: {str(e)}")
-            return JsonResponse({"status": "error", "message": str(e)}, status=500)
+            build_command = """
+                echo "Starting production build..." &&
+                export NODE_OPTIONS="--max-old-space-size=8192" &&
+                export GENERATE_SOURCEMAP=false &&
+                yarn build
+            """
 
-    def deploy_async(self, container_id, user_id, file_name, task_id):
-        channel_layer = get_channel_layer()
-        try:
-            self.send_update(channel_layer, task_id, "Starting deployment process...")
+            exec_result = container.exec_run(["sh", "-c", build_command])
+            if exec_result.exit_code != 0:
+                logs.append(f"Build command exit code: {exec_result.exit_code}")
+                logs.append(f"Build command output: {exec_result.output.decode()}")
+                return JsonResponse({
+                    "status": "error",
+                    "message": "Build failed",
+                    "logs": logs
+                })
 
-            container = client.containers.get(container_id)
+            logs.append(f"Build output: {exec_result.output.decode()}")
+
             app_name = f"{user_id}_{file_name.replace('.', '-')}"
             production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
+            if os.path.exists(production_dir):
+                shutil.rmtree(production_dir)
+            os.makedirs(production_dir, exist_ok=True)
 
-            if container.status != 'running':
-                raise Exception(f"Container {container_id} is not running.")
-
-            self.send_update(channel_layer, task_id, "Starting production build...")
-            build_command = f"""
-            export NODE_OPTIONS="--max-old-space-size=8192" && \
-            export GENERATE_SOURCEMAP=false && \
-            export PUBLIC_URL="/deployed_apps/{app_name}/" && \
-            yarn build
-            """
-            exec_result = container.exec_run(["sh", "-c", build_command], demux=True)
-            stdout, stderr = exec_result.output
-            if exec_result.exit_code != 0:
-                error_message = stderr.decode() if stderr else 'Unknown error'
-                raise Exception(f"Build failed: {error_message}")
-
-            # Remove existing directory if it exists
-            self.send_update(channel_layer, task_id, "Removing existing production directory...")
-            subprocess.run(f"sudo rm -rf {production_dir}", shell=True, check=True)
-
-            # Create production directory
-            subprocess.run(f"sudo mkdir -p {production_dir}", shell=True, check=True)
-
-            # Copy files from container to host
-            self.send_update(channel_layer, task_id, "Copying build files...")
-            copy_command = f"sudo docker cp {container_id}:/app/build/. {production_dir}"
+            copy_command = f"docker cp {container_id}:/app/build/. {production_dir}"
             copy_result = subprocess.run(copy_command, shell=True, capture_output=True, text=True)
             if copy_result.returncode != 0:
-                logger.error(f"Error copying files: {copy_result.stderr}")
+                logs.append(f"Error copying files: {copy_result.stderr}")
                 raise Exception(f"Failed to copy build files: {copy_result.stderr}")
-            logger.info("Files copied successfully")
+            logs.append("Files copied successfully")
 
-            # Update index.html to use correct static file paths
-            update_index_command = f"""
-                                sudo sed -i 's|"/static/|"/deployed/{app_name}/static/|g' {os.path.join(production_dir, 'index.html')}
-                                """
-            update_index_result = subprocess.run(update_index_command, shell=True, check=True)
-            if copy_result.returncode != 0:
-                logger.error(f"Error copying files: {update_index_result.stderr}")
-                raise Exception(f"Failed to copy build files: {update_index_result.stderr}")
-            logger.info("Index updated successfully")
-
-            self.send_update(channel_layer, task_id, "Verifying deployed files...")
-            list_command = f"ls -R {production_dir}"
-            result = subprocess.run(list_command, shell=True, capture_output=True, text=True)
-            self.send_update(channel_layer, task_id, f"Deployed files:\n{result.stdout}")
-
-
-
+            # Update index.html
+            index_path = os.path.join(production_dir, 'index.html')
+            with open(index_path, 'r') as f:
+                content = f.read()
+            content = content.replace('="/static/', f'="/deployed_apps/{app_name}/static/')
+            with open(index_path, 'w') as f:
+                f.write(content)
+            logs.append("index.html updated with correct static file paths")
 
             # Update other static files (JS, CSS)
-            self.send_update(channel_layer, task_id, "Updating static file paths...")
-            update_static_files_command = f"""
-                    sudo find {production_dir} -type f \( -name '*.js' -o -name '*.css' \) -exec sudo sed -i 's|/static/|/deployed/{app_name}/static/|g' {{}} +
-                    """
-            subprocess.run(update_static_files_command, shell=True, check=True)
-            logger.info("Static file paths updated")
+            for root, dirs, files in os.walk(production_dir):
+                for file in files:
+                    if file.endswith('.js') or file.endswith('.css'):
+                        file_path = os.path.join(root, file)
+                        with open(file_path, 'r') as f:
+                            content = f.read()
+                        content = content.replace('/static/', f'/deployed_apps/{app_name}/static/')
+                        with open(file_path, 'w') as f:
+                            f.write(content)
+            logs.append("Static file paths updated")
+            # Set permissions
+            for root, dirs, files in os.walk(production_dir):
+                for dir in dirs:
+                    os.chmod(os.path.join(root, dir), 0o755)
+                for file in files:
+                    os.chmod(os.path.join(root, file), 0o644)
 
-            # Set correct permissions
-            self.send_update(channel_layer, task_id, "Setting correct permissions...")
-            subprocess.run(f"sudo chown -R ubuntu:ubuntu {production_dir}", shell=True, check=True)
-            subprocess.run(f"sudo chmod -R 755 {production_dir}", shell=True, check=True)
+            logs.append("Permissions set successfully")
 
-            index_path = os.path.join(production_dir, 'index.html')
-            if os.path.exists(index_path):
-                production_url = f"https://8000.brainpower-ai.net/deployed_apps/{app_name}/"
-                logger.info(f"Deployment completed. Production URL: {production_url}")
-                self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)
+            production_url = f"https://{request.get_host()}/deployed/{app_name}/index.html"
+            logs.append(f"Deployment completed. Production URL: {production_url}")
 
-                # Perform health check
-                self.send_update(channel_layer, task_id, "Performing health check...")
-                try:
-                    host_response = requests.get(production_url, timeout=10)
-                    logger.info(f"Server response: {host_response}")
-                    if host_response.status_code == 200:
-                        self.send_update(channel_layer, task_id, "Health check passed")
-                    else:
-                        raise Exception(f"Health check failed. Status code: {host_response.status_code}")
-                except requests.RequestException as e:
-                    raise Exception(f"Health check failed. Error: {str(e)}")
-
-                self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)
-            else:
-                raise Exception(f"Deployment failed: index.html not found at {index_path}")
+            return JsonResponse({
+                "status": "success",
+                "message": "Application deployed successfully",
+                "production_url": production_url,
+                "logs": logs
+            })
 
         except Exception as e:
-            logger.error(f"Error in deployment: {str(e)}")
-            self.send_update(channel_layer, task_id, f"Error: {str(e)}", error_trace=traceback.format_exc())
+            logs.append(f"Error in deployment: {str(e)}")
+            return JsonResponse({"status": "error", "message": str(e), "logs": logs})
 
+        finally:
+            if container:
+                container.reload()
+                logs.append(f"Container status after deployment: {container.status}")
 
-
-
-    def send_update(self, channel_layer, task_id, message, production_url=None, error_trace=None):
-            update = {
-                "type": "deployment_update",
-                "message": message
-            }
-            if production_url:
-                update["production_url"] = production_url
-            if error_trace:
-                update["error_trace"] = error_trace
-
-            logger.info(f"Sending update: {update}")
-            async_to_sync(channel_layer.group_send)(f"deployment_{task_id}", update)
-            logger.info(f"Sent update for task {task_id}: {message}")
-
-
-
-
-
-
+    def get(self, request, *args, **kwargs):
+        # This method will be used to fetch logs if needed
+        # For now, we'll just return an empty response
+        return JsonResponse({"status": "success", "logs": []})

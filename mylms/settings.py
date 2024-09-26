@@ -25,8 +25,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 DEPLOYED_COMPONENTS_URL = '/deployed/'
-DEPLOYED_COMPONENTS_ROOT = '/home/ubuntu/brainpower-ai/deployed_apps/'
-
+DEPLOYED_COMPONENTS_ROOT = '/home/ubuntu/brainpower-ai/deployed_apps'
 
 STATICFILES_DIRS = [
     os.path.join(BASE_DIR, 'static'),
@@ -43,11 +42,11 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Use the DJANGO_ENV variable to set different configurations
 if DJANGO_ENV == 'production':
     DEBUG = False
-    ALLOWED_HOSTS = [
-                     '8000.brainpower-ai.net',
-                     '.brainpower-ai.net',
+    ALLOWED_HOSTS = ['13.60.82.196',
                      'brainpower-ai.net',
+                     '.brainpower-ai.net',
                      'www.brainpower-ai.net',
+                     'd1ruevvpet0k71.cloudfront.net',
                      'localhost',
                      '127.0.0.1',
                      ]
@@ -165,15 +164,14 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'mylms.wsgi.application'
-
+# Database
+# https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 ASGI_APPLICATION = 'mylms.asgi.application'
-
 CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels.layers.InMemoryChannelLayer"
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
     }
 }
-
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',

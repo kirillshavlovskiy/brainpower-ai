@@ -1,5 +1,3 @@
-# File: project/urls.py
-
 from django.contrib import admin
 from django.urls import path, include, re_path
 from django.views.generic import TemplateView
@@ -8,12 +6,9 @@ from django.conf.urls.static import static
 from django.views.static import serve
 import os
 from django.http import JsonResponse, HttpResponse
-import logging
 
-logger = logging.getLogger(__name__)
 
 def serve_react_app(request, app_name, path=''):
-    logger.info(f"serve_react_app called with app_name: {app_name}, path: {path}")
     full_path = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name, path)
     if os.path.exists(full_path):
         if full_path.endswith('.js') or full_path.endswith('.css'):
@@ -33,7 +28,6 @@ def serve_react_app(request, app_name, path=''):
     return HttpResponse("App not found", status=404)
 
 def serve_static(request, app_name, path):
-    logger.info(f"serve_react_app called with app_name: {app_name}, path: {path}")
     full_path = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name, 'static', path)
     if os.path.exists(full_path):
         return serve(request, os.path.basename(full_path), os.path.dirname(full_path))
@@ -44,10 +38,13 @@ urlpatterns = [
     path('courses/', include('courses.urls')),
     path('sandbox/', include('sandbox.urls')),
     path('', TemplateView.as_view(template_name='home.html'), name='home'),
-    re_path(r'^deployed_apps/(?P<app_name>[^/]+)/(?P<path>.*)$', serve_react_app, name='serve_react_app'),
-    re_path(r'^deployed_apps/(?P<app_name>[^/]+)/static/(?P<path>.*)$', serve_static, name='serve_static'),
 
+    # Serve the React app's index.html
+
+    re_path(r'^deployed/(?P<app_name>[^/]+)/(?P<path>.*)$', serve_react_app, name='serve_react_app'),
+    re_path(r'^deployed_apps/(?P<app_name>[^/]+)/static/(?P<path>.*)$', serve_static, name='serve_static'),
 ]
+
 
 if settings.DEBUG:
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

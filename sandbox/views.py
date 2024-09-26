@@ -625,11 +625,7 @@ class DeployToProductionView_prod(View):
 
             if os.path.exists(index_path):
                 # Construct a proper URL
-                if settings.DEBUG:
-                    base_url = f"http://.{settings.ALLOWED_HOSTS[0]}"
-                else:
-                    base_url = f"https://8000.{settings.ALLOWED_HOSTS[0]}"
-
+                base_url = f"https://{settings.ALLOWED_HOSTS[0]}"
                 production_url = f"{base_url}/deployed_apps/{app_name}/"
 
                 logger.info(f"Deployment completed. Production URL: {production_url}")

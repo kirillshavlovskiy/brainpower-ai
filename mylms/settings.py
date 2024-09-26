@@ -43,7 +43,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Use the DJANGO_ENV variable to set different configurations
 if DJANGO_ENV == 'production':
     DEBUG = False
-    ALLOWED_HOSTS = ['13.60.82.196',
+    ALLOWED_HOSTS = [
                      'brainpower-ai.net',
                      '.brainpower-ai.net',
                      'www.brainpower-ai.net',

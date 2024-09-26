@@ -590,7 +590,6 @@ class DeployToProductionView_prod(View):
             build_command = f"""
             export NODE_OPTIONS="--max-old-space-size=8192" && \
             export GENERATE_SOURCEMAP=false && \
-            # export PUBLIC_URL="/deployed_apps/{app_name}/" && \
             yarn build
             """
             exec_result = container.exec_run(["sh", "-c", build_command], demux=True)

@@ -619,26 +619,30 @@ class DeployToProductionView_prod(View):
 
             logger.info("Files copied successfully")
 
-            production_url = f"/deployed_apps/{app_name}/index.html"
-            logger.info(f"Deployment completed. Production URL: {production_url}")
-            self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)
-            logger.info(f"Sent final update for task {task_id}")
+            app_name = f"{user_id}_{file_name.replace('.', '-')}"
+            production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
+            index_path = os.path.join(production_dir, 'index.html')
 
-            self.send_update(channel_layer, task_id, "Performing health check...")
-            health_check_url = f"https://{settings.ALLOWED_HOSTS[0]}{production_url}"
-            response = requests.get(health_check_url)
-            if response.status_code == 200:
-                self.send_update(channel_layer, task_id, "Health check passed")
+            if os.path.exists(index_path):
+                # Construct a proper URL
+                if settings.DEBUG:
+                    base_url = f"http://{settings.ALLOWED_HOSTS[0]}:8000"
+                else:
+                    base_url = f"https://{settings.ALLOWED_HOSTS[0]}"
+
+                production_url = f"{base_url}/deployed_apps/{app_name}/"
+
+                logger.info(f"Deployment completed. Production URL: {production_url}")
+                self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)
             else:
-                raise Exception(f"Health check failed with status code: {response.status_code}")
-
-            self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)
+                raise Exception(f"Deployment failed: index.html not found at {index_path}")
 
         except Exception as e:
             logger.error(f"Error in deployment: {str(e)}")
             self.send_update(channel_layer, task_id, f"Error: {str(e)}", error_trace=traceback.format_exc())
 
-    def send_update(self, channel_layer, task_id, message, production_url=None, error_trace=None):
+
+def send_update(self, channel_layer, task_id, message, production_url=None, error_trace=None):
         update = {
             "type": "deployment_update",
             "message": message

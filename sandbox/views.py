@@ -639,6 +639,14 @@ class DeployToProductionView_prod(View):
             logger.info("Index updated successfully")
             index_path = os.path.join(production_dir, 'index.html')
 
+            self.send_update(channel_layer, task_id, "Verifying deployed files...")
+            list_command = f"ls -R {production_dir}"
+            result = subprocess.run(list_command, shell=True, capture_output=True, text=True)
+            self.send_update(channel_layer, task_id, f"Deployed files:\n{result.stdout}")
+
+            subprocess.run(f"sudo chown -R www-data:www-data {production_dir}", shell=True, check=True)
+            subprocess.run(f"sudo chmod -R 755 {production_dir}", shell=True, check=True)\
+
             if os.path.exists(index_path):
                 # Use the correct URL structure
                 production_url = f"https://8000.brainpower-ai.net/deployed_apps/{app_name}/"

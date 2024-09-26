@@ -623,14 +623,22 @@ class DeployToProductionView_prod(View):
             move_command = f"""
             sudo find {production_dir} -maxdepth 1 -type f ! -name 'index.html' -exec mv {{}} {static_dir} \;
             """
-            subprocess.run(move_command, shell=True, check=True)
-
+            move_result = subprocess.run(move_command, shell=True, check=True)
+            if copy_result.returncode != 0:
+                logger.error(f"Error copying files: {move_result.stderr}")
+                raise Exception(f"Failed to copy build files: {move_result.stderr}")
+            logger.info("Static files moved successfully")
             # Update index.html to use correct static file paths
             update_index_command = f"""
             sudo sed -i 's|"/static/|"/deployed_apps/{app_name}/static/|g' {os.path.join(production_dir, 'index.html')}
             """
-            subprocess.run(update_index_command, shell=True, check=True)
+            update_index_result = subprocess.run(update_index_command, shell=True, check=True)
+            if copy_result.returncode != 0:
+                logger.error(f"Error copying files: {update_index_result.stderr}")
+                raise Exception(f"Failed to copy build files: {update_index_result.stderr}")
+            logger.info("Index updated successfully")
             index_path = os.path.join(production_dir, 'index.html')
+
             if os.path.exists(index_path):
                 # Use the correct URL structure
                 production_url = f"https://8000.brainpower-ai.net/deployed_apps/{app_name}/"

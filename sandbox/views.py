@@ -618,15 +618,16 @@ class DeployToProductionView_prod(View):
             static_dir = os.path.join(production_dir, 'static')
             subprocess.run(f"sudo mkdir -p {static_dir}", shell=True, check=True)
 
-            # Move all files except index.html to static directory
-            move_command = f"""
-            sudo find {production_dir} -maxdepth 1 -type f ! -name 'index.html' -exec mv {{}} {static_dir} \;
-            """
-            move_result = subprocess.run(move_command, shell=True, check=True)
-            if copy_result.returncode != 0:
-                logger.error(f"Error copying files: {move_result.stderr}")
-                raise Exception(f"Failed to copy build files: {move_result.stderr}")
-            logger.info("Static files moved successfully")
+            # # Move all files except index.html to static directory
+            # move_command = f"""
+            # sudo find {production_dir} -maxdepth 1 -type f ! -name 'index.html' -exec mv {{}} {static_dir} \;
+            # """
+            # move_result = subprocess.run(move_command, shell=True, check=True)
+            # if copy_result.returncode != 0:
+            #     logger.error(f"Error copying files: {move_result.stderr}")
+            #     raise Exception(f"Failed to copy build files: {move_result.stderr}")
+            # logger.info("Static files moved successfully")
+
             # Update index.html to use correct static file paths
             update_index_command = f"""
             sudo sed -i 's|"/static/|"/deployed_apps/{app_name}/static/|g' {os.path.join(production_dir, 'index.html')}
@@ -654,12 +655,6 @@ class DeployToProductionView_prod(View):
                         with open(file_path, 'w') as f:
                             f.write(content)
             logger.info("Static file paths updated")
-            # Set permissions
-            for root, dirs, files in os.walk(production_dir):
-                for dir in dirs:
-                    os.chmod(os.path.join(root, dir), 0o755)
-                for file in files:
-                    os.chmod(os.path.join(root, file), 0o644)
 
             if os.path.exists(index_path):
                 # Use the correct URL structure

@@ -617,14 +617,19 @@ class DeployToProductionView_prod(View):
                 logger.error(f"Error copying files: {copy_result.stderr}")
                 raise Exception(f"Failed to copy build files: {copy_result.stderr}")
 
-            # Set permissions
-            self.send_update(channel_layer, task_id, "Setting file permissions...")
-            sudo_command = f"sudo chown -R ubuntu:ubuntu {production_dir}"
-            subprocess.run(sudo_command, shell=True, check=True)
-            sudo_command = f"sudo chmod -R 755 {production_dir}"
-            subprocess.run(sudo_command, shell=True, check=True)
+            logger.info("Files copied successfully")
 
             production_url = f"/deployed_apps/{app_name}/index.html"
+            self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)
+
+            self.send_update(channel_layer, task_id, "Performing health check...")
+            health_check_url = f"https://{settings.ALLOWED_HOSTS[0]}{production_url}"
+            response = requests.get(health_check_url)
+            if response.status_code == 200:
+                self.send_update(channel_layer, task_id, "Health check passed")
+            else:
+                raise Exception(f"Health check failed with status code: {response.status_code}")
+
             self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)
 
         except Exception as e:

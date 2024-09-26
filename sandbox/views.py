@@ -620,7 +620,9 @@ class DeployToProductionView_prod(View):
             logger.info("Files copied successfully")
 
             production_url = f"/deployed_apps/{app_name}/index.html"
+            logger.info(f"Deployment completed. Production URL: {production_url}")
             self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)
+            logger.info(f"Sent final update for task {task_id}")
 
             self.send_update(channel_layer, task_id, "Performing health check...")
             health_check_url = f"https://{settings.ALLOWED_HOSTS[0]}{production_url}"
@@ -638,7 +640,7 @@ class DeployToProductionView_prod(View):
 
     def send_update(self, channel_layer, task_id, message, production_url=None, error_trace=None):
         update = {
-            "type": "deployment_update",  # This should match the method name in the consumer
+            "type": "deployment_update",
             "message": message
         }
         if production_url:
@@ -646,6 +648,7 @@ class DeployToProductionView_prod(View):
         if error_trace:
             update["error_trace"] = error_trace
 
+        logger.info(f"Sending update: {update}")
         async_to_sync(channel_layer.group_send)(f"deployment_{task_id}", update)
         logger.info(f"Sent update for task {task_id}: {message}")
 

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, Suspense } from 'react';
+import { BrowserRouter as Router, Route, Routes, useParams } from 'react-router-dom';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 
 const DynamicComponent = () => {

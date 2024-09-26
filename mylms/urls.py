@@ -4,25 +4,36 @@ from django.contrib import admin
 from django.urls import path, include, re_path
 from django.views.generic import TemplateView
 from django.conf import settings
-from django.views.static import serve as static_serve
+from django.conf.urls.static import static
+from django.views.static import serve
 import os
-from django.http import HttpResponse
-import logging
+from django.http import JsonResponse, HttpResponse
 
-logger = logging.getLogger(__name__)
+
 def serve_react_app(request, app_name, path=''):
+    full_path = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name, path)
+    if os.path.exists(full_path):
+        if full_path.endswith('.js') or full_path.endswith('.css'):
+            with open(full_path, 'rb') as f:
+                content = f.read()
+            content_type = 'application/javascript' if full_path.endswith('.js') else 'text/css'
+            return HttpResponse(content, content_type=content_type)
+        return serve(request, os.path.basename(full_path), os.path.dirname(full_path))
+
+    # If the exact file doesn't exist, serve index.html for client-side routing
     index_path = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name, 'index.html')
     if os.path.exists(index_path):
         with open(index_path, 'r') as file:
             content = file.read()
-            return HttpResponse(content, content_type='text/html')
+        return HttpResponse(content, content_type='text/html')
+
     return HttpResponse("App not found", status=404)
 
 def serve_static(request, app_name, path):
     full_path = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name, 'static', path)
     if os.path.exists(full_path):
         return serve(request, os.path.basename(full_path), os.path.dirname(full_path))
-    raise Http404("File not found")
+    return HttpResponse("App not found", status=404)
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -37,5 +48,4 @@ urlpatterns = [
 ]
 
 if settings.DEBUG:
-    from django.conf.urls.static import static
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

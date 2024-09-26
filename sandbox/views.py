@@ -590,7 +590,7 @@ class DeployToProductionView_prod(View):
             build_command = f"""
             export NODE_OPTIONS="--max-old-space-size=8192" && \
             export GENERATE_SOURCEMAP=false && \
-            export PUBLIC_URL="/deployed_apps/{app_name}/" && \
+            # export PUBLIC_URL="/deployed_apps/{app_name}/" && \
             yarn build
             """
             exec_result = container.exec_run(["sh", "-c", build_command], demux=True)
@@ -644,8 +644,23 @@ class DeployToProductionView_prod(View):
             result = subprocess.run(list_command, shell=True, capture_output=True, text=True)
             self.send_update(channel_layer, task_id, f"Deployed files:\n{result.stdout}")
 
-            subprocess.run(f"sudo chown -R www-data:www-data {production_dir}", shell=True, check=True)
-            subprocess.run(f"sudo chmod -R 755 {production_dir}", shell=True, check=True)\
+            # Update other static files (JS, CSS)
+            for root, dirs, files in os.walk(production_dir):
+                for file in files:
+                    if file.endswith('.js') or file.endswith('.css'):
+                        file_path = os.path.join(root, file)
+                        with open(file_path, 'r') as f:
+                            content = f.read()
+                        content = content.replace('/static/', f'/deployed_apps/{app_name}/static/')
+                        with open(file_path, 'w') as f:
+                            f.write(content)
+            logger.info("Static file paths updated")
+            # Set permissions
+            for root, dirs, files in os.walk(production_dir):
+                for dir in dirs:
+                    os.chmod(os.path.join(root, dir), 0o755)
+                for file in files:
+                    os.chmod(os.path.join(root, file), 0o644)
 
             if os.path.exists(index_path):
                 # Use the correct URL structure

@@ -581,10 +581,6 @@ class DeployToProductionView_prod(View):
             app_name = f"{user_id}_{file_name.replace('.', '-')}"
             production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
 
-            # Ensure the container is running
-            if container.status != 'running':
-                raise Exception(f"Container {container_id} is not running.")
-
             # Start production build
             self.send_update(channel_layer, task_id, "Starting production build...")
             build_command = f"""
@@ -599,7 +595,7 @@ class DeployToProductionView_prod(View):
                 error_message = stderr.decode() if stderr else 'Unknown error'
                 raise Exception(f"Build failed: {error_message}")
 
-            # Remove existing production_dir if it exists
+            # Remove existing directory if it exists
             if os.path.exists(production_dir):
                 self.send_update(channel_layer, task_id, "Removing existing production directory...")
                 shutil.rmtree(production_dir)

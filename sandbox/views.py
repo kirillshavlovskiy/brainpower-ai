@@ -597,19 +597,30 @@ class DeployToProductionView_prod(View):
                 error_message = stderr.decode() if stderr else 'Unknown error'
                 raise Exception(f"Build failed: {error_message}")
 
+            # Remove existing directory if it exists
             self.send_update(channel_layer, task_id, "Removing existing production directory...")
             subprocess.run(f"sudo rm -rf {production_dir}", shell=True, check=True)
 
+            # Create production directory
             subprocess.run(f"sudo mkdir -p {production_dir}", shell=True, check=True)
 
+            # Copy files from container to host
             self.send_update(channel_layer, task_id, "Copying build files...")
             copy_command = f"sudo docker cp {container_id}:/app/build/. {production_dir}"
-            subprocess.run(copy_command, shell=True, check=True)
+            copy_result = subprocess.run(copy_command, shell=True, capture_output=True, text=True)
+            if copy_result.returncode != 0:
+                logger.error(f"Error copying files: {copy_result.stderr}")
+                raise Exception(f"Failed to copy build files: {copy_result.stderr}")
+            logger.info("Files copied successfully")
 
             update_index_command = f"""
             sudo sed -i 's|"/static/|"/deployed_apps/{app_name}/static/|g' {os.path.join(production_dir, 'index.html')}
             """
-            subprocess.run(update_index_command, shell=True, check=True)
+            update_index_result = subprocess.run(update_index_command, shell=True, check=True)
+            if copy_result.returncode != 0:
+                logger.error(f"Error copying files: {update_index_result.stderr}")
+                raise Exception(f"Failed to copy build files: {update_index_result.stderr}")
+            logger.info("Index updated successfully")
 
             self.send_update(channel_layer, task_id, "Verifying deployed files...")
             list_command = f"ls -R {production_dir}"
@@ -634,6 +645,7 @@ class DeployToProductionView_prod(View):
                 logger.info(f"Deployment completed. Production URL: {production_url}")
                 self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)
 
+                # Perform health check
                 self.send_update(channel_layer, task_id, "Performing health check...")
                 try:
                     host_response = requests.get(production_url, timeout=10)

@@ -577,94 +577,57 @@ class DeployToProductionView_prod(View):
         try:
             self.send_update(channel_layer, task_id, "Starting deployment process...")
 
-            container = client.containers.get(container_id)
             app_name = f"{user_id}_{file_name.replace('.', '-')}"
             production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
 
-            # Ensure the container is running
-            if container.status != 'running':
-                raise Exception(f"Container {container_id} is not running.")
-
-            # Start production build
-            self.send_update(channel_layer, task_id, "Starting production build...")
-            build_command = f"""
-            export NODE_OPTIONS="--max-old-space-size=8192" && \
-            export GENERATE_SOURCEMAP=false && \
-            export PUBLIC_URL="/deployed_apps/{app_name}/" && \
-            yarn build
-            """
-            exec_result = container.exec_run(["sh", "-c", build_command], demux=True)
-            stdout, stderr = exec_result.output
-            if exec_result.exit_code != 0:
-                error_message = stderr.decode() if stderr else 'Unknown error'
-                raise Exception(f"Build failed: {error_message}")
-
-            # Remove existing production_dir if it exists
+            # Remove existing directory if it exists
             if os.path.exists(production_dir):
                 self.send_update(channel_layer, task_id, "Removing existing production directory...")
-                sudo_command = f"sudo rm -rf {production_dir}"
-                subprocess.run(sudo_command, shell=True, check=True)
+                shutil.rmtree(production_dir)
 
-            # Create production_dir
-            sudo_command = f"sudo mkdir -p {production_dir}"
-            subprocess.run(sudo_command, shell=True, check=True)
+            # Create production directory
+            os.makedirs(production_dir, exist_ok=True)
 
             # Copy files from container to host
             self.send_update(channel_layer, task_id, "Copying build files...")
-            copy_command = f"sudo docker cp {container_id}:/app/build/. {production_dir}"
-            copy_result = subprocess.run(copy_command, shell=True, capture_output=True, text=True)
-            if copy_result.returncode != 0:
-                logger.error(f"Error copying files: {copy_result.stderr}")
-                raise Exception(f"Failed to copy build files: {copy_result.stderr}")
+            copy_command = f"docker cp {container_id}:/app/build/. {production_dir}"
+            result = subprocess.run(copy_command, shell=True, check=True, capture_output=True, text=True)
 
-            logger.info("Files copied successfully")
+            # Ensure static directory exists
+            static_dir = os.path.join(production_dir, 'static')
+            os.makedirs(static_dir, exist_ok=True)
 
-            app_name = f"{user_id}_{file_name.replace('.', '-')}"
-            production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
+            # Move all files except index.html to static directory
+            for item in os.listdir(production_dir):
+                if item != 'index.html' and item != 'static':
+                    src = os.path.join(production_dir, item)
+                    dst = os.path.join(static_dir, item)
+                    shutil.move(src, dst)
+
+            # Update index.html to use correct static file paths
             index_path = os.path.join(production_dir, 'index.html')
-
             if os.path.exists(index_path):
-                # Use the correct URL structure
-                production_url = f"https://8000.brainpower-ai.net/deployed_apps/{app_name}/"
+                with open(index_path, 'r') as file:
+                    content = file.read()
+                content = content.replace('"/static/', f'"/deployed_apps/{app_name}/static/')
+                with open(index_path, 'w') as file:
+                    file.write(content)
 
-                logger.info(f"Deployment completed. Production URL: {production_url}")
-                self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)
-
-                # Perform health check
-                self.send_update(channel_layer, task_id, "Performing health check...")
-                try:
-                    response = requests.get(production_url, timeout=10)
-                    if response.status_code == 200:
-                        self.send_update(channel_layer, task_id, "Health check passed")
-                    else:
-                        raise Exception(f"Health check failed. Status code: {response.status_code}")
-                except requests.RequestException as e:
-                    raise Exception(f"Health check failed. Error: {str(e)}")
-
-                # Send final update
-                self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)
-            else:
-                raise Exception(f"Deployment failed: index.html not found at {index_path}")
+            production_url = f"https://8000.brainpower-ai.net/deployed_apps/{app_name}/"
+            self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)
 
         except Exception as e:
-            logger.error(f"Error in deployment: {str(e)}")
-            self.send_update(channel_layer, task_id, f"Error: {str(e)}", error_trace=traceback.format_exc())
+            self.send_update(channel_layer, task_id, f"Error: {str(e)}")
 
+    def send_update(self, channel_layer, task_id, message, production_url=None):
+        update = {
+            "type": "deployment_update",
+            "message": message
+        }
+        if production_url:
+            update["production_url"] = production_url
 
-    def send_update(self, channel_layer, task_id, message, production_url=None, error_trace=None):
-            update = {
-                "type": "deployment_update",
-                "message": message
-            }
-            if production_url:
-                update["production_url"] = production_url
-            if error_trace:
-                update["error_trace"] = error_trace
-
-            logger.info(f"Sending update: {update}")
-            async_to_sync(channel_layer.group_send)(f"deployment_{task_id}", update)
-            logger.info(f"Sent update for task {task_id}: {message}")
-
+        async_to_sync(channel_layer.group_send)(f"deployment_{task_id}", update)
 
 
 

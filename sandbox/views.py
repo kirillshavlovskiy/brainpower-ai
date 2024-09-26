@@ -613,9 +613,10 @@ class DeployToProductionView_prod(View):
                 raise Exception(f"Failed to copy build files: {copy_result.stderr}")
             logger.info("Files copied successfully")
 
+            # Update index.html to use correct static file paths
             update_index_command = f"""
-            sudo sed -i 's|"/static/|"/deployed_apps/{app_name}/static/|g' {os.path.join(production_dir, 'index.html')}
-            """
+                                sudo sed -i 's|"/static/|"/deployed/{app_name}/static/|g' {os.path.join(production_dir, 'index.html')}
+                                """
             update_index_result = subprocess.run(update_index_command, shell=True, check=True)
             if copy_result.returncode != 0:
                 logger.error(f"Error copying files: {update_index_result.stderr}")
@@ -627,9 +628,13 @@ class DeployToProductionView_prod(View):
             result = subprocess.run(list_command, shell=True, capture_output=True, text=True)
             self.send_update(channel_layer, task_id, f"Deployed files:\n{result.stdout}")
 
+
+
+
+            # Update other static files (JS, CSS)
             self.send_update(channel_layer, task_id, "Updating static file paths...")
             update_static_files_command = f"""
-                    sudo find {production_dir} -type f \( -name '*.js' -o -name '*.css' \) -exec sudo sed -i 's|/static/|/deployed_apps/{app_name}/static/|g' {{}} +
+                    sudo find {production_dir} -type f \( -name '*.js' -o -name '*.css' \) -exec sudo sed -i 's|/static/|/deployed/{app_name}/static/|g' {{}} +
                     """
             subprocess.run(update_static_files_command, shell=True, check=True)
             logger.info("Static file paths updated")

@@ -628,13 +628,10 @@ class DeployToProductionView_prod(View):
             result = subprocess.run(list_command, shell=True, capture_output=True, text=True)
             self.send_update(channel_layer, task_id, f"Deployed files:\n{result.stdout}")
 
-
-
-
             # Update other static files (JS, CSS)
             self.send_update(channel_layer, task_id, "Updating static file paths...")
             update_static_files_command = f"""
-                    sudo find {production_dir} -type f \( -name '*.js' -o -name '*.css' \) -exec sudo sed -i 's|/static/|/deployed/{app_name}/static/|g' {{}} +
+                    sudo find {production_dir} -type f \( -name '*.js' -o -name '*.css' \) -exec sudo sed -i 's|/static/|/{app_name}/static/|g' {{}} +
                     """
             subprocess.run(update_static_files_command, shell=True, check=True)
             logger.info("Static file paths updated")

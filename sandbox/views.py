@@ -615,7 +615,7 @@ class DeployToProductionView_prod(View):
 
             # Update index.html to use correct static file paths
             update_index_command = f"""
-                sudo sed -i 's|"/static/|"{app_name}/static/|g' {os.path.join(production_dir, 'index.html')}
+                sudo sed -i 's|"/static/|"/{app_name}/static/|g' {os.path.join(production_dir, 'index.html')}
             """
             update_index_result = subprocess.run(update_index_command, shell=True, check=True)
             if copy_result.returncode != 0:

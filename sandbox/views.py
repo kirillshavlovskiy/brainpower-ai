@@ -643,7 +643,7 @@ class DeployToProductionView_prod(View):
 
             index_path = os.path.join(production_dir, 'index.html')
             if os.path.exists(index_path):
-                production_url = f"https://8000.brainpower-ai.net/deployed_apps/{app_name}/"
+                production_url = f"https://8000.brainpower-ai.net/{app_name}/"
                 logger.info(f"Deployment completed. Production URL: {production_url}")
                 self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)
 

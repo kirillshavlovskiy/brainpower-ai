@@ -9,7 +9,7 @@ from django.views.static import serve
 import os
 from django.http import HttpResponse, FileResponse
 import logging
-
+import mimetypes
 logger = logging.getLogger(__name__)
 
 def serve_react_app(request, app_name, path=''):

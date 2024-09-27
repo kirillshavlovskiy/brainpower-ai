@@ -26,7 +26,10 @@ def serve_react_app(request, app_name, path=''):
 def serve_static(request, app_name, path):
     full_path = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name, 'static', path)
     if os.path.exists(full_path):
-        return FileResponse(open(full_path, 'rb'))
+        content_type, encoding = mimetypes.guess_type(full_path)
+        response = FileResponse(open(full_path, 'rb'), content_type=content_type)
+        response['X-Content-Type-Options'] = 'nosniff'
+        return response
     return HttpResponse("Static file not found", status=404)
 
 urlpatterns = [

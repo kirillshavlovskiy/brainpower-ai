@@ -1,6 +1,3 @@
-import logging
-import traceback
-# from .app_1 import callback, message_queue, get_summary
 import uuid
 import os
 from .query_process import query, message_queue
@@ -10,17 +7,65 @@ from django.contrib.auth import get_user_model
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.core.exceptions import ValidationError
-import json
 import asyncio
-from threading import Thread
-import time
+import subprocess
+import logging
+import docker
+import json
+from django.conf import settings
+from django.views.generic import TemplateView
+from channels.layers import get_channel_layer
+import traceback
 
+import os
+import shutil
 
-
-logger = logging.getLogger(__name__)
 User = get_user_model()
-
 logger = logging.getLogger(__name__)
+
+class DeploymentConsumer(AsyncWebsocketConsumer):
+    async def connect(self):
+        self.task_id = self.scope['url_route']['kwargs']['task_id']
+        self.group_name = f'deployment_{self.task_id}'
+
+        # Join room group
+        await self.channel_layer.group_add(
+            self.group_name,
+            self.channel_name
+        )
+
+        await self.accept()
+
+    async def disconnect(self, close_code):
+        # Leave room group
+        await self.channel_layer.group_discard(
+            self.group_name,
+            self.channel_name
+        )
+
+    # Receive message from WebSocket
+    async def receive(self, text_data):
+        text_data_json = json.loads(text_data)
+        message = text_data_json['message']
+
+        # Send message to room group
+        await self.channel_layer.group_send(
+            self.group_name,
+            {
+                'type': 'deployment_update',
+                'message': message
+            }
+        )
+
+    # Receive message from room group
+    async def deployment_update(self, event):
+        message = event['message']
+
+        # Send message to WebSocket
+        await self.send(text_data=json.dumps({
+            'type': 'deployment_update',
+            'message': message
+        }))
 
 class AsyncChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
@@ -68,7 +113,6 @@ class AsyncChatConsumer(AsyncWebsocketConsumer):
                 'threadId': event.get('thread_id', 'default'),
             }
         }))
-
 
 class FileStructureConsumer(AsyncWebsocketConsumer):
     async def connect(self):
@@ -550,3 +594,138 @@ if __name__ == "__main__":
             current = current.parent
             path = f"{current.name}/{path}"
         return path
+
+class DeployToProduction_prod(AsyncWebsocketConsumer):
+    async def deploy_app(self, container_id, user_id, file_name, channel_name):
+        channel_layer = get_channel_layer()
+        client = docker.from_env()
+
+        try:
+            await self.send_log(channel_layer, channel_name,
+                                f"Starting deployment for user: {user_id}, file: {file_name}")
+
+            container = client.containers.get(container_id)
+            await self.send_log(channel_layer, channel_name, f"Container found: {container.id}")
+
+            # Run npm run build and stream the output
+            build_command = "npm run build"
+            await self.send_log(channel_layer, channel_name, f"Running build command: {build_command}")
+
+            build_exec = container.exec_run(build_command, stream=True)
+
+            for line in build_exec.output:
+                await self.send_log(channel_layer, channel_name, line.decode().strip())
+
+            # Check if the build was successful
+            if build_exec.exit_code != 0:
+                await self.send_log(channel_layer, channel_name, f"Build failed with exit code: {build_exec.exit_code}")
+                raise Exception("Build failed")
+
+            await self.send_log(channel_layer, channel_name, "Build completed successfully")
+
+            # Continue with the rest of your deployment process
+            app_name = f"{user_id}_{file_name.replace('.', '-')}"
+            await self.send_log(channel_layer, channel_name, f"Preparing to copy files for app: {app_name}")
+
+            production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
+            await self.send_log(channel_layer, channel_name, f"Production directory: {production_dir}")
+
+            # Remove existing directory if it exists
+            if os.path.exists(production_dir):
+                await self.send_log(channel_layer, channel_name, f"Removing existing directory: {production_dir}")
+                shutil.rmtree(production_dir)
+
+            os.makedirs(production_dir, exist_ok=True)
+            await self.send_log(channel_layer, channel_name, f"Created production directory: {production_dir}")
+
+            # Use docker cp to copy files from container to host
+            copy_command = f"docker cp {container.id}:/app/build/. {production_dir}"
+            await self.send_log(channel_layer, channel_name, f"Copying files with command: {copy_command}")
+
+            copy_result = subprocess.run(copy_command, shell=True, capture_output=True, text=True)
+            if copy_result.returncode != 0:
+                await self.send_log(channel_layer, channel_name, f"Error copying files: {copy_result.stderr}")
+                raise Exception(f"Failed to copy build files: {copy_result.stderr}")
+
+            await self.send_log(channel_layer, channel_name, "Files copied successfully")
+
+            # Update file paths
+            await self.send_log(channel_layer, channel_name, "Updating file paths...")
+            await self.update_file_paths(production_dir, app_name, channel_layer, channel_name)
+
+            # Set permissions
+            await self.send_log(channel_layer, channel_name, "Setting file permissions...")
+            await self.set_permissions(production_dir, channel_layer, channel_name)
+
+            production_url = f"https://{settings.ALLOWED_HOSTS[0]}/deployed/{app_name}/"
+            await self.send_log(channel_layer, channel_name, f"Deployment completed. Production URL: {production_url}")
+
+            # Send final success message
+            await self.send_log(channel_layer, channel_name, "DEPLOYMENT_COMPLETE", extra={
+                "status": "success",
+                "production_url": production_url
+            })
+
+        except Exception as e:
+            error_trace = traceback.format_exc()
+            logger.error(f"Error in deployment: {str(e)}\n{error_trace}")
+            await self.send_log(channel_layer, channel_name, f"Error in deployment: {str(e)}")
+            await self.send_log(channel_layer, channel_name, "Error trace:", extra={"error_trace": error_trace})
+            await self.send_log(channel_layer, channel_name, "DEPLOYMENT_COMPLETE", extra={
+                "status": "error",
+                "message": str(e)
+            })
+
+    async def update_file_paths(self, production_dir, app_name, channel_layer, channel_name):
+        try:
+            index_path = os.path.join(production_dir, 'index.html')
+            await self.send_log(channel_layer, channel_name, f"Updating index.html at {index_path}")
+
+            with open(index_path, 'r') as f:
+                content = f.read()
+            content = content.replace('="/static/', f'="/deployed/{app_name}/static/')
+            with open(index_path, 'w') as f:
+                f.write(content)
+            await self.send_log(channel_layer, channel_name, "index.html updated with correct static file paths")
+
+            for root, dirs, files in os.walk(production_dir):
+                for file in files:
+                    if file.endswith('.js') or file.endswith('.css'):
+                        file_path = os.path.join(root, file)
+                        await self.send_log(channel_layer, channel_name, f"Updating paths in {file_path}")
+                        with open(file_path, 'r') as f:
+                            content = f.read()
+                        content = content.replace('/static/', f'/deployed/{app_name}/static/')
+                        with open(file_path, 'w') as f:
+                            f.write(content)
+            await self.send_log(channel_layer, channel_name, "All static file paths updated")
+        except Exception as e:
+            await self.send_log(channel_layer, channel_name, f"Error updating file paths: {str(e)}")
+            raise
+
+    async def set_permissions(self, production_dir, channel_layer, channel_name):
+        try:
+            for root, dirs, files in os.walk(production_dir):
+                for dir in dirs:
+                    dir_path = os.path.join(root, dir)
+                    os.chmod(dir_path, 0o755)
+                    await self.send_log(channel_layer, channel_name, f"Set permissions for directory: {dir_path}")
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    os.chmod(file_path, 0o644)
+                    await self.send_log(channel_layer, channel_name, f"Set permissions for file: {file_path}")
+            await self.send_log(channel_layer, channel_name, "Permissions set successfully")
+        except Exception as e:
+            await self.send_log(channel_layer, channel_name, f"Error setting permissions: {str(e)}")
+            raise
+
+    async def send_log(self, channel_layer, channel_name, message, extra=None):
+        log_data = {
+            "type": "deployment_log",
+            "message": message
+        }
+        if extra:
+            log_data.update(extra)
+        await channel_layer.group_send(channel_name, log_data)
+        logger.info(f"Deployment log: {message}")  # Add this line to log to the server console as well
+

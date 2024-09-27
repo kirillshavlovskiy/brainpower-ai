@@ -588,7 +588,7 @@ class DeployToProductionView_prod(View):
             build_command = f"""
             export NODE_OPTIONS="--max-old-space-size=8192" && \
             export GENERATE_SOURCEMAP=false && \
-            export PUBLIC_URL="/deployed_apps/{app_name}/" && \
+            export PUBLIC_URL="/" && \
             yarn build
             """
             exec_result = container.exec_run(["sh", "-c", build_command], demux=True)
@@ -616,7 +616,7 @@ class DeployToProductionView_prod(View):
             # Update index.html to use correct static file paths
             update_index_command = f"""
                                 sudo sed -i 's|"/static/|"/deployed/{app_name}/static/|g' {os.path.join(production_dir, 'index.html')}
-                                """
+                                  """
             update_index_result = subprocess.run(update_index_command, shell=True, check=True)
             if copy_result.returncode != 0:
                 logger.error(f"Error copying files: {update_index_result.stderr}")

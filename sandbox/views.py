@@ -621,7 +621,7 @@ class DeployToProductionView_prod(View):
                 raise Exception(f"Failed to copy build files: {update_index_result.stderr}")
             logger.info("Index updated successfully")
 
-            self.send_update(channel_layer, task_id, "Verifying deployed files...", production_url)
+            self.send_update(channel_layer, task_id, "Verifying deployed files...", production_url=production_url)
             list_command = f"ls -R {production_dir}"
             result = subprocess.run(list_command, shell=True, capture_output=True, text=True)
             # self.send_update(channel_layer, task_id, f"Deployed files:\n{result.stdout}", production_url)
@@ -635,22 +635,22 @@ class DeployToProductionView_prod(View):
             # logger.info("Static file paths updated")
 
             # Set correct permissions
-            self.send_update(channel_layer, task_id, "Setting correct permissions...", production_url)
+            self.send_update(channel_layer, task_id, "Setting correct permissions...", production_url=production_url)
             subprocess.run(f"sudo chown -R ubuntu:ubuntu {production_dir}", shell=True, check=True)
             subprocess.run(f"sudo chmod -R 755 {production_dir}", shell=True, check=True)
 
             index_path = os.path.join(production_dir, 'index.html')
             if os.path.exists(index_path):
                 logger.info(f"Deployment completed. Production URL: {production_url}")
-                self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url)
+                self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)
 
                 # Perform health check
-                self.send_update(channel_layer, task_id, "Performing health check...", production_url)
+                self.send_update(channel_layer, task_id, "Performing health check...", production_url=production_url)
                 try:
                     host_response = requests.get(production_url, timeout=10)
                     logger.info(f"Server response: {host_response}")
                     if host_response.status_code == 200:
-                        self.send_update(channel_layer, task_id, "Health check passed", production_url)
+                        self.send_update(channel_layer, task_id, "Health check passed", production_url=production_url)
                     else:
                         raise Exception(f"Health check failed. Status code: {host_response.status_code}")
                 except requests.RequestException as e:

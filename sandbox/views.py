@@ -656,23 +656,27 @@ class DeployToProductionView_prod(View):
                 except requests.RequestException as e:
                     raise Exception(f"Health check failed. Error: {str(e)}")
 
-                self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=None)
+                self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)
             else:
                 raise Exception(f"Deployment failed: index.html not found at {index_path}")
 
         except Exception as e:
             logger.error(f"Error in deployment: {str(e)}")
-            self.send_update(channel_layer, task_id, f"Error: {str(e)}", None)
+            self.send_update(channel_layer, task_id, f"Error: {str(e)}", error_trace=traceback.format_exc())
 
-    def send_update(self, channel_layer, task_id, message, production_url):
-        update = {
-            "type": "deployment_update",
-            "message": message
-        }
-        if production_url:
-            update["production_url"] = production_url
+    def send_update(self, channel_layer, task_id, message, production_url=None, error_trace=None):
+            update = {
+                "type": "deployment_update",
+                "message": message
+            }
+            if production_url:
+                update["production_url"] = production_url
+            if error_trace:
+                update["error_trace"] = error_trace
 
-        async_to_sync(channel_layer.group_send)(f"deployment_{task_id}", update)
+            logger.info(f"Sending update: {update}")
+            async_to_sync(channel_layer.group_send)(f"deployment_{task_id}", update)
+            logger.info(f"Sent update for task {task_id}: {message}")
 
 
 

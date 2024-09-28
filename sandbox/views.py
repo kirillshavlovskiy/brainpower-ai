@@ -656,7 +656,7 @@ class DeployToProductionView_prod(View):
                 except requests.RequestException as e:
                     raise Exception(f"Health check failed. Error: {str(e)}")
 
-                self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url)
+                self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=None)
             else:
                 raise Exception(f"Deployment failed: index.html not found at {index_path}")
 

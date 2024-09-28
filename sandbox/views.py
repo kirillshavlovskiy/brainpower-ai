@@ -665,7 +665,7 @@ class DeployToProductionView_prod(View):
             self.send_update(channel_layer, task_id, f"Error: {str(e)}", error_trace=traceback.format_exc())
 
     def send_update(self, channel_layer, task_id, message, production_url=None, error_trace=None):
-        logger.error(f"deployment url: {production_url}")
+        logger.info(f"deployment url: {production_url}")
         update = {
             "type": "deployment_update",
             "message": message

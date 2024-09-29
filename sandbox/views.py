@@ -668,7 +668,8 @@ class DeployToProductionView_prod(View):
         logger.info(f"deployment url: {production_url}")
         update = {
             "type": "deployment_update",
-            "message": message
+            "message": message,
+            "production_url": production_url,
         }
         if production_url:
             update["production_url"] = production_url

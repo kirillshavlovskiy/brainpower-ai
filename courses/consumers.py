@@ -53,18 +53,20 @@ class DeploymentConsumer(AsyncWebsocketConsumer):
             self.group_name,
             {
                 'type': 'deployment_update',
-                'message': message
+                'message': message,
             }
         )
 
     # Receive message from room group
     async def deployment_update(self, event):
-        message = event['message']
+        message = event.get('message')
+        production_url = event.get('production_url')
 
         # Send message to WebSocket
         await self.send(text_data=json.dumps({
             'type': 'deployment_update',
-            'message': message
+            'message': message,
+            'production_url': production_url
         }))
 
 class AsyncChatConsumer(AsyncWebsocketConsumer):

@@ -37,6 +37,6 @@ urlpatterns = [
     path('api/code_execute/', ExecuteView.as_view()),
     path('signup/', views.signup, name='signup'),
     path('login/', views.user_login, name='login'),
-    path('update_deployment_info/', views.signup, name='update_deployment_info'),
+    path('update_deployment_info/', views.update_deployment_info, name='update_deployment_info'),
     path('api/', include(router.urls)),
 ]

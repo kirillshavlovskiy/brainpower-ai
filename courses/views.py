@@ -38,11 +38,14 @@ client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 User = get_user_model()
-
+from django.contrib.auth.models import User
+from courses.models import UserProfile
 
 @csrf_exempt
 @require_http_methods(["POST"])
 def user_login(request):
+    for user in User.objects.all():
+        UserProfile.objects.get_or_create(user=user)
     data = json.loads(request.body)
     username = data.get('username')
     password = data.get('password')

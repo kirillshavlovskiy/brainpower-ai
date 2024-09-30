@@ -1248,7 +1248,7 @@ async def agent(state: GraphState, config: RunnableConfig):
     else:
         session_id = "0"
 
-    logger.info("\ncontext\n", state['context'])
+    logger.info("\n\n\nContext\n\n\n", state['context'])
 
     prediction = await agent_with_history.ainvoke(
         {

@@ -2,10 +2,10 @@ import logging
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
-from .models import Thread
+from .models import Thread, UserProfile
 from .serializers import ThreadSerializer
 import uuid
-
+from django.contrib.auth.decorators import login_required
 from django.contrib.auth import authenticate, login
 from asgiref.sync import sync_to_async, async_to_sync
 import json
@@ -82,6 +82,25 @@ def signup(request):
         return JsonResponse({'message': 'User created successfully', 'id': user.id}, status=201)
     except Exception as e:
         return JsonResponse({'message': str(e)}, status=400)
+
+@csrf_exempt
+@login_required
+@require_http_methods(["POST"])
+def update_deployment_info(request):
+    data = json.loads(request.body)
+    file_name = data.get('file_name')
+    deployment_info = data.get('deployment_info')
+
+    if not all([file_name, deployment_info]):
+        return JsonResponse({'message': 'Please provide both file_name and deployment_info'}, status=400)
+
+    try:
+        user_profile, created = UserProfile.objects.get_or_create(user=request.user)
+        user_profile.deployed_apps[file_name] = deployment_info
+        user_profile.save()
+        return JsonResponse({'status': 'success', 'message': 'Deployment info updated'})
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
 
 
 class ThreadViewSet(viewsets.ModelViewSet):

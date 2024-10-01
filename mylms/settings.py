@@ -145,7 +145,8 @@ CORS_ALLOW_HEADERS = [
 CORS_ALLOW_ALL_HEADERS = True
 
 CSRF_TRUSTED_ORIGINS = ['https://*.brainpower-agi.com', 'https://brainpower-agi.com' ]
-
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
 
 ROOT_URLCONF = 'mylms.urls'
 

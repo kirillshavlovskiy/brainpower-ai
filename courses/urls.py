@@ -38,5 +38,6 @@ urlpatterns = [
     path('signup/', views.signup, name='signup'),
     path('login/', views.user_login, name='login'),
     path('update_deployment_info/', views.update_deployment_info, name='update_deployment_info'),
+    path('get_last_deployment/', views.get_last_deployment, name='get_last_deployment'),
     path('api/', include(router.urls)),
 ]

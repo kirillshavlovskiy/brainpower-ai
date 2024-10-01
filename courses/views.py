@@ -106,6 +106,38 @@ def update_deployment_info(request):
         return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
 
 
+@login_required
+@require_http_methods(["GET"])
+def get_last_deployment(request):
+    file_name = request.GET.get('file_name')
+
+    if not file_name:
+        return JsonResponse({'message': 'Please provide a file_name'}, status=400)
+
+    try:
+        user_profile = UserProfile.objects.get(user=request.user)
+        deployment_info = user_profile.deployed_apps.get(file_name)
+
+        if deployment_info:
+            return JsonResponse({
+                'status': 'success',
+                'deployment': deployment_info
+            })
+        else:
+            return JsonResponse({
+                'status': 'success',
+                'deployment': None
+            })
+    except UserProfile.DoesNotExist:
+        return JsonResponse({
+            'status': 'success',
+            'deployment': None
+        })
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
+
+
+
 class ThreadViewSet(viewsets.ModelViewSet):
     serializer_class = ThreadSerializer
     permission_classes = [IsAuthenticated]

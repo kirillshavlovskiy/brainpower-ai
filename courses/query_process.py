@@ -32,7 +32,6 @@ from langchain_community.document_loaders.generic import GenericLoader
 from langchain_community.vectorstores import FAISS
 from langchain.memory import ConversationBufferMemory
 
-
 llamaparse_api_key = os.getenv("LLAMA_CLOUD_API_KEY")
 qdrant_url = os.getenv("QDRANT_URL")
 qdrant_api_key = os.getenv("QDRANT_API_KEY")
@@ -354,16 +353,26 @@ from langchain_core.messages import HumanMessage, SystemMessage
 prompt_main = ChatPromptTemplate.from_messages([
     ("system",
      "You are a helpful assistant with advanced long-term memory"
-     " capabilities. You are working over the user project. Powered by a stateless LLM, you must rely on"
+     " capabilities. You are working over the user project in order "
+     "to help improve its functionality, find errors and perform extensive"
+     "debugging."
+     "Platform where user generate queries to you is designed to run user code,"
+     "compile it to present user with rendered interface of the application and "
+     "manage projects structure through file system, connected database, APIs and microservice modules."
+     "Whenever you receive a message form the client its supplied with user current code piece he is working on."
+     "you should reference this code as a main context for user query to provide more ground valuableanswers"
+     "Alone with code you are provided with file name this code is opened from"
+     "Powered by a stateless LLM, you must rely on"
      " external memory to store information between conversations."
      " Utilize the available memory tools to store and retrieve"
      " important details that will help you better attend to the user's"
      " needs and understand their context.\n\n"
+
      "Memory Usage Guidelines:\n"
      "0. ***IMPORTANT*** !!!Before giving any answer or deciding if/how to use tools, put user question in the ***context***"
      "of most recent 'chat history' messages!!!"
-     "1. ALWAYS after checking user history provided before decide on memory tools usage (store_core_memory, store_recall_memory) if you need more generic historical information about previous chatting sessions"
-     " to build a comprehensive understanding of the user work.\n"
+     "1. Actively use memory tools (save_core_memory, save_recall_memory)"
+     " to build a comprehensive understanding of the user.\n"
      "2. Make informed suppositions and extrapolations based on stored"
      " memories.\n"
      "3. Regularly reflect on past interactions to identify patterns and"
@@ -376,8 +385,8 @@ prompt_main = ChatPromptTemplate.from_messages([
      " alongside facts.\n"
      "7. Use memory to anticipate needs and tailor responses to the"
      " user's style.\n"
-     "8. Recognize and acknowledge context of the user's query or"
-     "conversation perspectives over time using also following code user providing as a context:\n{context}\n\n"
+     "8. Recognize and acknowledge changes in the user's situation or"
+     " perspectives over time.\n"
      "9. Leverage memories to provide personalized examples and"
      " analogies.\n"
      "10. Recall past challenges or successes to inform current"
@@ -401,7 +410,13 @@ prompt_main = ChatPromptTemplate.from_messages([
      " confirmation that the tool completed successfully.\n\n"
      " before ending conversation always check if you need to store_recall_memory or store_core_memory"
      "Current system time: {current_time}\n\n"),
-
+    ("user",
+     [
+         {
+             "type": "text",
+             "text": "{context}",
+         }
+     ]),
     ("user",
      [
          {
@@ -474,6 +489,7 @@ class InputSchema(BaseModel):
 
 import base64
 import os
+
 
 def perplexity_search(query: str) -> str:
     """Retrieve perplexity response on a query.
@@ -1044,7 +1060,6 @@ def load_memories(state: GraphState, config: RunnableConfig):
 
     tokenizer = tiktoken.encoding_for_model("gpt-3.5-turbo")
 
-
     def convert_messages(messages):
         converted = []
         for message in messages:
@@ -1076,22 +1091,22 @@ def load_memories(state: GraphState, config: RunnableConfig):
     }
 
 
-def rag_call(state):
-    question = state["messages"][0]['content']
-    print(question)
-    agent_search = "Yes"
-    topics = retrieve_topic(question)
-
-    if topics[0] != 'general':
-        conversational_rag_chain, rag_retriever = code_search_process(topics)
-        docs = rag_retriever.invoke(question)
-        filtered_docs, agent_search = grade_docs(question, docs)
-
-        if agent_search == "no":
-            state['context'] = filtered_docs
-            return 'agent_reply'
-        else:
-            return 'agent_search'
+# def rag_call(state):
+#     question = state["messages"][0]['content']
+#     print(question)
+#     agent_search = "Yes"
+#     topics = retrieve_topic(question)
+#
+#     if topics[0] != 'general':
+#         conversational_rag_chain, rag_retriever = code_search_process(topics)
+#         docs = rag_retriever.invoke(question)
+#         filtered_docs, agent_search = grade_docs(question, docs)
+#
+#         if agent_search == "no":
+#             state['context'] = filtered_docs
+#             return 'agent_reply'
+#         else:
+#             return 'agent_search'
 
 
 def generate(state):
@@ -1205,6 +1220,7 @@ def agent_search(state):
 #     return {"question": question, "generation": generation}
 from langchain_core.runnables.history import RunnableWithMessageHistory
 
+
 async def agent(state: GraphState, config: RunnableConfig):
     # global all_tools
     """Process the current state and generate a response using the LLM.
@@ -1228,14 +1244,12 @@ async def agent(state: GraphState, config: RunnableConfig):
         question = query.content
 
     bound = prompt_main | llm
-
     agent_with_history = RunnableWithMessageHistory(
         bound,
         get_session_history,
         input_messages_key="question",
         history_messages_key="chat_history",
     )
-
 
     core_str = (
             "<core_memory>\n" + "\n".join(state["core_memories"]) + "\n</core_memory>"
@@ -1263,46 +1277,45 @@ async def agent(state: GraphState, config: RunnableConfig):
     )
 
     update_session_history(state['user_id'], state['thread_id'], question, prediction)
-    logger.info("\nprediction\n",prediction)
 
     return {
         "messages": prediction,
     }
 
 
-def agent_reply(state):
-    """
-    Agent REPLY
-    Args:
-        state (dict): The current graph state
-    Returns:
-        state (dict): Appended web results to documents
-    """
-    print("---AGENT REPLY---")
-    question = state["question"]
-    context = state["context"]
-    documents = state["documents"]
-    response = "---"
-    # Agent Reply
-    generation = conversational_agent_with_chat_history.invoke({"input": question, "context": context},
-                                                               config={
-                                                                   "configurable": {"conversation_id": "12345",
-                                                                                    'user_id': '123454'}})
-
-    print(generation['output'])
-    intermediate_steps = generation["intermediate_steps"]
-    print("-------------------------------")
-
-    for step in intermediate_steps:
-        action = step[0]  # AgentAction object
-        result = step[1]  # Result of the action
-        output = generation["output"]
-        if output != "":
-            generation = {"output": output}
-        else:
-            generation = {
-                "output": f"Action: {action.tool}" + f"Action Input: {action.tool_input}" + f"Result: {result}"}
-    return {"documents": documents, "question": question, "generation": generation}
+# def agent_reply(state):
+#     """
+#     Agent REPLY
+#     Args:
+#         state (dict): The current graph state
+#     Returns:
+#         state (dict): Appended web results to documents
+#     """
+#     print("---AGENT REPLY---")
+#     question = state["question"]
+#     context = state["context"]
+#     documents = state["documents"]
+#     response = "---"
+#     # Agent Reply
+#     generation = conversational_agent_with_chat_history.invoke({"input": question, "context": context},
+#                                                                config={
+#                                                                    "configurable": {"conversation_id": "12345",
+#                                                                                     'user_id': '123454'}})
+#
+#     print(generation['output'])
+#     intermediate_steps = generation["intermediate_steps"]
+#     print("-------------------------------")
+#
+#     for step in intermediate_steps:
+#         action = step[0]  # AgentAction object
+#         result = step[1]  # Result of the action
+#         output = generation["output"]
+#         if output != "":
+#             generation = {"output": output}
+#         else:
+#             generation = {
+#                 "output": f"Action: {action.tool}" + f"Action Input: {action.tool_input}" + f"Result: {result}"}
+#     return {"documents": documents, "question": question, "generation": generation}
 
 
 # -----------------------------------------Conditional edge--------------------------------------------------
@@ -1475,6 +1488,7 @@ import pprint
 
 # -------------------------------------CHAT BOT------------------------------------------
 
+
 import asyncio
 from typing import Dict, Any
 from channels.layers import get_channel_layer
@@ -1484,6 +1498,7 @@ from langchain.callbacks.base import BaseCallbackHandler
 
 logger = logging.getLogger(__name__)
 channel_layer = get_channel_layer()
+
 
 class StreamingCallback(BaseCallbackHandler):
     def __init__(self, channel_name):
@@ -1509,6 +1524,7 @@ class StreamingCallback(BaseCallbackHandler):
             )
             logger.info(f"Sent buffer: {self.buffer}")
             self.buffer = ""
+
 
 async def react_agent_queue(contents: Dict[str, Any], channel_name: str):
     global topics
@@ -1541,7 +1557,6 @@ async def react_agent_queue(contents: Dict[str, Any], channel_name: str):
                 },
                 version="v2"
         ):
-
             pass
 
     finally:
@@ -1549,6 +1564,7 @@ async def react_agent_queue(contents: Dict[str, Any], channel_name: str):
         await streaming_callback.flush()
 
     logger.info(f"Streaming process completed for user: {user_id}, thread: {thread_id}")
+
 
 async def query(query_data, channel_name):
     thread_id = query_data['thread_id']

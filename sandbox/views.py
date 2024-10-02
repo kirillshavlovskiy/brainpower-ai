@@ -342,7 +342,7 @@ def check_or_create_container(request):
         return JsonResponse({'error': 'Failed to get port mapping'}, status=500)
 
 
-@csrf_exempt
+
 @api_view(['POST'])
 def stop_container(request):
     container_id = request.data.get('container_id')

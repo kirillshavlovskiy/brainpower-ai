@@ -106,16 +106,16 @@ def update_deployment_info(request):
         return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
 
 
-@login_required
 @require_http_methods(["GET"])
 def get_last_deployment(request):
+    user_id = request.GET.get('user_id')
     file_name = request.GET.get('file_name')
 
-    if not file_name:
-        return JsonResponse({'message': 'Please provide a file_name'}, status=400)
+    if not user_id or not file_name:
+        return JsonResponse({'status': 'error', 'message': 'Missing user_id or file_name'}, status=400)
 
     try:
-        user_profile = UserProfile.objects.get(user=request.user)
+        user_profile = UserProfile.objects.get(user_id=user_id)
         deployment_info = user_profile.deployed_apps.get(file_name)
 
         if deployment_info:

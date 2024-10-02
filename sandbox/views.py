@@ -32,36 +32,32 @@ NGINX_SITES_DYNAMIC = '/etc/nginx/sites-dynamic'
 
 @api_view(['GET'])
 def check_container(request):
-    container_id = request.GET.get('container_id')
-    user_id = request.GET.get('user_id', 'default')
-    file_name = request.GET.get('file_name')
+    user_id = request.GET.get('user_id', '0')
+    file_name = request.GET.get('file_name', 'test-component.js')
 
-    if not container_id:
-        return JsonResponse({'error': 'No container ID provided'}, status=400)
+    container_name = f'react_renderer_{user_id}_{file_name}'
 
     try:
-        container = client.containers.get(container_id)
+        container = client.containers.get(container_name)
         container.reload()
 
-        logs = container.logs(tail=50).decode('utf-8').strip()
-        if "Accepting connections at http://localhost:3001" in logs:
+        if container.status == 'running':
             port_mapping = container.ports.get('3001/tcp')
             if port_mapping:
                 host_port = port_mapping[0]['HostPort']
                 return JsonResponse({
                     'status': 'ready',
-                    'url': f"https://{host_port}.{HOST_URL}",
-                    'log': "Server is ready"
+                    'container_id': container.id,
+                    'url': f"https://{host_port}.{HOST_URL}"
                 })
             else:
-                return JsonResponse({'status': 'waiting_for_port', 'log': "Waiting for port mapping"})
+                return JsonResponse({'status': 'not_ready', 'container_id': container.id})
         else:
-            return JsonResponse({'status': 'not_ready', 'log': logs.split('\n')[-1]})
-
+            return JsonResponse({'status': 'not_ready', 'container_id': container.id})
     except docker.errors.NotFound:
-        return JsonResponse({'error': 'Container not found', 'log': 'Container not found'}, status=404)
+        return JsonResponse({'status': 'not_found'}, status=404)
     except Exception as e:
-        return JsonResponse({'error': 'Error checking container status', 'details': str(e), 'log': str(e)}, status=500)
+        return JsonResponse({'error': str(e)}, status=500)
 
 
 def update_code_internal(container, code, user, file_name, main_file_path):

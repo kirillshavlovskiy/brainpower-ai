@@ -2,7 +2,7 @@ import uuid
 import os
 from .query_process import query, message_queue
 from asgiref.sync import async_to_sync
-from .models import FileStructure
+from .models import FileStructure, UserProfile
 from django.contrib.auth import get_user_model
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
@@ -127,16 +127,16 @@ class FileStructureConsumer(AsyncWebsocketConsumer):
             if user_id:
                 self.user = await database_sync_to_async(User.objects.get)(id=user_id)
             else:
-                # Handle the case when no user_id is provided
-                # This could be creating a temporary user or using some default user
-                # The exact implementation depends on your application's requirements
-                self.user = await database_sync_to_async(User.objects.get)(id=1)  # Example: get a default user
+                self.user = await database_sync_to_async(User.objects.get)(id=1)  # Default user
 
             await self.accept()
             logger.info(f"WebSocket connected for user: {self.user}")
 
             # Send initial structure immediately after connection
             await self.send_structure()
+
+            # Send last opened file information
+            await self.send_last_opened_file()
 
         except User.DoesNotExist:
             logger.error(f"User with id {user_id} does not exist")
@@ -150,14 +150,11 @@ class FileStructureConsumer(AsyncWebsocketConsumer):
         logger.info(f"WebSocket disconnected for user: {getattr(self, 'user', 'Unknown')} with code: {close_code}")
 
     async def receive(self, text_data):
-        # logger.info(f"Received message: {text_data}")
         try:
             data = json.loads(text_data)
             action = data['action']
             if action == 'get_structure':
                 await self.send_structure()
-            elif data['action'] == 'update_file_content':
-                await self.update_file_content(data['id'], data['content'])
             elif action == 'get_file_content':
                 await self.get_file_content(data['id'], data.get('name'))
             elif action == 'update_file_content':
@@ -173,6 +170,10 @@ class FileStructureConsumer(AsyncWebsocketConsumer):
                 await self.add_node(data['parentId'], data['node'])
             elif action == 'get_file_path':
                 await self.get_file_path(data['id'])
+            elif action == 'get_last_opened_file':
+                await self.send_last_opened_file()
+            elif action == 'update_last_opened_file':
+                await self.update_last_opened_file(data['file_id'])
             else:
                 logger.warning(f"Received unknown action: {action}")
         except KeyError as e:
@@ -186,6 +187,38 @@ class FileStructureConsumer(AsyncWebsocketConsumer):
         except Exception as e:
             logger.error(f"Error in receive method: {str(e)}")
             logger.error(traceback.format_exc())
+
+    @database_sync_to_async
+    def get_last_opened_file(self):
+        try:
+            user_profile = UserProfile.objects.get(user=self.user)
+            last_file_id = user_profile.last_opened_file_id
+            if last_file_id:
+                last_file = FileStructure.objects.get(id=last_file_id)
+                return {
+                    'id': last_file.id,
+                    'name': last_file.name,
+                    'path': last_file.get_full_path(),
+                    'content': last_file.content,
+                    'type': last_file.type
+                }
+        except (UserProfile.DoesNotExist, FileStructure.DoesNotExist):
+            pass
+        return None
+
+    async def send_last_opened_file(self):
+        last_file = await self.get_last_opened_file()
+        await self.send(text_data=json.dumps({
+            'type': 'last_opened_file',
+            'file': last_file
+        }))
+
+    @database_sync_to_async
+    def update_last_opened_file(self, file_id):
+        UserProfile.objects.update_or_create(
+            user=self.user,
+            defaults={'last_opened_file_id': file_id}
+        )
 
     @database_sync_to_async
     def _get_file_content(self, file_id):

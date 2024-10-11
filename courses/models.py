@@ -80,11 +80,14 @@ User = get_user_model()
 class FileStructure(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     name = models.CharField(max_length=255)
+    path = models.CharField(max_length=1000)
+    content = models.TextField(blank=True)
     type = models.CharField(max_length=10)  # 'file' or 'folder'
-    content = models.TextField(blank=True, null=True)
-    parent = models.ForeignKey('self', null=True, blank=True, related_name='children', on_delete=models.CASCADE)
+    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE)
 
-    def __str__(self):
+    def get_full_path(self):
+        if self.parent:
+            return f"{self.parent.get_full_path()}/{self.name}"
         return self.name
 
 class Thread(models.Model):
@@ -102,6 +105,7 @@ class Thread(models.Model):
 
 class UserProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
+    last_opened_file = models.ForeignKey('FileStructure', null=True, blank=True, on_delete=models.SET_NULL)
     deployed_apps = models.JSONField(default=dict)
 
     def __str__(self):

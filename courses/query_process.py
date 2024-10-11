@@ -259,12 +259,12 @@ system_prompt = """You are a friendly assistant ready to answer question about t
             You should always access this  knowledge base using 'retriever_tool' from the list of the tools ['retriever_tool'].
             Always read latest messages from conversation history to properly address user query.
             """
-self_reflecting_conversational_prompt = ChatPromptTemplate.from_messages([
-    ("system", system_prompt),
-    MessagesPlaceholder(variable_name="chat_history"),
-    ("human", "{input}"),
-    MessagesPlaceholder(variable_name="agent_scratchpad")
-])
+    self_reflecting_conversational_prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("human", "{input}"),
+        MessagesPlaceholder(variable_name="agent_scratchpad")
+    ])
 
 # Define the prompt template for the agent
 # asd = ChatPromptTemplate.from_messages([

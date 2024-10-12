@@ -373,7 +373,7 @@ def update_code(request):
     file_name = request.data.get('file_name')
     main_file_path = request.data.get('main_file_path', "Root/Project")
     logger.info(
-        f"Received update request for container: {container_id}, original file: {file_name}, main file path: {main_file_path}")
+        f"Received update request from user {user_id} for container: {container_id}, original file: {file_name}, main file path: {main_file_path}, file code{main_code}")
 
     if not all([container_id, main_code, user_id, main_file_path]):
         logger.warning("Missing required data in update request")

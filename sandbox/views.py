@@ -288,7 +288,7 @@ def check_or_create_container(request):
         container = client.containers.get(container_name)
         container_info = {
             'container_name': container.name,
-            'created_at': container.attrs['Created'],
+            'created_at': datetime.now().isoformat(),  # This line is now correct
             'status': container.status,
             'ports': container.ports,
             'image': container.image.tags[0] if container.image.tags else 'Unknown',

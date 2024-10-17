@@ -95,6 +95,7 @@ def check_container(request):
 
 def update_code_internal(container, code, user, file_name, main_file_path):
     files_added = []
+    build_output = []
     try:
         # Update component.js
         encoded_code = base64.b64encode(code.encode()).decode()
@@ -158,12 +159,18 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                         files_added.append(container_path)
 
         # Build the project
-        exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"])
-        if exec_result.exit_code != 0:
-            raise Exception(f"Failed to build project: {exec_result.output.decode()}")
+        exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"], stream=True)
+
+        for line in exec_result.output:
+            decoded_line = line.decode().strip()
+            build_output.append(decoded_line)
+            if "Failed to compile." in decoded_line:
+                raise Exception("Build failed")
+
 
         logger.info("Project rebuilt and server restarted successfully")
-        return files_added
+
+        return "\n".join(build_output)
 
     except Exception as e:
         logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
@@ -286,6 +293,7 @@ def check_or_create_container(request):
 
     try:
         container = client.containers.get(container_name)
+        logger.info(f"Found existing container: {container.id}")
         container_info = {
             'container_name': container.name,
             'created_at': datetime.now().isoformat(),  # This line is now correct
@@ -310,12 +318,21 @@ def check_or_create_container(request):
         if '3001/tcp' in port_bindings and port_bindings['3001/tcp']:
             host_port = port_bindings['3001/tcp'][0]['HostPort']
 
-        return JsonResponse({
-            'status': 'success',
-            'container_id': container.id,
-            'url': f"https://{host_port}.{HOST_URL}" if host_port else None,
-            'container_info': container_info
-        })
+        try:
+            build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
+            return JsonResponse({
+                'status': 'success',
+                'message': 'Container is running',
+                'container_id': container.id,
+                'url': f"https://{host_port}.{HOST_URL}",
+                'build_output': build_output,
+            })
+        except Exception as update_error:
+            return JsonResponse({
+                'status': 'error',
+                'message': str(update_error),
+                'build_output': getattr(update_error, 'build_output', None),
+            }, status=500)
 
     except docker.errors.NotFound:
         logger.info(f"Container {container_name} not found. Creating new container.")
@@ -385,8 +402,6 @@ def check_or_create_container(request):
         else:
             logger.error(f"Failed to get port mapping for container {container_name}")
             return JsonResponse({'error': 'Failed to get port mapping', 'container_info': container_info}, status=500)
-
-
 
 @api_view(['POST'])
 def stop_container(request):

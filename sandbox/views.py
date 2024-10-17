@@ -1,3 +1,4 @@
+import datetime
 import random
 import traceback
 from socket import socket
@@ -93,7 +94,9 @@ def check_container(request):
 
 
 def update_code_internal(container, code, user, file_name, main_file_path):
+    files_added = []
     try:
+        # Update component.js
         encoded_code = base64.b64encode(code.encode()).decode()
         max_attempts = 3
         for attempt in range(max_attempts):
@@ -104,6 +107,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                 ])
                 if exec_result.exit_code != 0:
                     raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
+                files_added.append('/app/src/component.js')
                 break
             except docker.errors.APIError as e:
                 if attempt == max_attempts - 1:
@@ -113,47 +117,22 @@ def update_code_internal(container, code, user, file_name, main_file_path):
 
         logger.info(f"Updated component.js in container with content from {file_name} at path {main_file_path}")
         logger.info(f"Processing for user: {user}")
+
         # Get the directory of the main file
         base_path = os.path.dirname(main_file_path)
         logger.info(f"Base path derived from main file: {base_path}")
-        css_import_matches = re.findall(r"import\s+['\"](.+\.css)['\"];?", code)
-        logger.info(f"Found CSS imports: {css_import_matches}")
-        for css_file_path in css_import_matches:
-            logger.info(f"Attempting to retrieve content for CSS file: {css_file_path}")
-            css_content = FileStructureConsumer.get_file_content_for_container(user, css_file_path, base_path)
-            if css_content is not None:
-                logger.info(f"Retrieved content for CSS file: {css_file_path}")
-                encoded_css = base64.b64encode(css_content.encode()).decode()
-                container_css_path = f"/app/src/{css_file_path}"
-                exec_result = container.exec_run([
-                    "sh", "-c",
-                    f"mkdir -p $(dirname {container_css_path}) && echo {encoded_css} | base64 -d > {container_css_path}"
-                ])
-                if exec_result.exit_code != 0:
-                    logger.error(f"Failed to update {css_file_path} in container: {exec_result.output.decode()}")
-                    raise Exception(f"Failed to update {css_file_path} in container: {exec_result.output.decode()}")
-                logger.info(f"Updated {css_file_path} in container")
-            else:
-                logger.warning(f"CSS file {css_file_path} not found or empty. Creating empty file in container.")
-                container_css_path = f"/app/src/{css_file_path}"
-                exec_result = container.exec_run([
-                    "sh", "-c",
-                    f"mkdir -p $(dirname {container_css_path}) && touch {container_css_path}"
-                ])
-                if exec_result.exit_code != 0:
-                    logger.error(
-                        f"Failed to create empty CSS file {css_file_path} in container: {exec_result.output.decode()}")
-                else:
-                    logger.info(f"Created empty CSS file {css_file_path} in container")
 
-        # Handle other imports (if any)
-        import_pattern = r"import\s+(?:(?:{\s*[\w\s,]+\s*})|(?:[\w]+))\s+from\s+['\"](.+?)['\"]"
+        # Handle all imports (CSS, JS, TS, JSON, etc.)
+        import_pattern = r"import\s+(?:(?:{\s*[\w\s,]+\s*})|(?:[\w]+)|\*\s+as\s+[\w]+)\s+from\s+['\"](.+?)['\"]|import\s+['\"](.+?)['\"]"
         imports = re.findall(import_pattern, code)
 
-        for import_path in imports:
-            if import_path.endswith('.js') or import_path.endswith('.ts') or import_path.endswith('.json') or import_path.endswith('.tsx')or import_path.endswith('.jsx'):
+        for import_match in imports:
+            import_path = import_match[0] or import_match[1]  # Get the non-empty group
+            if import_path:
+                logger.info(f"Attempting to retrieve content for imported file: {import_path}")
                 file_content = FileStructureConsumer.get_file_content_for_container(user, import_path, base_path)
                 if file_content is not None:
+                    logger.info(f"Retrieved content for file: {import_path}")
                     encoded_content = base64.b64encode(file_content.encode()).decode()
                     container_path = f"/app/src/{import_path}"
                     exec_result = container.exec_run([
@@ -163,6 +142,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                     if exec_result.exit_code != 0:
                         raise Exception(f"Failed to update {import_path} in container: {exec_result.output.decode()}")
                     logger.info(f"Updated {import_path} in container")
+                    files_added.append(container_path)
                 else:
                     logger.warning(f"File {import_path} not found or empty. Creating empty file in container.")
                     container_path = f"/app/src/{import_path}"
@@ -175,13 +155,15 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                             f"Failed to create empty file {import_path} in container: {exec_result.output.decode()}")
                     else:
                         logger.info(f"Created empty file {import_path} in container")
+                        files_added.append(container_path)
 
-            # Build the project
-            exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"])
-            if exec_result.exit_code != 0:
-                raise Exception(f"Failed to build project: {exec_result.output.decode()}")
+        # Build the project
+        exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"])
+        if exec_result.exit_code != 0:
+            raise Exception(f"Failed to build project: {exec_result.output.decode()}")
 
         logger.info("Project rebuilt and server restarted successfully")
+        return files_added
 
     except Exception as e:
         logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
@@ -294,22 +276,46 @@ def check_or_create_container(request):
     react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'
     container_name = f'react_renderer_{user_id}_{file_name}'
     app_name = f"{user_id}_{file_name.replace('.', '-')}"
+
+    container_info = {
+        'container_name': container_name,
+        'created_at': datetime.now().isoformat(),
+        'files_added': [],
+        'build_status': 'pending'
+    }
+
     try:
         container = client.containers.get(container_name)
-        logger.info(f"Existing container found: {container_name}")
+        container_info = {
+            'container_name': container.name,
+            'created_at': container.attrs['Created'],
+            'status': container.status,
+            'ports': container.ports,
+            'image': container.image.tags[0] if container.image.tags else 'Unknown',
+            'id': container.id
+        }
 
-        if container.status != 'running':
-            logger.info(f"Starting existing container: {container_name}")
-            container.start()
-            # Ensure the container builds and serves the production build
-            command = [
-                "sh", "-c", "yarn start"
-            ]
-            container.exec_run(command, detach=True)
+        # Get the list of files in the /app/src directory
+        exec_result = container.exec_run("ls -R /app/src")
+        if exec_result.exit_code == 0:
+            files_list = exec_result.output.decode().split('\n')
+        else:
+            files_list = ["Unable to retrieve file list"]
 
-        container.reload()
-        host_port = container.ports.get('3001/tcp')[0]['HostPort']
-        logger.info(f"Container {container_name} is running on port {host_port}")
+        container_info['files_added'] = files_list
+
+        # Get the host port
+        port_bindings = container.attrs['NetworkSettings']['Ports']
+        host_port = None
+        if '3001/tcp' in port_bindings and port_bindings['3001/tcp']:
+            host_port = port_bindings['3001/tcp'][0]['HostPort']
+
+        return JsonResponse({
+            'status': 'success',
+            'container_id': container.id,
+            'url': f"https://{host_port}.{HOST_URL}" if host_port else None,
+            'container_info': container_info
+        })
 
     except docker.errors.NotFound:
         logger.info(f"Container {container_name} not found. Creating new container.")
@@ -346,32 +352,39 @@ def check_or_create_container(request):
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
             logger.info(f"New container created: {container_name}")
+            container_info['build_status'] = 'created'
         except docker.errors.APIError as e:
             logger.error(f"Failed to create container: {str(e)}", exc_info=True)
-            return JsonResponse({'error': f'Failed to create container: {str(e)}'}, status=500)
+            return JsonResponse({'error': f'Failed to create container: {str(e)}', 'container_info': container_info},
+                                status=500)
 
-    try:
-        update_code_internal(container, code, user_id, file_name, main_file_path)
-        logger.info(f"Code updated in container {container_name}")
-    except Exception as e:
-        logger.error(f"Failed to update code in container: {str(e)}", exc_info=True)
-        return JsonResponse({'error': f'Failed to update code in container: {str(e)}'}, status=500)
+        try:
+            files_added = update_code_internal(container, code, user_id, file_name, main_file_path)
+            container_info['files_added'] = files_added
+            logger.info(f"Code updated in container {container_name}")
+            container_info['build_status'] = 'updated'
+        except Exception as e:
+            logger.error(f"Failed to update code in container: {str(e)}", exc_info=True)
+            return JsonResponse(
+                {'error': f'Failed to update code in container: {str(e)}', 'container_info': container_info},
+                status=500)
 
-    container.reload()
-    port_mapping = container.ports.get('3001/tcp')
-    if port_mapping:
-        dynamic_url = f"https://{host_port}.{HOST_URL}"
-        logger.info(f"Container {container_name} running successfully: {dynamic_url}")
-        return JsonResponse({
-            'status': 'success',
-            'message': 'Container is running',
-            'container_id': container.id,
-            'url': dynamic_url,
-            'can_deploy': True,
-        })
-    else:
-        logger.error(f"Failed to get port mapping for container {container_name}")
-        return JsonResponse({'error': 'Failed to get port mapping'}, status=500)
+        container.reload()
+        port_mapping = container.ports.get('3001/tcp')
+        if port_mapping:
+            dynamic_url = f"https://{host_port}.{HOST_URL}"
+            logger.info(f"Container {container_name} running successfully: {dynamic_url}")
+            return JsonResponse({
+                'status': 'success',
+                'message': 'Container is running',
+                'container_id': container.id,
+                'url': dynamic_url,
+                'can_deploy': True,
+                'container_info': container_info
+            })
+        else:
+            logger.error(f"Failed to get port mapping for container {container_name}")
+            return JsonResponse({'error': 'Failed to get port mapping', 'container_info': container_info}, status=500)
 
 
 

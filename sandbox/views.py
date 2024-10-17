@@ -29,6 +29,38 @@ HOST_PORT_RANGE_START = 32768
 HOST_PORT_RANGE_END = 60999
 NGINX_SITES_DYNAMIC = '/etc/nginx/sites-dynamic'
 
+@api_view(['GET'])
+def container_info(request):
+    container_id = request.GET.get('container_id')
+    if not container_id:
+        return JsonResponse({'error': 'No container ID provided'}, status=400)
+
+    try:
+        container = client.containers.get(container_id)
+        return JsonResponse({
+            'name': container.name,
+            'status': container.status,
+        })
+    except docker.errors.NotFound:
+        return JsonResponse({'error': 'Container not found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+@api_view(['GET'])
+def container_files(request):
+    container_id = request.GET.get('container_id')
+    if not container_id:
+        return JsonResponse({'error': 'No container ID provided'}, status=400)
+
+    try:
+        container = client.containers.get(container_id)
+        exec_result = container.exec_run("find /app -type f")
+        files = exec_result.output.decode().split('\n')
+        return JsonResponse({'files': files})
+    except docker.errors.NotFound:
+        return JsonResponse({'error': 'Container not found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
 
 @api_view(['GET'])
 def check_container(request):
@@ -119,7 +151,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         imports = re.findall(import_pattern, code)
 
         for import_path in imports:
-            if import_path.endswith('.js') or import_path.endswith('.json'):
+            if import_path.endswith('.js') or import_path.endswith('.ts') or import_path.endswith('.json') or import_path.endswith('.tsx')or import_path.endswith('.jsx'):
                 file_content = FileStructureConsumer.get_file_content_for_container(user, import_path, base_path)
                 if file_content is not None:
                     encoded_content = base64.b64encode(file_content.encode()).decode()

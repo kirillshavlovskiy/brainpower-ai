@@ -95,7 +95,6 @@ def check_container(request):
 
 def update_code_internal(container, code, user, file_name, main_file_path):
     files_added = []
-    build_output = []
     try:
         # Update component.js
         encoded_code = base64.b64encode(code.encode()).decode()
@@ -160,6 +159,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
 
         # Build the project
         exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"], stream=True)
+        build_output = []
         for line in exec_result.output:
             decoded_line = line.decode().strip()
             build_output.append(decoded_line)
@@ -169,10 +169,6 @@ def update_code_internal(container, code, user, file_name, main_file_path):
             raise Exception(f"Failed to build project: {exec_result.output.decode()}")
         
         return "\n".join(build_output)
-
-
-        logger.info("Project rebuilt and server restarted successfully")
-        return files_added
 
     except Exception as e:
         logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
@@ -184,8 +180,6 @@ def check_container_ready(request):
     container_id = request.GET.get('container_id')
     user_id = request.GET.get('user_id', 'default')
     file_name = request.GET.get('file_name')
-    logger.info(
-        f"Checking container readiness for container_id: {container_id}, user_id: {user_id}, file_name: {file_name}")
 
     if not container_id:
         return JsonResponse({'error': 'No container ID provided'}, status=400)
@@ -194,13 +188,8 @@ def check_container_ready(request):
         container = client.containers.get(container_id)
         container.reload()
         container_status = container.status
-        logger.info(f"Container status: {container_status}")
 
-        # Get all logs and print them
         all_logs = container.logs(stdout=True, stderr=True).decode('utf-8').strip()
-        logger.info(f"All container logs:\n{all_logs}")
-
-        # Get recent logs
         recent_logs = container.logs(stdout=True, stderr=True, tail=50).decode('utf-8').strip()
         latest_log = recent_logs.split('\n')[-1] if recent_logs else "No recent logs"
 
@@ -214,20 +203,13 @@ def check_container_ready(request):
         host_port = port_mapping[0]['HostPort']
         dynamic_url = f"https://{host_port}.{HOST_URL}"
 
-        # Check for compilation status
-        if "Compiled successfully!" in all_logs:
+        if "Compiled successfully!" in all_logs or "Compiled with warnings" in all_logs:
             return JsonResponse({
                 'status': 'ready',
                 'url': dynamic_url,
                 'log': "Compiled successfully!"
             })
-        if "Compiled with warnings" in all_logs:
-            return JsonResponse({
-                'status': 'ready',
-                'url': dynamic_url,
-                'log': "Compiled successfully!"
-            })
-        if "Accepting connections at http://localhost:3001" in all_logs:
+        elif "Accepting connections at http://localhost:3001" in all_logs:
             return JsonResponse({
                 'status': 'ready',
                 'url': dynamic_url,
@@ -235,12 +217,10 @@ def check_container_ready(request):
             })
         elif "Compiling..." in all_logs:
             return JsonResponse({'status': 'compiling', 'log': "Compiling..."})
-
         elif "Creating an optimized production build..." in all_logs:
             return JsonResponse({'status': 'building', 'log': "Creating an optimized production build..."})
-
         elif "Starting the development server..." in all_logs:
-            return JsonResponse({'status': 'compiling', 'log': "Starting the development server..."})
+            return JsonResponse({'status': 'starting', 'log': "Starting the development server..."})
         else:
             return JsonResponse({'status': 'preparing', 'log': latest_log})
 
@@ -267,6 +247,7 @@ def get_available_port(start, end):
 
 
 @api_view(['POST'])
+@api_view(['POST'])
 def check_or_create_container(request):
     data = request.data
     code = data.get('main_code')
@@ -275,7 +256,8 @@ def check_or_create_container(request):
     file_name = data.get('file_name', 'component.js')
     main_file_path = data.get('main_file_path')
 
-    logger.info(f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
+    logger.info(
+        f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
 
     if not all([code, language, file_name]):
         return JsonResponse({'error': 'Missing required fields'}, status=400)
@@ -286,26 +268,18 @@ def check_or_create_container(request):
     container_name = f'react_renderer_{user_id}_{file_name}'
     app_name = f"{user_id}_{file_name.replace('.', '-')}"
 
-    container_info = {
-        'container_name': container_name,
-        'created_at': datetime.now().isoformat(),
-        'files_added': [],
-        'build_status': 'pending'
-    }
-
     try:
         container = client.containers.get(container_name)
         logger.info(f"Found existing container: {container.id}")
         container_info = {
             'container_name': container.name,
-            'created_at': datetime.now().isoformat(),  # This line is now correct
+            'created_at': datetime.now().isoformat(),
             'status': container.status,
             'ports': container.ports,
             'image': container.image.tags[0] if container.image.tags else 'Unknown',
             'id': container.id
         }
 
-        # Get the list of files in the /app/src directory
         exec_result = container.exec_run("ls -R /app/src")
         if exec_result.exit_code == 0:
             files_list = exec_result.output.decode().split('\n')
@@ -314,38 +288,33 @@ def check_or_create_container(request):
 
         container_info['files_added'] = files_list
 
-        # Get the host port
-        port_bindings = container.attrs['NetworkSettings']['Ports']
-        host_port = None
-        if '3001/tcp' in port_bindings and port_bindings['3001/tcp']:
-            host_port = port_bindings['3001/tcp'][0]['HostPort']
-
         try:
             build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
             return JsonResponse({
                 'status': 'success',
                 'message': 'Container is running',
                 'container_id': container.id,
-                'url': f"https://{host_port}.{HOST_URL}",
+                'url': f"https://{container.ports['3001/tcp'][0]['HostPort']}.{HOST_URL}",
                 'build_output': build_output,
+                'container_info': container_info
             })
         except Exception as update_error:
             return JsonResponse({
                 'status': 'error',
                 'message': str(update_error),
                 'build_output': getattr(update_error, 'build_output', None),
+                'container_info': container_info
             }, status=500)
 
     except docker.errors.NotFound:
         logger.info(f"Container {container_name} not found. Creating new container.")
         host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
         logger.info(f"Selected port {host_port} for new container")
+
         try:
             container = client.containers.run(
                 'react_renderer_prod',
-                command=[
-                    "sh", "-c", "yarn start"
-                ],  # Build and serve production
+                command=["sh", "-c", "yarn start"],
                 detach=True,
                 name=container_name,
                 environment={
@@ -353,7 +322,7 @@ def check_or_create_container(request):
                     'REACT_APP_USER_ID': user_id,
                     'FILE_NAME': file_name,
                     'PORT': str(3001),
-                    'NODE_ENV': 'production',  # Set to production
+                    'NODE_ENV': 'production',
                     'NODE_OPTIONS': '--max-old-space-size=8192'
                 },
                 volumes={
@@ -362,7 +331,7 @@ def check_or_create_container(request):
                     os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
                     os.path.join(react_renderer_path, 'package-lock.json'): {'bind': '/app/package-lock.json',
                                                                              'mode': 'ro'},
-                    os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},  # Add this line
+                    os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
                 },
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',
@@ -371,39 +340,34 @@ def check_or_create_container(request):
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
             logger.info(f"New container created: {container_name}")
-            container_info['build_status'] = 'created'
-        except docker.errors.APIError as e:
-            logger.error(f"Failed to create container: {str(e)}", exc_info=True)
-            return JsonResponse({'error': f'Failed to create container: {str(e)}', 'container_info': container_info},
-                                status=500)
 
-        try:
-            files_added = update_code_internal(container, code, user_id, file_name, main_file_path)
-            container_info['files_added'] = files_added
-            logger.info(f"Code updated in container {container_name}")
-            container_info['build_status'] = 'updated'
-        except Exception as e:
-            logger.error(f"Failed to update code in container: {str(e)}", exc_info=True)
-            return JsonResponse(
-                {'error': f'Failed to update code in container: {str(e)}', 'container_info': container_info},
-                status=500)
+            container_info = {
+                'container_name': container.name,
+                'created_at': datetime.now().isoformat(),
+                'status': container.status,
+                'ports': container.ports,
+                'image': container.image.tags[0] if container.image.tags else 'Unknown',
+                'id': container.id
+            }
 
-        container.reload()
-        port_mapping = container.ports.get('3001/tcp')
-        if port_mapping:
-            dynamic_url = f"https://{host_port}.{HOST_URL}"
-            logger.info(f"Container {container_name} running successfully: {dynamic_url}")
+            build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
+
             return JsonResponse({
                 'status': 'success',
                 'message': 'Container is running',
                 'container_id': container.id,
-                'url': dynamic_url,
-                'can_deploy': True,
+                'url': f"https://{host_port}.{HOST_URL}",
+                'build_output': build_output,
                 'container_info': container_info
             })
-        else:
-            logger.error(f"Failed to get port mapping for container {container_name}")
-            return JsonResponse({'error': 'Failed to get port mapping', 'container_info': container_info}, status=500)
+        except Exception as e:
+            logger.error(f"Failed to create or update container: {str(e)}", exc_info=True)
+            return JsonResponse({
+                'status': 'error',
+                'message': f'Failed to create or update container: {str(e)}',
+                'container_info': container_info if 'container_info' in locals() else None
+            }, status=500)
+
 
 @api_view(['POST'])
 def stop_container(request):

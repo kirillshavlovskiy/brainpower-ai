@@ -257,46 +257,6 @@ def get_available_port(start, end):
             return port
 
 
-from datetime import datetime
-import os
-import docker
-import logging
-from django.http import JsonResponse
-from rest_framework.decorators import api_view
-
-logger = logging.getLogger(__name__)
-client = docker.from_env()
-
-HOST_URL = 'brainpower-ai.net'
-HOST_PORT_RANGE_START = 32768
-HOST_PORT_RANGE_END = 60999
-
-class DetailedLogger:
-    def __init__(self):
-        self.logs = []
-        self.file_list = []
-
-    def log(self, level, message):
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
-        log_entry = f"{timestamp} {level.upper()} {message}"
-        self.logs.append(log_entry)
-        logger.log(getattr(logging, level.upper()), message)
-
-    def add_file(self, file_path, size, creation_date):
-        self.file_list.append({
-            'path': file_path,
-            'size': size,
-            'created_at': creation_date
-        })
-
-    def get_logs(self):
-        return "\n".join(self.logs)
-
-    def get_file_list(self):
-        return self.file_list
-
-detailed_logger = DetailedLogger()
-
 @api_view(['POST'])
 def check_or_create_container(request):
     data = request.data

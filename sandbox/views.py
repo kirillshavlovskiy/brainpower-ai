@@ -158,19 +158,22 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                         logger.info(f"Created empty file {import_path} in container")
                         files_added.append(container_path)
 
+                # Stop any existing process on port 3001
+                container.exec_run("pkill -f 'node.*3001'")
+
         # Build the project
         exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"], stream=True)
         for line in exec_result.output:
             if isinstance(line, bytes):
                 decoded_line = line.decode().strip()
             else:
-                decoded_line = line.strip()
+                decoded_line = str(line).strip()
             build_output.append(decoded_line)
             if "Failed to compile." in decoded_line:
                 raise Exception("Build failed")
 
-        if exec_result.exit_code != 0:
-            raise Exception(f"Failed to build project: {' '.join(build_output)}")
+        if "Something is already running on port 3001" in ' '.join(build_output):
+            raise Exception("Port 3001 is already in use. Unable to start the development server.")
 
         logger.info("Project rebuilt and server restarted successfully")
         return "\n".join(build_output), files_added

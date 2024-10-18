@@ -1,4 +1,4 @@
-import datetime
+from datetime import datetime
 import random
 import traceback
 from socket import socket
@@ -95,6 +95,7 @@ def check_container(request):
 
 def update_code_internal(container, code, user, file_name, main_file_path):
     files_added = []
+    build_output = []
     try:
         # Update component.js
         encoded_code = base64.b64encode(code.encode()).decode()
@@ -158,9 +159,17 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                         files_added.append(container_path)
 
         # Build the project
-        exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"])
+        exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"], stream=True)
+        for line in exec_result.output:
+            decoded_line = line.decode().strip()
+            build_output.append(decoded_line)
+            if "Failed to compile." in decoded_line:
+                raise Exception("Build failed")
         if exec_result.exit_code != 0:
             raise Exception(f"Failed to build project: {exec_result.output.decode()}")
+        
+        return "\n".join(build_output)
+
 
         logger.info("Project rebuilt and server restarted successfully")
         return files_added
@@ -286,19 +295,46 @@ def check_or_create_container(request):
 
     try:
         container = client.containers.get(container_name)
-        logger.info(f"Existing container found: {container_name}")
-        container_info['build_status'] = 'existing'
+        logger.info(f"Found existing container: {container.id}")
+        container_info = {
+            'container_name': container.name,
+            'created_at': datetime.now().isoformat(),  # This line is now correct
+            'status': container.status,
+            'ports': container.ports,
+            'image': container.image.tags[0] if container.image.tags else 'Unknown',
+            'id': container.id
+        }
 
-        if container.status != 'running':
-            logger.info(f"Starting existing container: {container_name}")
-            container.start()
-            command = ["sh", "-c", "yarn start"]
-            container.exec_run(command, detach=True)
-            container_info['build_status'] = 'restarted'
+        # Get the list of files in the /app/src directory
+        exec_result = container.exec_run("ls -R /app/src")
+        if exec_result.exit_code == 0:
+            files_list = exec_result.output.decode().split('\n')
+        else:
+            files_list = ["Unable to retrieve file list"]
 
-        container.reload()
-        host_port = container.ports.get('3001/tcp')[0]['HostPort']
-        logger.info(f"Container {container_name} is running on port {host_port}")
+        container_info['files_added'] = files_list
+
+        # Get the host port
+        port_bindings = container.attrs['NetworkSettings']['Ports']
+        host_port = None
+        if '3001/tcp' in port_bindings and port_bindings['3001/tcp']:
+            host_port = port_bindings['3001/tcp'][0]['HostPort']
+
+        try:
+            build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
+            return JsonResponse({
+                'status': 'success',
+                'message': 'Container is running',
+                'container_id': container.id,
+                'url': f"https://{host_port}.{HOST_URL}",
+                'build_output': build_output,
+            })
+        except Exception as update_error:
+            return JsonResponse({
+                'status': 'error',
+                'message': str(update_error),
+                'build_output': getattr(update_error, 'build_output', None),
+            }, status=500)
 
     except docker.errors.NotFound:
         logger.info(f"Container {container_name} not found. Creating new container.")
@@ -368,8 +404,6 @@ def check_or_create_container(request):
         else:
             logger.error(f"Failed to get port mapping for container {container_name}")
             return JsonResponse({'error': 'Failed to get port mapping', 'container_info': container_info}, status=500)
-
-
 
 @api_view(['POST'])
 def stop_container(request):

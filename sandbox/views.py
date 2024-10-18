@@ -214,7 +214,13 @@ def check_container_ready(request):
                 'url': dynamic_url,
                 'log': "Compiled successfully!"
             })
-        elif "Accepting connections at http://localhost:3001" in all_logs:
+        if "Compiled with warnings" in all_logs:
+            return JsonResponse({
+                'status': 'ready',
+                'url': dynamic_url,
+                'log': "Compiled successfully!"
+            })
+        if "Accepting connections at http://localhost:3001" in all_logs:
             return JsonResponse({
                 'status': 'ready',
                 'url': dynamic_url,
@@ -292,7 +298,8 @@ def check_or_create_container(request):
         container_info['files_added'] = files_list
 
         try:
-            build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
+            build_output, files_added = update_code_internal(container, code, user_id, file_name, main_file_path)
+            container_info['files_added'].extend(files_added)
             return JsonResponse({
                 'status': 'success',
                 'message': 'Container is running',
@@ -302,6 +309,7 @@ def check_or_create_container(request):
                 'container_info': container_info
             })
         except Exception as update_error:
+            logger.error(f"Error updating code: {str(update_error)}", exc_info=True)
             return JsonResponse({
                 'status': 'error',
                 'message': str(update_error),
@@ -355,7 +363,7 @@ def check_or_create_container(request):
 
             build_output, files_added = update_code_internal(container, code, user_id, file_name, main_file_path)
             container_info['files_added'] = files_added
-            
+
             return JsonResponse({
                 'status': 'success',
                 'message': 'Container is running',

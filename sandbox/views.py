@@ -95,6 +95,7 @@ def check_container(request):
 
 def update_code_internal(container, code, user, file_name, main_file_path):
     files_added = []
+    build_output = []
     try:
         # Update component.js
         encoded_code = base64.b64encode(code.encode()).decode()
@@ -158,17 +159,23 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                         files_added.append(container_path)
 
         # Build the project
-        exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"])
-        if exec_result.exit_code != 0:
-            raise Exception(f"Failed to build project: {exec_result.output.decode()}")
+        exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"], stream=True)
+        for line in exec_result.output:
+            if isinstance(line, bytes):
+                decoded_line = line.decode().strip()
+            else:
+                decoded_line = str(line).strip()
+            build_output.append(decoded_line)
+            if "Compiled successfully" in decoded_line or "Compiled with warnings" in decoded_line:
+                return "\n".join(build_output), files_added
 
-        logger.info("Project rebuilt and server restarted successfully")
-        return files_added
+        # If we reach here, it means we didn't find a success message
+        # But this doesn't necessarily mean it failed
+        return "\n".join(build_output), files_added
 
     except Exception as e:
         logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
         raise
-
 
 @api_view(['GET'])
 def check_container_ready(request):

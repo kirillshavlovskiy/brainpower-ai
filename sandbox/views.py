@@ -1,3 +1,4 @@
+from datetime import datetime
 import random
 import traceback
 from socket import socket
@@ -278,26 +279,43 @@ def check_or_create_container(request):
 
     container_info = {
         'container_name': container_name,
-        'created_at': datetime.now().isoformat(),
+        'created_at': time.now().isoformat(),
         'files_added': [],
         'build_status': 'pending'
     }
 
     try:
         container = client.containers.get(container_name)
-        logger.info(f"Existing container found: {container_name}")
-        container_info['build_status'] = 'existing'
+        container_info = {
+            'container_name': container.name,
+            'created_at': container.attrs['Created'],
+            'status': container.status,
+            'ports': container.ports,
+            'image': container.image.tags[0] if container.image.tags else 'Unknown',
+            'id': container.id
+        }
 
-        if container.status != 'running':
-            logger.info(f"Starting existing container: {container_name}")
-            container.start()
-            command = ["sh", "-c", "yarn start"]
-            container.exec_run(command, detach=True)
-            container_info['build_status'] = 'restarted'
+        # Get the list of files in the /app/src directory
+        exec_result = container.exec_run("ls -R /app/src")
+        if exec_result.exit_code == 0:
+            files_list = exec_result.output.decode().split('\n')
+        else:
+            files_list = ["Unable to retrieve file list"]
 
-        container.reload()
-        host_port = container.ports.get('3001/tcp')[0]['HostPort']
-        logger.info(f"Container {container_name} is running on port {host_port}")
+        container_info['files_added'] = files_list
+
+        # Get the host port
+        port_bindings = container.attrs['NetworkSettings']['Ports']
+        host_port = None
+        if '3001/tcp' in port_bindings and port_bindings['3001/tcp']:
+            host_port = port_bindings['3001/tcp'][0]['HostPort']
+
+        return JsonResponse({
+            'status': 'success',
+            'container_id': container.id,
+            'url': f"https://{host_port}.{HOST_URL}" if host_port else None,
+            'container_info': container_info
+        })
 
     except docker.errors.NotFound:
         logger.info(f"Container {container_name} not found. Creating new container.")

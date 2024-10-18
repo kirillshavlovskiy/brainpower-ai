@@ -1,4 +1,4 @@
-import datetime
+from datetime import datetime
 import random
 import traceback
 from socket import socket
@@ -279,7 +279,7 @@ def check_or_create_container(request):
 
     container_info = {
         'container_name': container_name,
-        'created_at': datetime.now().isoformat(),
+        'created_at': time.now().isoformat(),
         'files_added': [],
         'build_status': 'pending'
     }
@@ -304,10 +304,16 @@ def check_or_create_container(request):
 
         container_info['files_added'] = files_list
 
+        # Get the host port
+        port_bindings = container.attrs['NetworkSettings']['Ports']
+        host_port = None
+        if '3001/tcp' in port_bindings and port_bindings['3001/tcp']:
+            host_port = port_bindings['3001/tcp'][0]['HostPort']
+
         return JsonResponse({
             'status': 'success',
             'container_id': container.id,
-            'url': f"https://{host_port}.{HOST_URL}",
+            'url': f"https://{host_port}.{HOST_URL}" if host_port else None,
             'container_info': container_info
         })
 

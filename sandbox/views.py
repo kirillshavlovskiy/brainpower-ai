@@ -158,8 +158,8 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                         logger.info(f"Created empty file {import_path} in container")
                         files_added.append(container_path)
 
-                # Stop any existing process on port 3001
-                container.exec_run("pkill -f 'node.*3001'")
+        # Stop any existing process on port 3001
+        container.exec_run("pkill -f 'node.*3001'")
 
         # Build the project
         exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"], stream=True)

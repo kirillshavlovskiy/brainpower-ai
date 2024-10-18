@@ -30,6 +30,7 @@ HOST_PORT_RANGE_START = 32768
 HOST_PORT_RANGE_END = 60999
 NGINX_SITES_DYNAMIC = '/etc/nginx/sites-dynamic'
 
+
 @api_view(['GET'])
 def container_info(request):
     container_id = request.GET.get('container_id')
@@ -47,6 +48,7 @@ def container_info(request):
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
 
+
 @api_view(['GET'])
 def container_files(request):
     container_id = request.GET.get('container_id')
@@ -62,6 +64,7 @@ def container_files(request):
         return JsonResponse({'error': 'Container not found'}, status=404)
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+
 
 @api_view(['GET'])
 def check_container(request):
@@ -161,21 +164,22 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         # Build the project
         exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"], stream=True)
         for line in exec_result.output:
-            if isinstance(line, bytes):
-                decoded_line = line.decode().strip()
-            else:
-                decoded_line = str(line).strip()
+            decoded_line = line.decode().strip()
             build_output.append(decoded_line)
-            if "Compiled successfully" in decoded_line or "Compiled with warnings" in decoded_line:
-                return "\n".join(build_output), files_added
+            if "Failed to compile." in decoded_line:
+                raise Exception("Build failed")
+        if exec_result.exit_code != 0:
+            raise Exception(f"Failed to build project: {exec_result.output.decode()}")
 
-        # If we reach here, it means we didn't find a success message
-        # But this doesn't necessarily mean it failed
-        return "\n".join(build_output), files_added
+        return "\n".join(build_output)
+
+        logger.info("Project rebuilt and server restarted successfully")
+        return files_added
 
     except Exception as e:
         logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
         raise
+
 
 @api_view(['GET'])
 def check_container_ready(request):
@@ -273,7 +277,8 @@ def check_or_create_container(request):
     file_name = data.get('file_name', 'component.js')
     main_file_path = data.get('main_file_path')
 
-    logger.info(f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
+    logger.info(
+        f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
 
     if not all([code, language, file_name]):
         return JsonResponse({'error': 'Missing required fields'}, status=400)
@@ -293,9 +298,10 @@ def check_or_create_container(request):
 
     try:
         container = client.containers.get(container_name)
+        logger.info(f"Found existing container: {container.id}")
         container_info = {
             'container_name': container.name,
-            'created_at': container.attrs['Created'],
+            'created_at': datetime.now().isoformat(),  # This line is now correct
             'status': container.status,
             'ports': container.ports,
             'image': container.image.tags[0] if container.image.tags else 'Unknown',
@@ -317,12 +323,21 @@ def check_or_create_container(request):
         if '3001/tcp' in port_bindings and port_bindings['3001/tcp']:
             host_port = port_bindings['3001/tcp'][0]['HostPort']
 
-        return JsonResponse({
-            'status': 'success',
-            'container_id': container.id,
-            'url': f"https://{host_port}.{HOST_URL}" if host_port else None,
-            'container_info': container_info
-        })
+        try:
+            build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
+            return JsonResponse({
+                'status': 'success',
+                'message': 'Container is running',
+                'container_id': container.id,
+                'url': f"https://{host_port}.{HOST_URL}",
+                'build_output': build_output,
+            })
+        except Exception as update_error:
+            return JsonResponse({
+                'status': 'error',
+                'message': str(update_error),
+                'build_output': getattr(update_error, 'build_output', None),
+            }, status=500)
 
     except docker.errors.NotFound:
         logger.info(f"Container {container_name} not found. Creating new container.")
@@ -394,7 +409,6 @@ def check_or_create_container(request):
             return JsonResponse({'error': 'Failed to get port mapping', 'container_info': container_info}, status=500)
 
 
-
 @api_view(['POST'])
 def stop_container(request):
     container_id = request.data.get('container_id')
@@ -414,7 +428,6 @@ def stop_container(request):
 
 
 import time
-
 
 
 @api_view(['POST'])
@@ -578,6 +591,7 @@ class ServeReactApp(TemplateView):
         template_path = f'{settings.DEPLOYED_COMPONENTS_ROOT}/{app_name}/index.html'
         return [template_path]
 
+
 import os
 import json
 import asyncio
@@ -645,7 +659,8 @@ class DeployToProductionView_prod(View):
                 raise Exception(f"Build failed: {error_message}")
 
             # Remove existing directory if it exists
-            self.send_update(channel_layer, task_id, "Production build process completed. Copying build files...", production_url)
+            self.send_update(channel_layer, task_id, "Production build process completed. Copying build files...",
+                             production_url)
             subprocess.run(f"sudo rm -rf {production_dir}", shell=True, check=True)
 
             # Create production directory
@@ -727,7 +742,6 @@ class DeployToProductionView_prod(View):
         logger.info(f"Sending update: {update}")
         async_to_sync(channel_layer.group_send)(f"deployment_{task_id}", update)
         logger.info(f"Sent update for task {task_id}: {message}")
-
 
 
 

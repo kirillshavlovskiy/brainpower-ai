@@ -279,7 +279,7 @@ def check_or_create_container(request):
 
     container_info = {
         'container_name': container_name,
-        'created_at': time.now().isoformat(),
+        'created_at': datetime.now().isoformat(),
         'files_added': [],
         'build_status': 'pending'
     }

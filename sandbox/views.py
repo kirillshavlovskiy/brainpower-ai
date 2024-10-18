@@ -245,8 +245,6 @@ def get_available_port(start, end):
         if result != 0:
             return port
 
-
-@api_view(['POST'])
 @api_view(['POST'])
 def check_or_create_container(request):
     data = request.data

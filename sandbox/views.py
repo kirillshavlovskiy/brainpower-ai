@@ -316,7 +316,7 @@ def check_or_create_container(request):
             return JsonResponse({
                 'status': 'error',
                 'message': str(update_error),
-                'build_output': getattr(update_error, 'build_output', None),
+                'build_output': build_output if 'build_output' in locals() else None,
                 'container_info': container_info
             }, status=500)
 

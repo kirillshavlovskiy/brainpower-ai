@@ -95,6 +95,7 @@ def check_container(request):
 
 def update_code_internal(container, code, user, file_name, main_file_path):
     files_added = []
+    build_output= []
     try:
         # Update component.js
         encoded_code = base64.b64encode(code.encode()).decode()

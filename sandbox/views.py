@@ -95,6 +95,7 @@ def check_container(request):
 
 def update_code_internal(container, code, user, file_name, main_file_path):
     files_added = []
+    build_output = []
     try:
         # Update component.js
         encoded_code = base64.b64encode(code.encode()).decode()
@@ -159,16 +160,20 @@ def update_code_internal(container, code, user, file_name, main_file_path):
 
         # Build the project
         exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"], stream=True)
-        build_output = []
         for line in exec_result.output:
-            decoded_line = line.decode().strip()
+            if isinstance(line, bytes):
+                decoded_line = line.decode().strip()
+            else:
+                decoded_line = line.strip()
             build_output.append(decoded_line)
             if "Failed to compile." in decoded_line:
                 raise Exception("Build failed")
+
         if exec_result.exit_code != 0:
-            raise Exception(f"Failed to build project: {exec_result.output.decode()}")
-        
-        return "\n".join(build_output)
+            raise Exception(f"Failed to build project: {' '.join(build_output)}")
+
+        logger.info("Project rebuilt and server restarted successfully")
+        return "\n".join(build_output), files_added
 
     except Exception as e:
         logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
@@ -348,8 +353,9 @@ def check_or_create_container(request):
                 'id': container.id
             }
 
-            build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
-
+            build_output, files_added = update_code_internal(container, code, user_id, file_name, main_file_path)
+            container_info['files_added'] = files_added
+            
             return JsonResponse({
                 'status': 'success',
                 'message': 'Container is running',

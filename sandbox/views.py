@@ -21,7 +21,9 @@ import docker
 from string import Template
 import shutil
 import tempfile
-
+import os
+import shutil
+import socket
 logger = logging.getLogger(__name__)
 client = docker.from_env()
 
@@ -170,6 +172,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
         raise
 
+
 @api_view(['GET'])
 def check_container_ready(request):
     container_id = request.GET.get('container_id')
@@ -242,9 +245,21 @@ def check_container_ready(request):
         return JsonResponse({'error': 'Error checking container status', 'details': str(e), 'log': str(e)}, status=500)
 
 
-import os
-import shutil
-import socket
+@api_view(['GET'])
+def get_container_logs(request):
+    container_id = request.GET.get('container_id')
+    if not container_id:
+        return JsonResponse({'error': 'No container ID provided'}, status=400)
+
+    try:
+        container = client.containers.get(container_id)
+        logs = container.logs(tail=100).decode('utf-8')  # Get last 100 lines of logs
+        return JsonResponse({'logs': logs})
+    except docker.errors.NotFound:
+        return JsonResponse({'error': 'Container not found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
 
 
 def get_available_port(start, end):

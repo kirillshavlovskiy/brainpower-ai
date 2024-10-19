@@ -8,7 +8,7 @@ from django.http import HttpResponse
 import os
 
 urlpatterns = [
-
+    path('get_container_logs/', views.get_container_logs, name='get_container_logs')
     path('check_container/', views.check_container, name='check_container'),
     path('execute/', views.check_or_create_container, name='execute_code'),
     path('stop_container/', views.stop_container, name='stop_container'),

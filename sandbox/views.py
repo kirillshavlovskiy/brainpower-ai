@@ -169,7 +169,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         return "\n".join(build_output), files_added
 
     except Exception as e:
-        logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
+        logger.error(f">>>Error updating code in container: {str(e)}", exc_info=True)
         raise
 
 
@@ -437,7 +437,7 @@ def check_or_create_container(request):
                     'file_list': detailed_logger.get_file_list(),
                 }, status=500)
         except Exception as e:
-            detailed_logger.log('error', f"Failed to update code in container: {str(e)}")
+            detailed_logger.log('error', f"!!!Failed to update code in container: {str(e)}")
             return JsonResponse({
                 'error': f'Failed to update code in container: {str(e)}',
                 'container_info': container_info,

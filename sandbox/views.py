@@ -275,6 +275,7 @@ def get_available_port(start, end):
 
 @api_view(['POST'])
 def check_or_create_container(request):
+    file_structure = []
     data = request.data
     code = data.get('main_code')
     language = data.get('language')
@@ -331,8 +332,8 @@ def check_or_create_container(request):
 
         try:
             build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
-            file_structure = get_container_file_structure(container)
-            container_info['file_structure'] = file_structure
+            # file_structure = get_container_file_structure(container)
+            # container_info['file_structure'] = file_structure
             return JsonResponse({
                 'status': 'success',
                 'container_id': container.id,
@@ -397,8 +398,8 @@ def check_or_create_container(request):
         try:
             build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
             container_info['build_status'] = 'updated'
-            file_structure = []
-            file_structure = get_container_file_structure(container)
+
+            # file_structure = get_container_file_structure(container)
             print(file_structure)
             detailed_logger.log('warning', f"File structure: {file_structure}, \nbuild output {build_output}")
             container_info['file_structure'] = file_structure
@@ -459,6 +460,8 @@ def check_or_create_container(request):
 
 def get_container_file_structure(container):
     exec_result = container.exec_run("find /app/src -printf '%P\\t%s\\t%T@\\t%y\\n'")
+    logger.info(f"Find command exit code: {exec_result.exit_code}")
+    logger.info(f"Find command output: {exec_result.output.decode()}")
     if exec_result.exit_code == 0:
         files = []
         for line in exec_result.output.decode().strip().split('\n'):

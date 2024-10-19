@@ -397,7 +397,7 @@ def check_or_create_container(request):
             build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
             container_info['build_status'] = 'updated'
             file_structure = get_container_file_structure(container)
-            detailed_logger.log('warning', file_structure)
+            detailed_logger.log('warning', file_structure, build_output)
             container_info['file_structure'] = file_structure
 
             # # Get the list of files in the new container
@@ -413,6 +413,7 @@ def check_or_create_container(request):
 
             container.reload()
             port_mapping = container.ports.get('3001/tcp')
+            detailed_logger.log('warning', "check that container reload successful, port mapping successful")
             if port_mapping:
                 dynamic_url = f"https://{host_port}.{HOST_URL}"
                 detailed_logger.log('info', f"Container {container_name} running successfully: {dynamic_url}")

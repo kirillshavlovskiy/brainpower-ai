@@ -67,7 +67,7 @@ def check_container(request):
 
     try:
         container = client.containers.get(container_name)
-        container.reload()
+        # container.reload()
 
         if container.status == 'running':
             port_mapping = container.ports.get('3001/tcp')
@@ -76,7 +76,8 @@ def check_container(request):
                 return JsonResponse({
                     'status': 'ready',
                     'container_id': container.id,
-                    'url': f"https://{host_port}.{HOST_URL}"
+                    'url': f"https://{host_port}.{HOST_URL}",
+                    'container_name': container.name
                 })
             else:
                 return JsonResponse({'status': 'not_ready', 'container_id': container.id})

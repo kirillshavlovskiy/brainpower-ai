@@ -397,6 +397,7 @@ def check_or_create_container(request):
             build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
             container_info['build_status'] = 'updated'
             file_structure = get_container_file_structure(container)
+            detailed_logger.log('warning', file_structure)
             container_info['file_structure'] = file_structure
 
             # Get the list of files in the new container

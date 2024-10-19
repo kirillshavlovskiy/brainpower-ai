@@ -72,6 +72,12 @@ def check_container(request):
         if container.status == 'running':
             port_mapping = container.ports.get('3001/tcp')
             file_structure = get_container_file_structure(container)
+            check_result = container.exec_run("test -d /app/src && echo 'exists' || echo 'not found'")
+            if check_result:
+                file_structure = get_container_file_structure(container)
+                logger.info(f"Check /app/src directory result: {check_result.output.decode().strip()}")
+                logger.info(f"/app/src directory structure: {file_structure}")
+
             if port_mapping:
                 host_port = port_mapping[0]['HostPort']
                 return JsonResponse({

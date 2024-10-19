@@ -425,6 +425,7 @@ def check_or_create_container(request):
                     'build_output': build_output,
                     'detailed_logs': detailed_logger.get_logs(),
                     'file_list': file_structure,
+                    'file_structure': file_structure,
                 })
             else:
                 detailed_logger.log('error', f"Failed to get port mapping for container {container_name}")
@@ -457,12 +458,14 @@ def get_container_file_structure(container):
     if exec_result.exit_code == 0:
         files = []
         for line in exec_result.output.decode().strip().split('\n'):
-            path, size, timestamp = line.split('\t')
-            files.append({
-                'path': path,
-                'size': int(size),
-                'created_at': datetime.fromtimestamp(float(timestamp)).isoformat()
-            })
+            if line:  # Ensure we're not processing empty lines
+                path, size, timestamp = line.split('\t')
+                files.append({
+                    'path': path,
+                    'size': int(size),
+                    'created_at': datetime.fromtimestamp(float(timestamp)).isoformat()
+                })
+        detailed_logger.log('info files', files)
         return files
     return []
 

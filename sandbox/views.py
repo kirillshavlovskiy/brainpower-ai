@@ -60,40 +60,32 @@ detailed_logger = DetailedLogger()
 
 @api_view(['GET'])
 def check_container(request):
-    user_id = request.GET.get('user_id')
-    file_name = request.GET.get('file_name')
+    user_id = request.GET.get('user_id', '0')
+    file_name = request.GET.get('file_name', 'test-component.js')
+
     container_name = f'react_renderer_{user_id}_{file_name}'
 
     try:
         container = client.containers.get(container_name)
-        container_info = {
-            'container_id': container.id,
-            'container_name': container.name,
-            'status': container.status,
-            'created_at': container.attrs['Created'],
-            'url': f"https://{container.ports['3001/tcp'][0]['HostPort']}.{HOST_URL}" if '3001/tcp' in container.ports else None,
-            'compilation_status': 'N/A',  # You may need to implement a way to determine this
-            'file_list': get_container_file_list(container)
-        }
-        return JsonResponse(container_info)
-    except docker.errors.NotFound:
-        return JsonResponse({'status': 'not_found'})
-    except Exception as e:
-        return JsonResponse({'status': 'error', 'message': str(e)})
+        container.reload()
 
-def get_container_file_list(container):
-    exec_result = container.exec_run("find /app -type f -printf '%P\\t%s\\t%T@\\n'")
-    if exec_result.exit_code == 0:
-        files = []
-        for line in exec_result.output.decode().strip().split('\n'):
-            path, size, timestamp = line.split('\t')
-            files.append({
-                'path': path,
-                'size': int(size),
-                'created_at': datetime.fromtimestamp(float(timestamp)).isoformat()
-            })
-        return files
-    return []
+        if container.status == 'running':
+            port_mapping = container.ports.get('3001/tcp')
+            if port_mapping:
+                host_port = port_mapping[0]['HostPort']
+                return JsonResponse({
+                    'status': 'ready',
+                    'container_id': container.id,
+                    'url': f"https://{host_port}.{HOST_URL}"
+                })
+            else:
+                return JsonResponse({'status': 'not_ready', 'container_id': container.id})
+        else:
+            return JsonResponse({'status': 'not_ready', 'container_id': container.id})
+    except docker.errors.NotFound:
+        return JsonResponse({'status': 'not_found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
 
 
 def update_code_internal(container, code, user, file_name, main_file_path):
@@ -338,6 +330,7 @@ def check_or_create_container(request):
 
         try:
             build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
+
             return JsonResponse({
                 'status': 'success',
                 'container_id': container.id,
@@ -402,6 +395,8 @@ def check_or_create_container(request):
         try:
             build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
             container_info['build_status'] = 'updated'
+            file_structure = get_container_file_structure(container)
+            container_info['file_structure'] = file_structure
 
             # Get the list of files in the new container
             exec_result = container.exec_run("find /app -type f -printf '%P\\t%s\\t%T@\\n'")
@@ -428,7 +423,7 @@ def check_or_create_container(request):
                     'container_info': container_info,
                     'build_output': build_output,
                     'detailed_logs': detailed_logger.get_logs(),
-                    'file_list': detailed_logger.get_file_list(),
+
                 })
             else:
                 detailed_logger.log('error', f"Failed to get port mapping for container {container_name}")

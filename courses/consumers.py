@@ -95,7 +95,7 @@ class AsyncChatConsumer(AsyncWebsocketConsumer):
             "image_data": text_data_json['image']
         }
 
-        # asyncio.create_task(self.process_query(input_data))
+        asyncio.create_task(self.process_query(input_data))
 
     async def process_query(self, input_data):
         try:

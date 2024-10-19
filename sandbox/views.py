@@ -71,12 +71,14 @@ def check_container(request):
 
         if container.status == 'running':
             port_mapping = container.ports.get('3001/tcp')
+            file_structure = get_container_file_structure(container)
             if port_mapping:
                 host_port = port_mapping[0]['HostPort']
                 return JsonResponse({
                     'status': 'ready',
                     'container_id': container.id,
-                    'url': f"https://{host_port}.{HOST_URL}"
+                    'url': f"https://{host_port}.{HOST_URL}",
+                    'file_list': file_structure
                 })
             else:
                 return JsonResponse({'status': 'not_ready', 'container_id': container.id})
@@ -446,7 +448,7 @@ def check_or_create_container(request):
                 'error': f'Failed to update code in container: {str(e)}',
                 'container_info': container_info,
                 'detailed_logs': detailed_logger.get_logs(),
-                'file_list': detailed_logger.get_file_list(),
+                'file_list': file_structure(),
             }, status=500)
 
     except Exception as e:

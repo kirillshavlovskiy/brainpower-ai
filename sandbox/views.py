@@ -400,16 +400,16 @@ def check_or_create_container(request):
             detailed_logger.log('warning', file_structure)
             container_info['file_structure'] = file_structure
 
-            # Get the list of files in the new container
-            exec_result = container.exec_run("find /app -type f -printf '%P\\t%s\\t%T@\\n'")
-            if exec_result.exit_code == 0:
-                files_info = exec_result.output.decode().strip().split('\n')
-                for file_info in files_info:
-                    path, size, timestamp = file_info.split('\t')
-                    creation_date = datetime.fromtimestamp(float(timestamp)).isoformat()
-                    detailed_logger.add_file(path, int(size), creation_date)
-            else:
-                detailed_logger.log('warning', "Unable to retrieve file list for new container")
+            # # Get the list of files in the new container
+            # exec_result = container.exec_run("find /app -type f -printf '%P\\t%s\\t%T@\\n'")
+            # if exec_result.exit_code == 0:
+            #     files_info = exec_result.output.decode().strip().split('\n')
+            #     for file_info in files_info:
+            #         path, size, timestamp = file_info.split('\t')
+            #         creation_date = datetime.fromtimestamp(float(timestamp)).isoformat()
+            #         detailed_logger.add_file(path, int(size), creation_date)
+            # else:
+            #     detailed_logger.log('warning', "Unable to retrieve file list for new container")
 
             container.reload()
             port_mapping = container.ports.get('3001/tcp')

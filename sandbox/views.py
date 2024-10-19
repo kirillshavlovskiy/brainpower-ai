@@ -1,4 +1,3 @@
-from datetime import datetime
 import random
 import traceback
 from socket import socket
@@ -21,9 +20,7 @@ import docker
 from string import Template
 import shutil
 import tempfile
-import os
-import shutil
-import socket
+
 logger = logging.getLogger(__name__)
 client = docker.from_env()
 
@@ -32,31 +29,38 @@ HOST_PORT_RANGE_START = 32768
 HOST_PORT_RANGE_END = 60999
 NGINX_SITES_DYNAMIC = '/etc/nginx/sites-dynamic'
 
-class DetailedLogger:
-    def __init__(self):
-        self.logs = []
-        self.file_list = []
+@api_view(['GET'])
+def container_info(request):
+    container_id = request.GET.get('container_id')
+    if not container_id:
+        return JsonResponse({'error': 'No container ID provided'}, status=400)
 
-    def log(self, level, message):
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
-        log_entry = f"{timestamp} {level.upper()} {message}"
-        self.logs.append(log_entry)
-        logger.log(getattr(logging, level.upper()), message)
-
-    def add_file(self, file_path, size, creation_date):
-        self.file_list.append({
-            'path': file_path,
-            'size': size,
-            'created_at': creation_date
+    try:
+        container = client.containers.get(container_id)
+        return JsonResponse({
+            'name': container.name,
+            'status': container.status,
         })
+    except docker.errors.NotFound:
+        return JsonResponse({'error': 'Container not found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
 
-    def get_logs(self):
-        return "\n".join(self.logs)
+@api_view(['GET'])
+def container_files(request):
+    container_id = request.GET.get('container_id')
+    if not container_id:
+        return JsonResponse({'error': 'No container ID provided'}, status=400)
 
-    def get_file_list(self):
-        return self.file_list
-detailed_logger = DetailedLogger()
-
+    try:
+        container = client.containers.get(container_id)
+        exec_result = container.exec_run("find /app -type f")
+        files = exec_result.output.decode().split('\n')
+        return JsonResponse({'files': files})
+    except docker.errors.NotFound:
+        return JsonResponse({'error': 'Container not found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
 
 @api_view(['GET'])
 def check_container(request):
@@ -67,7 +71,7 @@ def check_container(request):
 
     try:
         container = client.containers.get(container_name)
-        # container.reload()
+        container.reload()
 
         if container.status == 'running':
             port_mapping = container.ports.get('3001/tcp')
@@ -76,8 +80,7 @@ def check_container(request):
                 return JsonResponse({
                     'status': 'ready',
                     'container_id': container.id,
-                    'url': f"https://{host_port}.{HOST_URL}",
-                    'container_name': container.name
+                    'url': f"https://{host_port}.{HOST_URL}"
                 })
             else:
                 return JsonResponse({'status': 'not_ready', 'container_id': container.id})
@@ -90,102 +93,81 @@ def check_container(request):
 
 
 def update_code_internal(container, code, user, file_name, main_file_path):
-    max_attempts = 5
-    delay = 2  # seconds
     files_added = []
-    build_output = []
-
-    for attempt in range(max_attempts):
-        try:
-            # Update component.js
-            encoded_code = base64.b64encode(code.encode()).decode()
-            exec_result = container.exec_run([
-                "sh", "-c",
-                f"echo {encoded_code} | base64 -d > /app/src/component.js"
-            ])
-            if exec_result.exit_code != 0:
-                raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
-            files_added.append('/app/src/component.js')
-
-            logger.info(f"Updated component.js in container with content from {file_name} at path {main_file_path}")
-            logger.info(f"Processing for user: {user}")
-
-            # Get the directory of the main file
-            base_path = os.path.dirname(main_file_path)
-            logger.info(f"Base path derived from main file: {base_path}")
-
-            # Handle all imports (CSS, JS, TS, JSON, etc.)
-            import_pattern = r"import\s+(?:(?:{\s*[\w\s,]+\s*})|(?:[\w]+)|\*\s+as\s+[\w]+)\s+from\s+['\"](.+?)['\"]|import\s+['\"](.+?)['\"]"
-            imports = re.findall(import_pattern, code)
-
-            for import_match in imports:
-                import_path = import_match[0] or import_match[1]  # Get the non-empty group
-                if import_path:
-                    logger.info(f"Attempting to retrieve content for imported file: {import_path}")
-                    file_content = FileStructureConsumer.get_file_content_for_container(user, import_path, base_path)
-                    if file_content is not None:
-                        logger.info(f"Retrieved content for file: {import_path}")
-                        encoded_content = base64.b64encode(file_content.encode()).decode()
-                        container_path = f"/app/src/{import_path}"
-                        exec_result = container.exec_run([
-                            "sh", "-c",
-                            f"mkdir -p $(dirname {container_path}) && echo {encoded_content} | base64 -d > {container_path}"
-                        ])
-                        if exec_result.exit_code != 0:
-                            raise Exception(f"Failed to update {import_path} in container: {exec_result.output.decode()}")
-                        logger.info(f"Updated {import_path} in container")
-                        files_added.append(container_path)
-                    else:
-                        logger.warning(f"File {import_path} not found or empty. Creating empty file in container.")
-                        container_path = f"/app/src/{import_path}"
-                        exec_result = container.exec_run([
-                            "sh", "-c",
-                            f"mkdir -p $(dirname {container_path}) && touch {container_path}"
-                        ])
-                        if exec_result.exit_code != 0:
-                            logger.error(
-                                f"Failed to create empty file {import_path} in container: {exec_result.output.decode()}")
-                        else:
-                            logger.info(f"Created empty file {import_path} in container")
-                            files_added.append(container_path)
-
-            # Wait for the container to be in the "running" state
-            max_wait = 30  # seconds
-            start_time = time.time()
-            while container.status != "running":
-                if time.time() - start_time > max_wait:
-                    raise Exception("Container failed to enter running state in time")
+    try:
+        # Update component.js
+        encoded_code = base64.b64encode(code.encode()).decode()
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                exec_result = container.exec_run([
+                    "sh", "-c",
+                    f"echo {encoded_code} | base64 -d > /app/src/component.js"
+                ])
+                if exec_result.exit_code != 0:
+                    raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
+                files_added.append('/app/src/component.js')
+                break
+            except docker.errors.APIError as e:
+                if attempt == max_attempts - 1:
+                    raise
+                logger.warning(f"API error on attempt {attempt + 1}, retrying: {str(e)}")
                 time.sleep(1)
-                container.reload()
 
-            # Build the project
-            logger.info("Starting to build the project")
-            exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"], stream=True)
-            for line in exec_result.output:
-                decoded_line = line.decode().strip() if isinstance(line, bytes) else str(line).strip()
-                logger.info(f"Build output: {decoded_line}")
-                build_output.append(decoded_line)
-                if "Compiled successfully" in decoded_line or "Compiled with warnings" in decoded_line:
-                    logger.info("Build completed successfully")
-                    return "\n".join(build_output), files_added
+        logger.info(f"Updated component.js in container with content from {file_name} at path {main_file_path}")
+        logger.info(f"Processing for user: {user}")
 
-            logger.error("Build process did not complete successfully")
-            if attempt < max_attempts - 1:
-                logger.info(f"Retrying... Attempt {attempt + 2} of {max_attempts}")
-                time.sleep(delay)
-            else:
-                return "\n".join(build_output), files_added
+        # Get the directory of the main file
+        base_path = os.path.dirname(main_file_path)
+        logger.info(f"Base path derived from main file: {base_path}")
 
-        except Exception as e:
-            logger.error(f"Attempt {attempt + 1} failed: {str(e)}")
-            if attempt < max_attempts - 1:
-                logger.info(f"Retrying... Attempt {attempt + 2} of {max_attempts}")
-                time.sleep(delay)
-            else:
-                logger.error(f"All attempts failed. Last error: {str(e)}")
-                raise
+        # Handle all imports (CSS, JS, TS, JSON, etc.)
+        import_pattern = r"import\s+(?:(?:{\s*[\w\s,]+\s*})|(?:[\w]+)|\*\s+as\s+[\w]+)\s+from\s+['\"](.+?)['\"]|import\s+['\"](.+?)['\"]"
+        imports = re.findall(import_pattern, code)
 
-    raise Exception("Failed to update code after multiple attempts")
+        for import_match in imports:
+            import_path = import_match[0] or import_match[1]  # Get the non-empty group
+            if import_path:
+                logger.info(f"Attempting to retrieve content for imported file: {import_path}")
+                file_content = FileStructureConsumer.get_file_content_for_container(user, import_path, base_path)
+                if file_content is not None:
+                    logger.info(f"Retrieved content for file: {import_path}")
+                    encoded_content = base64.b64encode(file_content.encode()).decode()
+                    container_path = f"/app/src/{import_path}"
+                    exec_result = container.exec_run([
+                        "sh", "-c",
+                        f"mkdir -p $(dirname {container_path}) && echo {encoded_content} | base64 -d > {container_path}"
+                    ])
+                    if exec_result.exit_code != 0:
+                        raise Exception(f"Failed to update {import_path} in container: {exec_result.output.decode()}")
+                    logger.info(f"Updated {import_path} in container")
+                    files_added.append(container_path)
+                else:
+                    logger.warning(f"File {import_path} not found or empty. Creating empty file in container.")
+                    container_path = f"/app/src/{import_path}"
+                    exec_result = container.exec_run([
+                        "sh", "-c",
+                        f"mkdir -p $(dirname {container_path}) && touch {container_path}"
+                    ])
+                    if exec_result.exit_code != 0:
+                        logger.error(
+                            f"Failed to create empty file {import_path} in container: {exec_result.output.decode()}")
+                    else:
+                        logger.info(f"Created empty file {import_path} in container")
+                        files_added.append(container_path)
+
+        # Build the project
+        exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"])
+        if exec_result.exit_code != 0:
+            raise Exception(f"Failed to build project: {exec_result.output.decode()}")
+
+        logger.info("Project rebuilt and server restarted successfully")
+        return files_added
+
+    except Exception as e:
+        logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
+        raise
+
 
 @api_view(['GET'])
 def check_container_ready(request):
@@ -259,21 +241,9 @@ def check_container_ready(request):
         return JsonResponse({'error': 'Error checking container status', 'details': str(e), 'log': str(e)}, status=500)
 
 
-@api_view(['GET'])
-def get_container_logs(request):
-    container_id = request.GET.get('container_id')
-    if not container_id:
-        return JsonResponse({'error': 'No container ID provided'}, status=400)
-
-    try:
-        container = client.containers.get(container_id)
-        logs = container.logs(tail=100).decode('utf-8')  # Get last 100 lines of logs
-        return JsonResponse({'logs': logs})
-    except docker.errors.NotFound:
-        return JsonResponse({'error': 'Container not found'}, status=404)
-    except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
-
+import os
+import shutil
+import socket
 
 
 def get_available_port(start, end):
@@ -295,7 +265,7 @@ def check_or_create_container(request):
     file_name = data.get('file_name', 'component.js')
     main_file_path = data.get('main_file_path')
 
-    detailed_logger.log('info', f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
+    logger.info(f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
 
     if not all([code, language, file_name]):
         return JsonResponse({'error': 'Missing required fields'}, status=400)
@@ -315,65 +285,30 @@ def check_or_create_container(request):
 
     try:
         container = client.containers.get(container_name)
-        detailed_logger.log('info', f"Found existing container: {container.id}")
-        container_info = {
-            'container_name': container.name,
-            'created_at': datetime.now().isoformat(),
-            'status': container.status,
-            'ports': container.ports,
-            'image': container.image.tags[0] if container.image.tags else 'Unknown',
-            'id': container.id
-        }
+        logger.info(f"Existing container found: {container_name}")
+        container_info['build_status'] = 'existing'
 
-        # Get the list of files in the /app directory
-        exec_result = container.exec_run("find /app -type f -printf '%P\\t%s\\t%T@\\n'")
-        if exec_result.exit_code == 0:
-            files_info = exec_result.output.decode().strip().split('\n')
-            for file_info in files_info:
-                path, size, timestamp = file_info.split('\t')
-                creation_date = datetime.fromtimestamp(float(timestamp)).isoformat()
-                detailed_logger.add_file(path, int(size), creation_date)
-        else:
-            detailed_logger.log('warning', "Unable to retrieve file list")
+        if container.status != 'running':
+            logger.info(f"Starting existing container: {container_name}")
+            container.start()
+            command = ["sh", "-c", "yarn start"]
+            container.exec_run(command, detach=True)
+            container_info['build_status'] = 'restarted'
 
-        # Get the host port
-        port_bindings = container.attrs['NetworkSettings']['Ports']
-        host_port = None
-        if '3001/tcp' in port_bindings and port_bindings['3001/tcp']:
-            host_port = port_bindings['3001/tcp'][0]['HostPort']
-
-        try:
-            build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
-            file_structure = get_container_file_structure(container)
-
-            return JsonResponse({
-                'status': 'success',
-                'container_id': container.id,
-                'url': f"https://{host_port}.{HOST_URL}" if host_port else None,
-                'container_info': container_info,
-                'build_output': build_output,
-                'detailed_logs': detailed_logger.get_logs(),
-                'file_list': file_structure,
-            })
-
-        except Exception as update_error:
-            detailed_logger.log('error', f"Failed to update code: {str(update_error)}")
-            return JsonResponse({
-                'status': 'error',
-                'message': str(update_error),
-                'build_output': getattr(update_error, 'build_output', None),
-                'detailed_logs': detailed_logger.get_logs(),
-                'file_list': [],
-            }, status=500)
+        container.reload()
+        host_port = container.ports.get('3001/tcp')[0]['HostPort']
+        logger.info(f"Container {container_name} is running on port {host_port}")
 
     except docker.errors.NotFound:
-        detailed_logger.log('info', f"Container {container_name} not found. Creating new container.")
+        logger.info(f"Container {container_name} not found. Creating new container.")
         host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
-        detailed_logger.log('info', f"Selected port {host_port} for new container")
+        logger.info(f"Selected port {host_port} for new container")
         try:
             container = client.containers.run(
                 'react_renderer_prod',
-                command=["sh", "-c", "yarn start"],
+                command=[
+                    "sh", "-c", "yarn start"
+                ],  # Build and serve production
                 detach=True,
                 name=container_name,
                 environment={
@@ -381,15 +316,16 @@ def check_or_create_container(request):
                     'REACT_APP_USER_ID': user_id,
                     'FILE_NAME': file_name,
                     'PORT': str(3001),
-                    'NODE_ENV': 'production',
+                    'NODE_ENV': 'production',  # Set to production
                     'NODE_OPTIONS': '--max-old-space-size=8192'
                 },
                 volumes={
                     os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
-                    os.path.join(react_renderer_path, 'package-lock.json'): {'bind': '/app/package-lock.json', 'mode': 'ro'},
-                    os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'package-lock.json'): {'bind': '/app/package-lock.json',
+                                                                             'mode': 'ro'},
+                    os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},  # Add this line
                 },
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',
@@ -397,79 +333,42 @@ def check_or_create_container(request):
                 cpu_quota=100000,
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
-            detailed_logger.log('info', f"New container created: {container_name}")
+            logger.info(f"New container created: {container_name}")
             container_info['build_status'] = 'created'
         except docker.errors.APIError as e:
-            detailed_logger.log('error', f"Failed to create container: {str(e)}")
-            return JsonResponse({
-                'error': f'Failed to create container: {str(e)}',
-                'container_info': container_info,
-                'detailed_logs': detailed_logger.get_logs(),
-                'file_list': [],
-            }, status=500)
+            logger.error(f"Failed to create container: {str(e)}", exc_info=True)
+            return JsonResponse({'error': f'Failed to create container: {str(e)}', 'container_info': container_info},
+                                status=500)
 
         try:
-            build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
+            files_added = update_code_internal(container, code, user_id, file_name, main_file_path)
+            container_info['files_added'] = files_added
+            logger.info(f"Code updated in container {container_name}")
             container_info['build_status'] = 'updated'
-            file_structure = get_container_file_structure(container)
-
-            port_mapping = container.ports.get('3001/tcp')
-            if port_mapping:
-                dynamic_url = f"https://{host_port}.{HOST_URL}"
-                detailed_logger.log('info', f"Container {container_name} running successfully: {dynamic_url}")
-                return JsonResponse({
-                    'status': 'success',
-                    'message': 'Container is running',
-                    'container_id': container.id,
-                    'url': dynamic_url,
-                    'can_deploy': True,
-                    'container_info': container_info,
-                    'build_output': build_output,
-                    'detailed_logs': detailed_logger.get_logs(),
-                    'file_list': file_structure,
-                    'file_structure': file_structure,
-                })
-            else:
-                detailed_logger.log('error', f"Failed to get port mapping for container {container_name}")
-                return JsonResponse({
-                    'error': 'Failed to get port mapping',
-                    'container_info': container_info,
-                    'detailed_logs': detailed_logger.get_logs(),
-                    'file_list': file_structure,
-                }, status=500)
         except Exception as e:
-            logger.error('error', f"Failed to update code in container: {str(e)}", exc_info=True)
+            logger.error(f"Failed to update code in container: {str(e)}", exc_info=True)
+            return JsonResponse(
+                {'error': f'Failed to update code in container: {str(e)}', 'container_info': container_info},
+                status=500)
+
+        container.reload()
+        port_mapping = container.ports.get('3001/tcp')
+        if port_mapping:
+            dynamic_url = f"https://{host_port}.{HOST_URL}"
+            logger.info(f"Container {container_name} running successfully: {dynamic_url}")
             return JsonResponse({
-                'error': f'Failed to update code in container: {str(e)}',
-                'container_info': container_info,
-                'detailed_logs': detailed_logger.get_logs(),
-                'file_list': [],
-            }, status=500)
+                'status': 'success',
+                'message': 'Container is running',
+                'container_id': container.id,
+                'url': dynamic_url,
+                'can_deploy': True,
+                'container_info': container_info
+            })
+        else:
+            logger.error(f"Failed to get port mapping for container {container_name}")
+            return JsonResponse({'error': 'Failed to get port mapping', 'container_info': container_info}, status=500)
 
-    except Exception as e:
-        logger.error('error', f"Unexpected error: {str(e)}", exc_info=True)
-        return JsonResponse({
-            'error': f'Unexpected error: {str(e)}',
-            'container_info': container_info if 'container_info' in locals() else None,
-            'detailed_logs': detailed_logger.get_logs(),
-            'file_list': detailed_logger.get_file_list(),
-        }, status=500)
 
-def get_container_file_structure(container):
-    exec_result = container.exec_run("find /app -type f -printf '%P\\t%s\\t%T@\\n'")
-    if exec_result.exit_code == 0:
-        files = []
-        for line in exec_result.output.decode().strip().split('\n'):
-            if line:  # Ensure we're not processing empty lines
-                path, size, timestamp = line.split('\t')
-                files.append({
-                    'path': path,
-                    'size': int(size),
-                    'created_at': datetime.fromtimestamp(float(timestamp)).isoformat()
-                })
-        detailed_logger.log('info files', files)
-        return files
-    return []
 
 @api_view(['POST'])
 def stop_container(request):

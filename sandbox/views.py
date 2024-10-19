@@ -398,7 +398,7 @@ def check_or_create_container(request):
             build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
             container_info['build_status'] = 'updated'
             file_structure = []
-            # file_structure = get_container_file_structure(container)
+            file_structure = get_container_file_structure(container)
 
             detailed_logger.log('warning', f"File structure: {file_structure}, \nbuild output {build_output}")
             container_info['file_structure'] = file_structure
@@ -463,14 +463,21 @@ def get_container_file_structure(container):
         files = []
         for line in exec_result.output.decode().strip().split('\n'):
             if line:  # Skip empty lines
-                path, size, timestamp, type = line.split('\t')
-                files.append({
-                    'path': path,
-                    'size': int(size) if type == 'f' else None,  # Size for files only
-                    'created_at': datetime.fromtimestamp(float(timestamp)).isoformat(),
-                    'type': 'file' if type == 'f' else 'folder'
-                })
+                try:
+                    path_size, timestamp, type = line.split('\t')
+                    path, size = path_size.rsplit('\t', 1)  # Split from the right side once
+                    files.append({
+                        'path': path,
+                        'size': int(size) if type == 'f' else None,  # Size for files only
+                        'created_at': datetime.fromtimestamp(float(timestamp)).isoformat(),
+                        'type': 'file' if type == 'f' else 'folder'
+                    })
+                except ValueError as e:
+                    logger.error(f"Error processing line: {line}. Error: {str(e)}")
         return files
+    else:
+        logger.error(f"Error executing find command. Exit code: {exec_result.exit_code}")
+        logger.error(f"Error output: {exec_result.output.decode()}")
     return []
 
 @api_view(['POST'])

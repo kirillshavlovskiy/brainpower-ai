@@ -155,6 +155,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
 
         # Build the project
         exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"], stream=True)
+        logger.info(f"///Execution result: {exec_result}")
         for line in exec_result.output:
             if isinstance(line, bytes):
                 decoded_line = line.decode().strip()

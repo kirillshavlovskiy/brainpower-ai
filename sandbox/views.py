@@ -331,7 +331,7 @@ def check_or_create_container(request):
         try:
             build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
             file_structure = get_container_file_structure(container)
-
+            container_info['file_structure'] = file_structure
             return JsonResponse({
                 'status': 'success',
                 'container_id': container.id,
@@ -339,7 +339,7 @@ def check_or_create_container(request):
                 'container_info': container_info,
                 'build_output': build_output,
                 'detailed_logs': detailed_logger.get_logs(),
-                'file_list': file_structure,
+                'file_list': detailed_logger.get_file_list(),
             })
         except Exception as update_error:
             detailed_logger.log('error', f"Failed to update code: {str(update_error)}")
@@ -348,7 +348,7 @@ def check_or_create_container(request):
                 'message': str(update_error),
                 'build_output': getattr(update_error, 'build_output', None),
                 'detailed_logs': detailed_logger.get_logs(),
-                'file_list': [],
+                'file_list': detailed_logger.get_file_list(),
             }, status=500)
 
     except docker.errors.NotFound:
@@ -390,13 +390,14 @@ def check_or_create_container(request):
                 'error': f'Failed to create container: {str(e)}',
                 'container_info': container_info,
                 'detailed_logs': detailed_logger.get_logs(),
-                'file_list': [],
+                'file_list': detailed_logger.get_file_list(),
             }, status=500)
 
         try:
             build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
             container_info['build_status'] = 'updated'
             file_structure = get_container_file_structure(container)
+            container_info['file_structure'] = file_structure
 
             # Get the list of files in the new container
             exec_result = container.exec_run("find /app -type f -printf '%P\\t%s\\t%T@\\n'")
@@ -423,7 +424,7 @@ def check_or_create_container(request):
                     'container_info': container_info,
                     'build_output': build_output,
                     'detailed_logs': detailed_logger.get_logs(),
-                    'file_list': file_structure,
+
                 })
             else:
                 detailed_logger.log('error', f"Failed to get port mapping for container {container_name}")
@@ -431,7 +432,7 @@ def check_or_create_container(request):
                     'error': 'Failed to get port mapping',
                     'container_info': container_info,
                     'detailed_logs': detailed_logger.get_logs(),
-                    'file_list': file_structure,
+                    'file_list': detailed_logger.get_file_list(),
                 }, status=500)
         except Exception as e:
             detailed_logger.log('error', f"Failed to update code in container: {str(e)}")
@@ -439,7 +440,7 @@ def check_or_create_container(request):
                 'error': f'Failed to update code in container: {str(e)}',
                 'container_info': container_info,
                 'detailed_logs': detailed_logger.get_logs(),
-                'file_list': [],
+                'file_list': detailed_logger.get_file_list(),
             }, status=500)
 
     except Exception as e:

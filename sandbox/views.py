@@ -90,89 +90,102 @@ def check_container(request):
 
 
 def update_code_internal(container, code, user, file_name, main_file_path):
+    max_attempts = 5
+    delay = 2  # seconds
     files_added = []
-    build_output= []
-    try:
-        # Update component.js
-        encoded_code = base64.b64encode(code.encode()).decode()
-        max_attempts = 3
-        for attempt in range(max_attempts):
-            try:
-                exec_result = container.exec_run([
-                    "sh", "-c",
-                    f"echo {encoded_code} | base64 -d > /app/src/component.js"
-                ])
-                if exec_result.exit_code != 0:
-                    raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
-                files_added.append('/app/src/component.js')
-                break
-            except docker.errors.APIError as e:
-                if attempt == max_attempts - 1:
-                    raise
-                logger.warning(f"API error on attempt {attempt + 1}, retrying: {str(e)}")
-                time.sleep(1)
+    build_output = []
 
-        logger.info(f"Updated component.js in container with content from {file_name} at path {main_file_path}")
-        logger.info(f"Processing for user: {user}")
+    for attempt in range(max_attempts):
+        try:
+            # Update component.js
+            encoded_code = base64.b64encode(code.encode()).decode()
+            exec_result = container.exec_run([
+                "sh", "-c",
+                f"echo {encoded_code} | base64 -d > /app/src/component.js"
+            ])
+            if exec_result.exit_code != 0:
+                raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
+            files_added.append('/app/src/component.js')
 
-        # Get the directory of the main file
-        base_path = os.path.dirname(main_file_path)
-        logger.info(f"Base path derived from main file: {base_path}")
+            logger.info(f"Updated component.js in container with content from {file_name} at path {main_file_path}")
+            logger.info(f"Processing for user: {user}")
 
-        # Handle all imports (CSS, JS, TS, JSON, etc.)
-        import_pattern = r"import\s+(?:(?:{\s*[\w\s,]+\s*})|(?:[\w]+)|\*\s+as\s+[\w]+)\s+from\s+['\"](.+?)['\"]|import\s+['\"](.+?)['\"]"
-        imports = re.findall(import_pattern, code)
+            # Get the directory of the main file
+            base_path = os.path.dirname(main_file_path)
+            logger.info(f"Base path derived from main file: {base_path}")
 
-        for import_match in imports:
-            import_path = import_match[0] or import_match[1]  # Get the non-empty group
-            if import_path:
-                logger.info(f"Attempting to retrieve content for imported file: {import_path}")
-                file_content = FileStructureConsumer.get_file_content_for_container(user, import_path, base_path)
-                if file_content is not None:
-                    logger.info(f"Retrieved content for file: {import_path}")
-                    encoded_content = base64.b64encode(file_content.encode()).decode()
-                    container_path = f"/app/src/{import_path}"
-                    exec_result = container.exec_run([
-                        "sh", "-c",
-                        f"mkdir -p $(dirname {container_path}) && echo {encoded_content} | base64 -d > {container_path}"
-                    ])
-                    if exec_result.exit_code != 0:
-                        raise Exception(f"Failed to update {import_path} in container: {exec_result.output.decode()}")
-                    logger.info(f"Updated {import_path} in container")
-                    files_added.append(container_path)
-                else:
-                    logger.warning(f"File {import_path} not found or empty. Creating empty file in container.")
-                    container_path = f"/app/src/{import_path}"
-                    exec_result = container.exec_run([
-                        "sh", "-c",
-                        f"mkdir -p $(dirname {container_path}) && touch {container_path}"
-                    ])
-                    if exec_result.exit_code != 0:
-                        logger.error(
-                            f"Failed to create empty file {import_path} in container: {exec_result.output.decode()}")
-                    else:
-                        logger.info(f"Created empty file {import_path} in container")
+            # Handle all imports (CSS, JS, TS, JSON, etc.)
+            import_pattern = r"import\s+(?:(?:{\s*[\w\s,]+\s*})|(?:[\w]+)|\*\s+as\s+[\w]+)\s+from\s+['\"](.+?)['\"]|import\s+['\"](.+?)['\"]"
+            imports = re.findall(import_pattern, code)
+
+            for import_match in imports:
+                import_path = import_match[0] or import_match[1]  # Get the non-empty group
+                if import_path:
+                    logger.info(f"Attempting to retrieve content for imported file: {import_path}")
+                    file_content = FileStructureConsumer.get_file_content_for_container(user, import_path, base_path)
+                    if file_content is not None:
+                        logger.info(f"Retrieved content for file: {import_path}")
+                        encoded_content = base64.b64encode(file_content.encode()).decode()
+                        container_path = f"/app/src/{import_path}"
+                        exec_result = container.exec_run([
+                            "sh", "-c",
+                            f"mkdir -p $(dirname {container_path}) && echo {encoded_content} | base64 -d > {container_path}"
+                        ])
+                        if exec_result.exit_code != 0:
+                            raise Exception(f"Failed to update {import_path} in container: {exec_result.output.decode()}")
+                        logger.info(f"Updated {import_path} in container")
                         files_added.append(container_path)
+                    else:
+                        logger.warning(f"File {import_path} not found or empty. Creating empty file in container.")
+                        container_path = f"/app/src/{import_path}"
+                        exec_result = container.exec_run([
+                            "sh", "-c",
+                            f"mkdir -p $(dirname {container_path}) && touch {container_path}"
+                        ])
+                        if exec_result.exit_code != 0:
+                            logger.error(
+                                f"Failed to create empty file {import_path} in container: {exec_result.output.decode()}")
+                        else:
+                            logger.info(f"Created empty file {import_path} in container")
+                            files_added.append(container_path)
 
-        # Build the project
-        exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"], stream=True)
-        for line in exec_result.output:
-            if isinstance(line, bytes):
-                decoded_line = line.decode().strip()
+            # Wait for the container to be in the "running" state
+            max_wait = 30  # seconds
+            start_time = time.time()
+            while container.status != "running":
+                if time.time() - start_time > max_wait:
+                    raise Exception("Container failed to enter running state in time")
+                time.sleep(1)
+                container.reload()
+
+            # Build the project
+            logger.info("Starting to build the project")
+            exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"], stream=True)
+            for line in exec_result.output:
+                decoded_line = line.decode().strip() if isinstance(line, bytes) else str(line).strip()
+                logger.info(f"Build output: {decoded_line}")
+                build_output.append(decoded_line)
+                if "Compiled successfully" in decoded_line or "Compiled with warnings" in decoded_line:
+                    logger.info("Build completed successfully")
+                    return "\n".join(build_output), files_added
+
+            logger.error("Build process did not complete successfully")
+            if attempt < max_attempts - 1:
+                logger.info(f"Retrying... Attempt {attempt + 2} of {max_attempts}")
+                time.sleep(delay)
             else:
-                decoded_line = str(line).strip()
-            build_output.append(decoded_line)
-            if "Compiled successfully" in decoded_line or "Compiled with warnings" in decoded_line:
                 return "\n".join(build_output), files_added
 
-        # If we reach here, it means we didn't find a success message
-        # But this doesn't necessarily mean it failed
-        return "\n".join(build_output), files_added
+        except Exception as e:
+            logger.error(f"Attempt {attempt + 1} failed: {str(e)}")
+            if attempt < max_attempts - 1:
+                logger.info(f"Retrying... Attempt {attempt + 2} of {max_attempts}")
+                time.sleep(delay)
+            else:
+                logger.error(f"All attempts failed. Last error: {str(e)}")
+                raise
 
-    except Exception as e:
-        logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
-        raise
-
+    raise Exception("Failed to update code after multiple attempts")
 
 @api_view(['GET'])
 def check_container_ready(request):

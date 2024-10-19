@@ -455,16 +455,18 @@ def check_or_create_container(request):
         }, status=500)
 
 def get_container_file_structure(container):
-    exec_result = container.exec_run("find /app -type f -printf '%P\\t%s\\t%T@\\n'")
+    exec_result = container.exec_run("find /app/src -printf '%P\\t%s\\t%T@\\t%y\\n'")
     if exec_result.exit_code == 0:
         files = []
         for line in exec_result.output.decode().strip().split('\n'):
-            path, size, timestamp = line.split('\t')
-            files.append({
-                'path': path,
-                'size': int(size),
-                'created_at': datetime.fromtimestamp(float(timestamp)).isoformat()
-            })
+            if line:  # Skip empty lines
+                path, size, timestamp, type = line.split('\t')
+                files.append({
+                    'path': path,
+                    'size': int(size) if type == 'f' else None,  # Size for files only
+                    'created_at': datetime.fromtimestamp(float(timestamp)).isoformat(),
+                    'type': 'file' if type == 'f' else 'folder'
+                })
         return files
     return []
 

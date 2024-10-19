@@ -67,7 +67,7 @@ def check_container(request):
 
     try:
         container = client.containers.get(container_name)
-        container.reload()
+        # container.reload()
 
         if container.status == 'running':
             port_mapping = container.ports.get('3001/tcp')
@@ -76,7 +76,8 @@ def check_container(request):
                 return JsonResponse({
                     'status': 'ready',
                     'container_id': container.id,
-                    'url': f"https://{host_port}.{HOST_URL}"
+                    'url': f"https://{host_port}.{HOST_URL}",
+                    'container_name': container.name
                 })
             else:
                 return JsonResponse({'status': 'not_ready', 'container_id': container.id})
@@ -330,6 +331,7 @@ def check_or_create_container(request):
 
         try:
             build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
+            file_structure = get_container_file_structure(container)
 
             return JsonResponse({
                 'status': 'success',
@@ -338,7 +340,7 @@ def check_or_create_container(request):
                 'container_info': container_info,
                 'build_output': build_output,
                 'detailed_logs': detailed_logger.get_logs(),
-                'file_list': detailed_logger.get_file_list(),
+                'file_list': file_structure,
             })
         except Exception as update_error:
             detailed_logger.log('error', f"Failed to update code: {str(update_error)}")
@@ -347,7 +349,7 @@ def check_or_create_container(request):
                 'message': str(update_error),
                 'build_output': getattr(update_error, 'build_output', None),
                 'detailed_logs': detailed_logger.get_logs(),
-                'file_list': detailed_logger.get_file_list(),
+                'file_list': [],
             }, status=500)
 
     except docker.errors.NotFound:
@@ -389,14 +391,13 @@ def check_or_create_container(request):
                 'error': f'Failed to create container: {str(e)}',
                 'container_info': container_info,
                 'detailed_logs': detailed_logger.get_logs(),
-                'file_list': detailed_logger.get_file_list(),
+                'file_list': [],
             }, status=500)
 
         try:
             build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
             container_info['build_status'] = 'updated'
             file_structure = get_container_file_structure(container)
-            container_info['file_structure'] = file_structure
 
             # Get the list of files in the new container
             exec_result = container.exec_run("find /app -type f -printf '%P\\t%s\\t%T@\\n'")
@@ -423,7 +424,7 @@ def check_or_create_container(request):
                     'container_info': container_info,
                     'build_output': build_output,
                     'detailed_logs': detailed_logger.get_logs(),
-
+                    'file_list': file_structure,
                 })
             else:
                 detailed_logger.log('error', f"Failed to get port mapping for container {container_name}")
@@ -431,7 +432,7 @@ def check_or_create_container(request):
                     'error': 'Failed to get port mapping',
                     'container_info': container_info,
                     'detailed_logs': detailed_logger.get_logs(),
-                    'file_list': detailed_logger.get_file_list(),
+                    'file_list': file_structure,
                 }, status=500)
         except Exception as e:
             detailed_logger.log('error', f"Failed to update code in container: {str(e)}")
@@ -439,7 +440,7 @@ def check_or_create_container(request):
                 'error': f'Failed to update code in container: {str(e)}',
                 'container_info': container_info,
                 'detailed_logs': detailed_logger.get_logs(),
-                'file_list': detailed_logger.get_file_list(),
+                'file_list': [],
             }, status=500)
 
     except Exception as e:
@@ -451,7 +452,19 @@ def check_or_create_container(request):
             'file_list': detailed_logger.get_file_list(),
         }, status=500)
 
-
+def get_container_file_structure(container):
+    exec_result = container.exec_run("find /app -type f -printf '%P\\t%s\\t%T@\\n'")
+    if exec_result.exit_code == 0:
+        files = []
+        for line in exec_result.output.decode().strip().split('\n'):
+            path, size, timestamp = line.split('\t')
+            files.append({
+                'path': path,
+                'size': int(size),
+                'created_at': datetime.fromtimestamp(float(timestamp)).isoformat()
+            })
+        return files
+    return []
 
 @api_view(['POST'])
 def stop_container(request):

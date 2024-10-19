@@ -342,6 +342,7 @@ def check_or_create_container(request):
                 'detailed_logs': detailed_logger.get_logs(),
                 'file_list': file_structure,
             })
+
         except Exception as update_error:
             detailed_logger.log('error', f"Failed to update code: {str(update_error)}")
             return JsonResponse({
@@ -399,18 +400,6 @@ def check_or_create_container(request):
             container_info['build_status'] = 'updated'
             file_structure = get_container_file_structure(container)
 
-            # Get the list of files in the new container
-            exec_result = container.exec_run("find /app -type f -printf '%P\\t%s\\t%T@\\n'")
-            if exec_result.exit_code == 0:
-                files_info = exec_result.output.decode().strip().split('\n')
-                for file_info in files_info:
-                    path, size, timestamp = file_info.split('\t')
-                    creation_date = datetime.fromtimestamp(float(timestamp)).isoformat()
-                    detailed_logger.add_file(path, int(size), creation_date)
-            else:
-                detailed_logger.log('warning', "Unable to retrieve file list for new container")
-
-            container.reload()
             port_mapping = container.ports.get('3001/tcp')
             if port_mapping:
                 dynamic_url = f"https://{host_port}.{HOST_URL}"
@@ -436,7 +425,7 @@ def check_or_create_container(request):
                     'file_list': file_structure,
                 }, status=500)
         except Exception as e:
-            detailed_logger.log('error', f"Failed to update code in container: {str(e)}")
+            logger.error('error', f"Failed to update code in container: {str(e)}", exc_info=True)
             return JsonResponse({
                 'error': f'Failed to update code in container: {str(e)}',
                 'container_info': container_info,
@@ -445,7 +434,7 @@ def check_or_create_container(request):
             }, status=500)
 
     except Exception as e:
-        detailed_logger.log('error', f"Unexpected error: {str(e)}")
+        logger.error('error', f"Unexpected error: {str(e)}", exc_info=True)
         return JsonResponse({
             'error': f'Unexpected error: {str(e)}',
             'container_info': container_info if 'container_info' in locals() else None,

@@ -85,7 +85,7 @@ class AsyncChatConsumer(AsyncWebsocketConsumer):
     async def receive(self, text_data):
         text_data_json = json.loads(text_data)
         content = text_data_json['message']
-        logger.info(f">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> {text_data_json['image']}")
+
         input_data = {
             "messages": [{"role": "user", "content": content}],
             "context": text_data_json['code'],
@@ -94,7 +94,7 @@ class AsyncChatConsumer(AsyncWebsocketConsumer):
             'thread_id': text_data_json.get('threadId', 'default123'),
             "image_data": text_data_json['image']
         }
-
+        logger.info(f">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> {text_data_json['code']}")
         asyncio.create_task(self.process_query(input_data))
 
     async def process_query(self, input_data):

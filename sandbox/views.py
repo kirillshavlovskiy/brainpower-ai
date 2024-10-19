@@ -330,6 +330,7 @@ def check_or_create_container(request):
 
         try:
             build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
+
             return JsonResponse({
                 'status': 'success',
                 'container_id': container.id,
@@ -394,6 +395,8 @@ def check_or_create_container(request):
         try:
             build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
             container_info['build_status'] = 'updated'
+            file_structure = get_container_file_structure(container)
+            container_info['file_structure'] = file_structure
 
             # Get the list of files in the new container
             exec_result = container.exec_run("find /app -type f -printf '%P\\t%s\\t%T@\\n'")
@@ -420,7 +423,7 @@ def check_or_create_container(request):
                     'container_info': container_info,
                     'build_output': build_output,
                     'detailed_logs': detailed_logger.get_logs(),
-                    'file_list': detailed_logger.get_file_list(),
+
                 })
             else:
                 detailed_logger.log('error', f"Failed to get port mapping for container {container_name}")
@@ -448,7 +451,19 @@ def check_or_create_container(request):
             'file_list': detailed_logger.get_file_list(),
         }, status=500)
 
-
+def get_container_file_structure(container):
+    exec_result = container.exec_run("find /app -type f -printf '%P\\t%s\\t%T@\\n'")
+    if exec_result.exit_code == 0:
+        files = []
+        for line in exec_result.output.decode().strip().split('\n'):
+            path, size, timestamp = line.split('\t')
+            files.append({
+                'path': path,
+                'size': int(size),
+                'created_at': datetime.fromtimestamp(float(timestamp)).isoformat()
+            })
+        return files
+    return []
 
 @api_view(['POST'])
 def stop_container(request):

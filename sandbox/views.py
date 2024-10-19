@@ -397,7 +397,9 @@ def check_or_create_container(request):
         try:
             build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
             container_info['build_status'] = 'updated'
-            file_structure = get_container_file_structure(container)
+            file_structure = []
+            # file_structure = get_container_file_structure(container)
+
             detailed_logger.log('warning', f"File structure: {file_structure}, \nbuild output {build_output}")
             container_info['file_structure'] = file_structure
 

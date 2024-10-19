@@ -311,16 +311,16 @@ def check_or_create_container(request):
             'id': container.id
         }
 
-        # Get the list of files in the /app directory
-        exec_result = container.exec_run("find /app -type f -printf '%P\\t%s\\t%T@\\n'")
-        if exec_result.exit_code == 0:
-            files_info = exec_result.output.decode().strip().split('\n')
-            for file_info in files_info:
-                path, size, timestamp = file_info.split('\t')
-                creation_date = datetime.fromtimestamp(float(timestamp)).isoformat()
-                detailed_logger.add_file(path, int(size), creation_date)
-        else:
-            detailed_logger.log('warning', "Unable to retrieve file list")
+        # # Get the list of files in the /app directory
+        # exec_result = container.exec_run("find /app -type f -printf '%P\\t%s\\t%T@\\n'")
+        # if exec_result.exit_code == 0:
+        #     files_info = exec_result.output.decode().strip().split('\n')
+        #     for file_info in files_info:
+        #         path, size, timestamp = file_info.split('\t')
+        #         creation_date = datetime.fromtimestamp(float(timestamp)).isoformat()
+        #         detailed_logger.add_file(path, int(size), creation_date)
+        # else:
+        #     detailed_logger.log('warning', "Unable to retrieve file list")
 
         # Get the host port
         port_bindings = container.attrs['NetworkSettings']['Ports']

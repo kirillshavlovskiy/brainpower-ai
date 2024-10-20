@@ -348,7 +348,7 @@ def check_or_create_container(request):
 
         try:
             # Check for non-standard imports
-            non_standard_imports = check_imports(code)
+            non_standard_imports = check_local_imports(code)
             if non_standard_imports:
                 install_packages(container, non_standard_imports)
 
@@ -421,7 +421,7 @@ def check_or_create_container(request):
 
         try:
             # Check for non-standard imports
-            non_standard_imports = check_imports(code)
+            non_standard_imports = check_local_imports(code)
             if non_standard_imports:
                 install_packages(container, non_standard_imports)
             # Check for local imports
@@ -489,22 +489,45 @@ def check_or_create_container(request):
             'file_list': detailed_logger.get_file_list(),
         }, status=500)
 
-def install_packages(container, packages):
+def install_packages(container, packages, websocket):
     for package in packages:
         try:
-            container.exec_run(f"npm install {package}")
-            detailed_logger.log('info', f"Installed package: {package}")
+            await websocket.send_json({
+                'type': 'progress',
+                'message': f"Installing package: {package}"
+            })
+            result = container.exec_run(f"npm install {package}")
+            if result.exit_code == 0:
+                detailed_logger.log('info', f"Installed package: {package}")
+                await websocket.send_json({
+                    'type': 'progress',
+                    'message': f"Successfully installed package: {package}"
+                })
+            else:
+                detailed_logger.log('error', f"Failed to install package {package}: {result.output.decode()}")
+                await websocket.send_json({
+                    'type': 'progress',
+                    'message': f"Failed to install package: {package}"
+                })
         except Exception as e:
-            detailed_logger.log('error', f"Failed to install package {package}: {str(e)}")
+            detailed_logger.log('error', f"Error installing package {package}: {str(e)}")
+            await websocket.send_json({
+                'type': 'progress',
+                'message': f"Error installing package: {package}"
+            })
 
 def check_local_imports(container, code):
     local_import_pattern = r'from\s+[\'"]\.\/(\w+)[\'"]'
     local_imports = re.findall(local_import_pattern, code)
+    missing_imports = []
 
     for imp in local_imports:
         check_file = container.exec_run(f"[ -f /app/src/{imp}.js ] || [ -f /app/src/{imp}.ts ] && echo 'exists' || echo 'not found'")
         if check_file.output.decode().strip() == 'not found':
             detailed_logger.log('warning', f"Local import {imp} not found as .js or .ts file")
+            missing_imports.append(imp)
+
+    return missing_imports
 
 def get_container_file_structure(container):
     exec_result = container.exec_run("find /app/src -printf '%P\\t%s\\t%T@\\t%y\\n'")

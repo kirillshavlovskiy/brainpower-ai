@@ -347,6 +347,13 @@ def check_or_create_container(request):
             host_port = port_bindings['3001/tcp'][0]['HostPort']
 
         try:
+            # Check for non-standard imports
+            non_standard_imports = check_imports(code)
+            if non_standard_imports:
+                install_packages(container, non_standard_imports)
+
+            # Check for local imports
+            check_local_imports(container, code)
             build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
             datailed_logs = container.logs(tail=200).decode('utf-8')  # Get last 200 lines of logs
             file_structure = get_container_file_structure(container)
@@ -413,6 +420,12 @@ def check_or_create_container(request):
             }, status=500)
 
         try:
+            # Check for non-standard imports
+            non_standard_imports = check_imports(code)
+            if non_standard_imports:
+                install_packages(container, non_standard_imports)
+            # Check for local imports
+            check_local_imports(container, code)
             build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
             container_info['build_status'] = 'updated'
 
@@ -475,6 +488,23 @@ def check_or_create_container(request):
             'detailed_logs': detailed_logger.get_logs(),
             'file_list': detailed_logger.get_file_list(),
         }, status=500)
+
+def install_packages(container, packages):
+    for package in packages:
+        try:
+            container.exec_run(f"npm install {package}")
+            detailed_logger.log('info', f"Installed package: {package}")
+        except Exception as e:
+            detailed_logger.log('error', f"Failed to install package {package}: {str(e)}")
+
+def check_local_imports(container, code):
+    local_import_pattern = r'from\s+[\'"]\.\/(\w+)[\'"]'
+    local_imports = re.findall(local_import_pattern, code)
+
+    for imp in local_imports:
+        check_file = container.exec_run(f"[ -f /app/src/{imp}.js ] || [ -f /app/src/{imp}.ts ] && echo 'exists' || echo 'not found'")
+        if check_file.output.decode().strip() == 'not found':
+            detailed_logger.log('warning', f"Local import {imp} not found as .js or .ts file")
 
 def get_container_file_structure(container):
     exec_result = container.exec_run("find /app/src -printf '%P\\t%s\\t%T@\\t%y\\n'")

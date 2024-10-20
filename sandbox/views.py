@@ -348,7 +348,8 @@ def check_or_create_container(request):
 
         try:
             build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
-            # file_structure = get_container_file_structure(container)
+            datailed_logs = container.logs(tail=200).decode('utf-8')  # Get last 200 lines of logs
+            file_structure = get_container_file_structure(container)
             # container_info['file_structure'] = file_structure
             return JsonResponse({
                 'status': 'success',
@@ -356,7 +357,7 @@ def check_or_create_container(request):
                 'url': f"https://{host_port}.{HOST_URL}" if host_port else None,
                 'container_info': container_info,
                 'build_output': build_output,
-                'detailed_logs': detailed_logger.get_logs(),
+                'detailed_logs': datailed_logs,
                 'file_list': file_structure,
             })
         except Exception as update_error:
@@ -365,7 +366,7 @@ def check_or_create_container(request):
                 'status': 'error',
                 'message': str(update_error),
                 'build_output': getattr(update_error, 'build_output', None),
-                'detailed_logs': detailed_logger.get_logs(),
+                'detailed_logs': datailed_logs,
                 'file_list': file_structure,
             }, status=500)
 
@@ -415,7 +416,8 @@ def check_or_create_container(request):
             build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
             container_info['build_status'] = 'updated'
 
-            # file_structure = get_container_file_structure(container)
+            file_structure = get_container_file_structure(container)
+            datailed_logs = container.logs(tail=200).decode('utf-8')  # Get last 200 lines of logs
             print(file_structure)
             detailed_logger.log('warning', f"File structure: {file_structure}, \nbuild output {build_output}")
             container_info['file_structure'] = file_structure
@@ -445,7 +447,7 @@ def check_or_create_container(request):
                     'can_deploy': True,
                     'container_info': container_info,
                     'build_output': build_output,
-                    'detailed_logs': detailed_logger.get_logs(),
+                    'detailed_logs': datailed_logs,
                     'file_list': file_structure,
                 })
             else:
@@ -453,7 +455,7 @@ def check_or_create_container(request):
                 return JsonResponse({
                     'error': 'Failed to get port mapping',
                     'container_info': container_info,
-                    'detailed_logs': detailed_logger.get_logs(),
+                    'detailed_logs': datailed_logs,
                     'file_list': file_structure,
                 }, status=500)
         except Exception as e:
@@ -461,7 +463,7 @@ def check_or_create_container(request):
             return JsonResponse({
                 'error': f'Failed to update code in container: {str(e)}',
                 'container_info': container_info,
-                'detailed_logs': detailed_logger.get_logs(),
+                'detailed_logs': datailed_logs,
                 'file_list': file_structure(),
             }, status=500)
 

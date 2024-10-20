@@ -364,7 +364,7 @@ def check_or_create_container(request):
                 'url': f"https://{host_port}.{HOST_URL}" if host_port else None,
                 'container_info': container_info,
                 'build_output': build_output,
-                'detailed_logs': datailed_logs,
+                'detailed_logs': detailed_logger.get_logs(),
                 'file_list': file_structure,
             })
         except Exception as update_error:
@@ -373,7 +373,7 @@ def check_or_create_container(request):
                 'status': 'error',
                 'message': str(update_error),
                 'build_output': getattr(update_error, 'build_output', None),
-                'detailed_logs': datailed_logs,
+                'detailed_logs': detailed_logger.get_logs(),
                 'file_list': file_structure,
             }, status=500)
 
@@ -460,7 +460,7 @@ def check_or_create_container(request):
                     'can_deploy': True,
                     'container_info': container_info,
                     'build_output': build_output,
-                    'detailed_logs': datailed_logs,
+                    'detailed_logs': detailed_logger.get_logs(),
                     'file_list': file_structure,
                 })
             else:
@@ -468,7 +468,7 @@ def check_or_create_container(request):
                 return JsonResponse({
                     'error': 'Failed to get port mapping',
                     'container_info': container_info,
-                    'detailed_logs': datailed_logs,
+                    'detailed_logs': detailed_logger.get_logs(),
                     'file_list': file_structure,
                 }, status=500)
         except Exception as e:
@@ -476,7 +476,7 @@ def check_or_create_container(request):
             return JsonResponse({
                 'error': f'Failed to update code in container: {str(e)}',
                 'container_info': container_info,
-                'detailed_logs': datailed_logs,
+                'detailed_logs': detailed_logger.get_logs(),
                 'file_list': file_structure(),
             }, status=500)
 
@@ -489,46 +489,23 @@ def check_or_create_container(request):
             'file_list': detailed_logger.get_file_list(),
         }, status=500)
 
-def install_packages(container, packages, websocket):
+def install_packages(container, packages):
     for package in packages:
         try:
-            await websocket.send_json({
-                'type': 'progress',
-                'message': f"Installing package: {package}"
-            })
-            result = container.exec_run(f"npm install {package}")
-            if result.exit_code == 0:
-                detailed_logger.log('info', f"Installed package: {package}")
-                await websocket.send_json({
-                    'type': 'progress',
-                    'message': f"Successfully installed package: {package}"
-                })
-            else:
-                detailed_logger.log('error', f"Failed to install package {package}: {result.output.decode()}")
-                await websocket.send_json({
-                    'type': 'progress',
-                    'message': f"Failed to install package: {package}"
-                })
+            container.exec_run(f"npm install {package}")
+            detailed_logger.log('info', f"Installed package: {package}")
         except Exception as e:
-            detailed_logger.log('error', f"Error installing package {package}: {str(e)}")
-            await websocket.send_json({
-                'type': 'progress',
-                'message': f"Error installing package: {package}"
-            })
+            detailed_logger.log('error', f"Failed to install package {package}: {str(e)}")
 
 def check_local_imports(container, code):
     local_import_pattern = r'from\s+[\'"]\.\/(\w+)[\'"]'
     local_imports = re.findall(local_import_pattern, code)
-    missing_imports = []
 
     for imp in local_imports:
         check_file = container.exec_run(f"[ -f /app/src/{imp}.js ] || [ -f /app/src/{imp}.ts ] && echo 'exists' || echo 'not found'")
         if check_file.output.decode().strip() == 'not found':
             detailed_logger.log('warning', f"Local import {imp} not found as .js or .ts file")
-            missing_imports.append(imp)
-
-    return missing_imports
-
+            
 def get_container_file_structure(container):
     exec_result = container.exec_run("find /app/src -printf '%P\\t%s\\t%T@\\t%y\\n'")
     logger.info(f"Find command exit code: {exec_result.exit_code}")

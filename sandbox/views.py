@@ -32,6 +32,17 @@ HOST_PORT_RANGE_START = 32768
 HOST_PORT_RANGE_END = 60999
 NGINX_SITES_DYNAMIC = '/etc/nginx/sites-dynamic'
 
+
+class ContainerStatus:
+    CREATING = 'creating'
+    BUILDING = 'building'
+    COMPILING = 'compiling'
+    READY = 'ready'
+    FAILED = 'failed'
+    COMPILATION_FAILED = 'compilation_failed'
+    ERROR = 'error'
+    NOT_FOUND = 'not_found'
+
 class DetailedLogger:
     def __init__(self):
         self.logs = []
@@ -189,72 +200,67 @@ def check_container_ready(request):
     container_id = request.GET.get('container_id')
     user_id = request.GET.get('user_id', 'default')
     file_name = request.GET.get('file_name')
-    logger.info(
-        f"Checking container readiness for container_id: {container_id}, user_id: {user_id}, file_name: {file_name}")
 
     if not container_id:
-        return JsonResponse({'error': 'No container ID provided'}, status=400)
+        return JsonResponse({'status': ContainerStatus.ERROR, 'error': 'No container ID provided'}, status=400)
 
     try:
         container = client.containers.get(container_id)
         container.reload()
-        container_status = container.status
-        logger.info(f"Container status: {container_status}")
 
-        # Get all logs and print them
         all_logs = container.logs(stdout=True, stderr=True).decode('utf-8').strip()
-        logger.info(f"All container logs:\n{all_logs}")
-
-        # Get recent logs
         recent_logs = container.logs(stdout=True, stderr=True, tail=50).decode('utf-8').strip()
         latest_log = recent_logs.split('\n')[-1] if recent_logs else "No recent logs"
 
-        if container_status != 'running':
-            return JsonResponse({'status': 'container_starting', 'log': latest_log})
+        if container.status != 'running':
+            return JsonResponse({'status': ContainerStatus.CREATING, 'log': latest_log})
 
         port_mapping = container.ports.get('3001/tcp')
         if not port_mapping:
-            return JsonResponse({'status': 'waiting_for_port', 'log': latest_log})
+            return JsonResponse({'status': ContainerStatus.BUILDING, 'log': latest_log})
 
         host_port = port_mapping[0]['HostPort']
         dynamic_url = f"https://{host_port}.{HOST_URL}"
 
-        # Check for compilation status
-        if "Compiled successfully!" in all_logs:
+        if "Compiled successfully!" in all_logs or "Compiled with warnings" in all_logs:
             return JsonResponse({
-                'status': 'ready',
+                'status': ContainerStatus.READY,
                 'url': dynamic_url,
-                'log': "Compiled successfully!"
+                'log': "Compiled successfully!",
+                'detailed_logs': all_logs
             })
-        if "Compiled with warnings" in all_logs:
+
+        if "Failed to compile" in all_logs or "Error:" in all_logs:
             return JsonResponse({
-                'status': 'ready',
-                'url': dynamic_url,
-                'log': "Compiled successfully!"
+                'status': ContainerStatus.COMPILATION_FAILED,
+                'log': "Compilation failed. Check the logs for details.",
+                'detailed_logs': all_logs
             })
+
         if "Accepting connections at http://localhost:3001" in all_logs:
             return JsonResponse({
-                'status': 'ready',
+                'status': ContainerStatus.READY,
                 'url': dynamic_url,
-                'log': "Server is ready"
+                'log': "Server is ready",
+                'detailed_logs': all_logs
             })
+
+
         elif "Compiling..." in all_logs:
-            return JsonResponse({'status': 'compiling', 'log': "Compiling..."})
-
+            return JsonResponse({'status': ContainerStatus.COMPILING, 'log': "Compiling..."})
         elif "Creating an optimized production build..." in all_logs:
-            return JsonResponse({'status': 'building', 'log': "Creating an optimized production build..."})
-
+            return JsonResponse(
+                {'status': ContainerStatus.BUILDING, 'log': "Creating an optimized production build..."})
         elif "Starting the development server..." in all_logs:
-            return JsonResponse({'status': 'compiling', 'log': "Starting the development server..."})
+            return JsonResponse({'status': ContainerStatus.COMPILING, 'log': "Starting the development server..."})
         else:
-            return JsonResponse({'status': 'preparing', 'log': latest_log})
+            return JsonResponse({'status': ContainerStatus.BUILDING, 'log': latest_log})
 
     except docker.errors.NotFound:
-        return JsonResponse({'error': 'Container not found', 'log': 'Container not found'}, status=404)
+        return JsonResponse({'status': ContainerStatus.NOT_FOUND, 'log': 'Container not found'}, status=404)
     except Exception as e:
         logger.error(f"Error checking container status: {str(e)}", exc_info=True)
-        return JsonResponse({'error': 'Error checking container status', 'details': str(e), 'log': str(e)}, status=500)
-
+        return JsonResponse({'status': ContainerStatus.ERROR, 'error': str(e), 'log': str(e)}, status=500)
 
 @api_view(['GET'])
 def get_container_logs(request):

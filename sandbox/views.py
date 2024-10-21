@@ -688,7 +688,7 @@ def stop_container(request):
 
 
 
-
+@csrf_exempt
 @api_view(['POST'])
 def update_code(request):
     container_id = request.data.get('container_id')

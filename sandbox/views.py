@@ -36,6 +36,7 @@ NGINX_SITES_DYNAMIC = '/etc/nginx/sites-dynamic'
 
 class ContainerStatus:
     CREATING = 'creating'
+    WARNING = 'warning'
     BUILDING = 'building'
     COMPILING = 'compiling'
     READY = 'ready'

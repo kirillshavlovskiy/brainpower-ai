@@ -106,10 +106,20 @@ def check_container(request):
 
     container_name = f'react_renderer_{user_id}_{file_name}'
 
+
     try:
         container = client.containers.get(container_name)
-        container.reload()
+        # Get the container creation timestamp
 
+        container.reload()
+        container_info = {
+            'container_name': container.name,
+            'created_at': container.attrs['Created'],
+            'status': container.status,
+            'ports': container.ports,
+            'image': container.image.tags[0] if container.image.tags else 'Unknown',
+            'id': container.id
+        }
         if container.status == 'running':
             port_mapping = container.ports.get('3001/tcp')
             file_structure = get_container_file_structure(container)
@@ -123,9 +133,11 @@ def check_container(request):
 
             if port_mapping:
                 host_port = port_mapping[0]['HostPort']
+
                 return JsonResponse({
                     'status': 'ready',
                     'container_id': container.id,
+                    'container_info': container_info,
                     'url': f"https://{host_port}.{HOST_URL}",
                     'file_list': file_structure,
                     'detailed_logs': detailed_logger.get_logs(),

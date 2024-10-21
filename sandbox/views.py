@@ -474,8 +474,9 @@ def check_or_create_container(request):
                 'detailed_logs': detailed_logger.get_logs(),
                 'file_list': file_structure,
                 'installed_packages': installed_packages,
+                'failed_packages': failed_packages,  # New field
                 'files_added': files_added,
-                'missing_local_imports': missing_local_imports
+                'compilation_status': compilation_status,  # New field
             })
         except Exception as update_error:
             detailed_logger.log('error', f"Failed to update code: {str(update_error)}")

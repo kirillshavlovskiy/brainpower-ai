@@ -174,7 +174,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                     else:
                         logger.info(f"Created empty file {import_path} in container")
                         files_added.append(container_path)
-
+        installed_packages = []
         non_standard_imports = check_non_standard_imports(code)
         if non_standard_imports:
             installed_packages = install_packages(container, non_standard_imports)
@@ -193,7 +193,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
 
         # If we reach here, it means we didn't find a success message
         # But this doesn't necessarily mean it failed
-        return "\n".join(build_output), files_added
+        return "\n".join(build_output), files_added, installed_packages
 
     except Exception as e:
         logger.error(f">>>Error updating code in container: {str(e)}", exc_info=True)

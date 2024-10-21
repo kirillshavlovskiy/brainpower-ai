@@ -68,6 +68,20 @@ class DetailedLogger:
         return self.file_list
 detailed_logger = DetailedLogger()
 
+import time
+from docker.errors import NotFound, APIError
+
+def exec_command_with_retry(container, command, max_retries=3, delay=1):
+    for attempt in range(max_retries):
+        try:
+            exec_id = container.exec_create(command)
+            return container.exec_start(exec_id)
+        except (NotFound, APIError) as e:
+            if attempt == max_retries - 1:
+                raise
+            logger.warning(f"Attempt {attempt + 1} failed: {str(e)}. Retrying in {delay} seconds...")
+            time.sleep(delay)
+
 
 @api_view(['GET'])
 def check_container(request):
@@ -98,6 +112,7 @@ def check_container(request):
                     'container_id': container.id,
                     'url': f"https://{host_port}.{HOST_URL}",
                     'file_list': file_structure,
+                    'detailed_logs': detailed_logger.get_logs(),
 
                 })
             else:
@@ -180,20 +195,28 @@ def update_code_internal(container, code, user, file_name, main_file_path):
             installed_packages = install_packages(container, non_standard_imports)
 
         # Build the project
-        exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"], stream=True)
+        exec_result = exec_command_with_retry(container, ["sh", "-c", "cd /app && yarn start"])
         logger.info(f"///Execution result: {exec_result}")
-        for line in exec_result.output:
-            if isinstance(line, bytes):
-                decoded_line = line.decode().strip()
-            else:
-                decoded_line = str(line).strip()
-            build_output.append(decoded_line)
-            if "Compiled successfully" in decoded_line or "Compiled with warnings" in decoded_line:
-                return "\n".join(build_output), files_added, installed_packages
 
-        # If we reach here, it means we didn't find a success message
-        # But this doesn't necessarily mean it failed
-        return "\n".join(build_output), files_added, installed_packages
+        # Process the build output
+        output_lines = exec_result.output.decode().split('\n')
+        build_output = output_lines
+        compilation_status = ContainerStatus.COMPILING
+        for line in output_lines:
+            if "Compiled successfully" in line:
+                compilation_status = ContainerStatus.READY
+                break
+            elif "Compiled with warnings" in line:
+                compilation_status = ContainerStatus.WARNING
+                break
+            elif "Failed to compile" in line:
+                compilation_status = ContainerStatus.COMPILATION_FAILED
+                break
+
+        # Save compilation status to a file in the container
+        exec_command_with_retry(container, ["sh", "-c", f"echo {compilation_status} > /app/compilation_status"])
+
+        return "\n".join(build_output), files_added, compilation_status
 
     except Exception as e:
         logger.error(f">>>Error updating code in container: {str(e)}", exc_info=True)
@@ -420,10 +443,17 @@ def check_or_create_container(request):
 
         try:
 
+            # Check for non-standard imports
+            non_standard_imports = check_non_standard_imports(code)
+            installed_packages = []
+            if non_standard_imports:
+                installed_packages = install_packages(container, non_standard_imports)
+
             # Check for local imports
             missing_local_imports = check_local_imports(container, code)
 
-            build_output, files_added, installed_packages = update_code_internal(container, code, user_id, file_name, main_file_path)
+            build_output, files_added, compilation_status = update_code_internal(container, code, user_id, file_name,
+                                                                                 main_file_path)
             container_info['build_status'] = 'updated'
 
             file_structure = get_container_file_structure(container)
@@ -494,15 +524,10 @@ def install_packages(container, packages):
     return installed_packages
 
 
-import re
-
-
 def check_non_standard_imports(code):
-    # Pattern to match import statements in JavaScript/React
     import_pattern = r'import\s+(?:{\s*[\w\s,]+\s*}|[\w]+|\*\s+as\s+[\w]+)\s+from\s+[\'"](.+?)[\'"]|require\([\'"](.+?)[\'"]\)'
     imports = re.findall(import_pattern, code)
 
-    # List of common built-in or pre-installed packages in a typical React setup
     standard_packages = {
         'react', 'react-dom', 'prop-types', 'react-router', 'react-router-dom',
         'redux', 'react-redux', 'axios', 'lodash', 'moment', 'styled-components'
@@ -515,6 +540,21 @@ def check_non_standard_imports(code):
             non_standard_imports.append(package_name)
 
     return non_standard_imports
+
+
+def install_packages(container, packages):
+    installed_packages = []
+    for package in packages:
+        try:
+            result = exec_command_with_retry(container, ["npm", "install", package])
+            if result.exit_code == 0:
+                installed_packages.append(package)
+                logger.info(f"Installed package: {package}")
+            else:
+                logger.error(f"Failed to install package {package}: {result.output.decode()}")
+        except Exception as e:
+            logger.error(f"Error installing package {package}: {str(e)}")
+    return installed_packages
 
 
 def check_local_imports(container, code):

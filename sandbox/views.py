@@ -126,6 +126,8 @@ def check_container(request):
             check_result = container.exec_run("test -d /app/src && echo 'exists' || echo 'not found'")
             logger.info(f"Check /app/src directory result: {check_result.output.decode().strip()}")
 
+            status = get_compilation_status(container)
+
             if check_result:
                 file_structure = get_container_file_structure(container)
                 logger.info(f"Check /app/src directory result: {check_result.output.decode().strip()}")
@@ -135,7 +137,7 @@ def check_container(request):
                 host_port = port_mapping[0]['HostPort']
 
                 return JsonResponse({
-                    'status': 'ready',
+                    'status': status,
                     'container_id': container.id,
                     'container_info': container_info,
                     'url': f"https://{host_port}.{HOST_URL}",

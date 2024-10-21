@@ -1,4 +1,5 @@
 from datetime import datetime
+import time
 import random
 import traceback
 from socket import socket
@@ -69,6 +70,7 @@ class DetailedLogger:
 detailed_logger = DetailedLogger()
 
 import time
+
 from docker.errors import NotFound, APIError
 
 def exec_command_with_retry(container, command, max_retries=3, delay=1):
@@ -374,7 +376,9 @@ def check_or_create_container(request):
             # Check for local imports
             missing_local_imports = check_local_imports(container, code)
 
-            build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
+            build_output, files_added, compilation_status = update_code_internal(container, code, user_id, file_name,
+                                                                                 main_file_path)
+
             datailed_logs = container.logs(tail=200).decode('utf-8')  # Get last 200 lines of logs
             file_structure = get_container_file_structure(container)
 
@@ -610,8 +614,6 @@ def stop_container(request):
     except Exception as e:
         return JsonResponse({'error': f"Failed to stop container: {str(e)}"}, status=500)
 
-
-import time
 
 
 

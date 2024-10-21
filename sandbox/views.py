@@ -363,6 +363,14 @@ def check_or_create_container(request):
     try:
         container = client.containers.get(container_name)
         detailed_logger.log('info', f"Found existing container: {container.id}")
+
+        # Check if the container is running, if not, start it
+        if container.status != 'running':
+            detailed_logger.log('info', f"Container {container.id} is not running. Attempting to start it.")
+            container.start()
+            container.reload()
+            time.sleep(5)  # Wait for container to fully start
+
         container_info = {
             'container_name': container.name,
             'created_at': datetime.now().isoformat(),

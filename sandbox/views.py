@@ -365,6 +365,7 @@ def check_or_create_container(request):
         host_port = None
         if '3001/tcp' in port_bindings and port_bindings['3001/tcp']:
             host_port = port_bindings['3001/tcp'][0]['HostPort']
+        dynamic_url = f"https://{host_port}.{HOST_URL}"
 
         try:
             # Check for non-standard imports
@@ -384,13 +385,16 @@ def check_or_create_container(request):
 
             return JsonResponse({
                 'status': 'success',
+                'message': 'Container is running',
                 'container_id': container.id,
-                'url': f"https://{host_port}.{HOST_URL}" if host_port else None,
+                'url': dynamic_url,
+                'can_deploy': True,
                 'container_info': container_info,
                 'build_output': build_output,
                 'detailed_logs': detailed_logger.get_logs(),
                 'file_list': file_structure,
                 'installed_packages': installed_packages,
+                'files_added': files_added,
                 'missing_local_imports': missing_local_imports
             })
         except Exception as update_error:

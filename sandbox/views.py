@@ -597,20 +597,40 @@ def check_or_create_container(request):
             'file_list': detailed_logger.get_file_list(),
         }, status=500)
 
+
 def install_packages(container, packages):
     installed_packages = []
+    failed_packages = []
+
+    logger.info(f"Attempting to install packages: {', '.join(packages)}")
+
     for package in packages:
         try:
+            logger.info(f"Installing package: {package}")
             result = exec_command_with_retry(container, ["yarn", "add", package])
+
             if result.exit_code == 0:
                 installed_packages.append(package)
-                logger.info(f"Installed package: {package}")
+                logger.info(f"Successfully installed package: {package}")
             else:
-                logger.error(f"Failed to install package {package}: {result.output.decode()}")
-        except Exception as e:
-            logger.error(f"Error installing package {package}: {str(e)}")
-    return installed_packages
+                error_output = result.output.decode() if hasattr(result, 'output') else "No error output available"
+                logger.error(
+                    f"Failed to install package {package}. Exit code: {result.exit_code}. Error: {error_output}")
+                failed_packages.append(package)
 
+        except APIError as e:
+            logger.error(f"Docker API error while installing {package}: {str(e)}")
+            failed_packages.append(package)
+        except Exception as e:
+            logger.error(f"Unexpected error while installing {package}: {str(e)}", exc_info=True)
+            failed_packages.append(package)
+
+    if installed_packages:
+        logger.info(f"Successfully installed packages: {', '.join(installed_packages)}")
+    if failed_packages:
+        logger.warning(f"Failed to install packages: {', '.join(failed_packages)}")
+
+    return installed_packages, failed_packages
 
 def check_non_standard_imports(code):
     import_pattern = r'import\s+(?:{\s*[\w\s,]+\s*}|[\w]+|\*\s+as\s+[\w]+)\s+from\s+[\'"](.+?)[\'"]|require\([\'"](.+?)[\'"]\)'

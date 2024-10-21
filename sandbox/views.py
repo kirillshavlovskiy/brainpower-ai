@@ -214,7 +214,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         logger.info(f"///Execution result: {exec_result}")
 
         # Process the build output
-        output_lines = exec_result.output.decode().split('\n')
+        output_lines = exec_result.decode().split('\n')
         build_output = output_lines
         compilation_status = ContainerStatus.COMPILING
         for line in output_lines:
@@ -230,6 +230,11 @@ def update_code_internal(container, code, user, file_name, main_file_path):
 
         # Save compilation status to a file in the container
         exec_command_with_retry(container, ["sh", "-c", f"echo {compilation_status} > /app/compilation_status"])
+
+        # Log container status and state
+        container.reload()
+        logger.info(f"Container status after yarn start: {container.status}")
+        logger.info(f"Container state: {container.attrs['State']}")
 
         return "\n".join(build_output), files_added, compilation_status
 

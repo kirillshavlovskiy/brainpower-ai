@@ -138,7 +138,7 @@ def check_container(request):
                 host_port = port_mapping[0]['HostPort']
 
                 return JsonResponse({
-                    'status': status,
+                    'status': 'ready',
                     'container_id': container.id,
                     'container_info': container_info,
                     'url': f"https://{host_port}.{HOST_URL}",

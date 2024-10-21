@@ -234,7 +234,14 @@ def update_code_internal(container, code, user, file_name, main_file_path):
 
         else:
             logger.info("No non-standard imports detected")
-
+        encoded_code = base64.b64encode(code.encode()).decode()
+        exec_result = container.exec_run([
+            "sh", "-c",
+            f"echo {encoded_code} | base64 -d > /app/src/page.js"  # Adjust this path as needed
+        ])
+        if exec_result.exit_code != 0:
+            raise Exception(f"Failed to update page.js in container: {exec_result.output.decode()}")
+        files_added.append('/app/src/app/page.js')
         # Start the development server
         logger.info("Starting the development server with 'yarn start'")
         exec_result = exec_command_with_retry(container, ["sh", "-c", "cd /app && yarn start"])

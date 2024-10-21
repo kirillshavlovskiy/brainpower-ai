@@ -91,12 +91,13 @@ def exec_command_with_retry(container, command, max_retries=3, delay=1):
             if exec_info['ExitCode'] != 0:
                 raise Exception(f"Command failed with exit code {exec_info['ExitCode']}: {output.decode()}")
 
-            return output
+            return output  # This is already bytes
         except Exception as e:
             if attempt == max_retries - 1:
                 raise
             logger.warning(f"Attempt {attempt + 1} failed: {str(e)}. Retrying in {delay} seconds...")
             time.sleep(delay)
+
 
 @api_view(['GET'])
 def check_container(request):

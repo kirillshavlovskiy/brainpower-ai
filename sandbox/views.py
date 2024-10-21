@@ -348,16 +348,18 @@ def check_or_create_container(request):
 
         try:
             # Check for non-standard imports
-            non_standard_imports = check_local_imports(code)
+            non_standard_imports = check_non_standard_imports(code)
+            installed_packages = []
             if non_standard_imports:
-                install_packages(container, non_standard_imports)
+                installed_packages = install_packages(container, non_standard_imports)
 
             # Check for local imports
-            check_local_imports(container, code)
+            missing_local_imports = check_local_imports(container, code)
+
             build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
             datailed_logs = container.logs(tail=200).decode('utf-8')  # Get last 200 lines of logs
             file_structure = get_container_file_structure(container)
-            # container_info['file_structure'] = file_structure
+
             return JsonResponse({
                 'status': 'success',
                 'container_id': container.id,
@@ -366,6 +368,8 @@ def check_or_create_container(request):
                 'build_output': build_output,
                 'detailed_logs': detailed_logger.get_logs(),
                 'file_list': file_structure,
+                'installed_packages': installed_packages,
+                'missing_local_imports': missing_local_imports
             })
         except Exception as update_error:
             detailed_logger.log('error', f"Failed to update code: {str(update_error)}")
@@ -421,30 +425,21 @@ def check_or_create_container(request):
 
         try:
             # Check for non-standard imports
-            non_standard_imports = check_local_imports(code)
+            non_standard_imports = check_non_standard_imports(code)
+            installed_packages = []
             if non_standard_imports:
-                install_packages(container, non_standard_imports)
+                installed_packages = install_packages(container, non_standard_imports)
+
             # Check for local imports
-            check_local_imports(container, code)
+            missing_local_imports = check_local_imports(container, code)
+
             build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
             container_info['build_status'] = 'updated'
 
             file_structure = get_container_file_structure(container)
             datailed_logs = container.logs(tail=200).decode('utf-8')  # Get last 200 lines of logs
-            print(file_structure)
             detailed_logger.log('warning', f"File structure: {file_structure}, \nbuild output {build_output}")
             container_info['file_structure'] = file_structure
-
-            # # Get the list of files in the new container
-            # exec_result = container.exec_run("find /app -type f -printf '%P\\t%s\\t%T@\\n'")
-            # if exec_result.exit_code == 0:
-            #     files_info = exec_result.output.decode().strip().split('\n')
-            #     for file_info in files_info:
-            #         path, size, timestamp = file_info.split('\t')
-            #         creation_date = datetime.fromtimestamp(float(timestamp)).isoformat()
-            #         detailed_logger.add_file(path, int(size), creation_date)
-            # else:
-            #     detailed_logger.log('warning', "Unable to retrieve file list for new container")
 
             container.reload()
             port_mapping = container.ports.get('3001/tcp')
@@ -462,14 +457,19 @@ def check_or_create_container(request):
                     'build_output': build_output,
                     'detailed_logs': detailed_logger.get_logs(),
                     'file_list': file_structure,
+                    'installed_packages': installed_packages,
+                    'missing_local_imports': missing_local_imports
                 })
             else:
                 detailed_logger.log('error', f"Failed to get port mapping for container {container_name}")
                 return JsonResponse({
                     'error': 'Failed to get port mapping',
                     'container_info': container_info,
+                    'build_output': build_output,
                     'detailed_logs': detailed_logger.get_logs(),
                     'file_list': file_structure,
+                    'installed_packages': installed_packages,
+                    'missing_local_imports': missing_local_imports
                 }, status=500)
         except Exception as e:
             detailed_logger.log('error', f"!!!Failed to update code in container: {str(e)}")
@@ -490,21 +490,39 @@ def check_or_create_container(request):
         }, status=500)
 
 def install_packages(container, packages):
+    installed_packages = []
     for package in packages:
         try:
-            container.exec_run(f"npm install {package}")
-            detailed_logger.log('info', f"Installed package: {package}")
+            result = container.exec_run(f"npm install {package}")
+            if result.exit_code == 0:
+                installed_packages.append(package)
+                detailed_logger.log('info', f"Installed package: {package}")
+            else:
+                detailed_logger.log('error', f"Failed to install package {package}: {result.output.decode()}")
         except Exception as e:
-            detailed_logger.log('error', f"Failed to install package {package}: {str(e)}")
+            detailed_logger.log('error', f"Error installing package {package}: {str(e)}")
+    return installed_packages
+
+
+def check_non_standard_imports(code):
+    import_pattern = r'import\s+(\w+)|from\s+(\w+)\s+import'
+    imports = re.findall(import_pattern, code)
+    standard_libs = set(sys.builtin_module_names) | set(sys.modules.keys())
+    return [imp for imp in imports if imp[0] or imp[1] not in standard_libs]
+
 
 def check_local_imports(container, code):
     local_import_pattern = r'from\s+[\'"]\.\/(\w+)[\'"]'
     local_imports = re.findall(local_import_pattern, code)
+    missing_imports = []
 
     for imp in local_imports:
-        check_file = container.exec_run(f"[ -f /app/src/{imp}.js ] || [ -f /app/src/{imp}.ts ] && echo 'exists' || echo 'not found'")
+        check_file = container.exec_run(
+            f"[ -f /app/src/{imp}.js ] || [ -f /app/src/{imp}.ts ] && echo 'exists' || echo 'not found'")
         if check_file.output.decode().strip() == 'not found':
-            detailed_logger.log('warning', f"Local import {imp} not found as .js or .ts file")
+            missing_imports.append(imp)
+
+    return missing_imports
             
 def get_container_file_structure(container):
     exec_result = container.exec_run("find /app/src -printf '%P\\t%s\\t%T@\\t%y\\n'")
@@ -513,18 +531,16 @@ def get_container_file_structure(container):
     if exec_result.exit_code == 0:
         files = []
         for line in exec_result.output.decode().strip().split('\n'):
-            if line:  # Skip empty lines
-                try:
-                    path_size, timestamp, type = line.split('\t')
-                    path, size = path_size.rsplit('\t', 1)  # Split from the right side once
-                    files.append({
-                        'path': path,
-                        'size': int(size) if type == 'f' else None,  # Size for files only
-                        'created_at': datetime.fromtimestamp(float(timestamp)).isoformat(),
-                        'type': 'file' if type == 'f' else 'folder'
-                    })
-                except ValueError as e:
-                    logger.error(f"Error processing line: {line}. Error: {str(e)}")
+            parts = line.split(maxsplit=3)
+            if len(parts) == 4:
+                path, size, timestamp, type = parts
+                files.append({
+                    'path': path,
+                    'size': int(size),
+                    'created_at': datetime.fromtimestamp(float(timestamp)).isoformat(),
+                    'type': 'file' if type == 'f' else 'folder'
+                })
+
         return files
     else:
         logger.error(f"Error executing find command. Exit code: {exec_result.exit_code}")

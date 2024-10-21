@@ -97,7 +97,8 @@ def check_container(request):
                     'status': 'ready',
                     'container_id': container.id,
                     'url': f"https://{host_port}.{HOST_URL}",
-                    'file_list': file_structure
+                    'file_list': file_structure,
+
                 })
             else:
                 return JsonResponse({'status': 'not_ready', 'container_id': container.id})
@@ -174,6 +175,10 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                         logger.info(f"Created empty file {import_path} in container")
                         files_added.append(container_path)
 
+        non_standard_imports = check_non_standard_imports(code)
+        if non_standard_imports:
+            installed_packages = install_packages(container, non_standard_imports)
+
         # Build the project
         exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"], stream=True)
         logger.info(f"///Execution result: {exec_result}")
@@ -184,7 +189,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                 decoded_line = str(line).strip()
             build_output.append(decoded_line)
             if "Compiled successfully" in decoded_line or "Compiled with warnings" in decoded_line:
-                return "\n".join(build_output), files_added
+                return "\n".join(build_output), files_added, installed_packages
 
         # If we reach here, it means we didn't find a success message
         # But this doesn't necessarily mean it failed
@@ -329,16 +334,6 @@ def check_or_create_container(request):
             'id': container.id
         }
 
-        # # Get the list of files in the /app directory
-        # exec_result = container.exec_run("find /app -type f -printf '%P\\t%s\\t%T@\\n'")
-        # if exec_result.exit_code == 0:
-        #     files_info = exec_result.output.decode().strip().split('\n')
-        #     for file_info in files_info:
-        #         path, size, timestamp = file_info.split('\t')
-        #         creation_date = datetime.fromtimestamp(float(timestamp)).isoformat()
-        #         detailed_logger.add_file(path, int(size), creation_date)
-        # else:
-        #     detailed_logger.log('warning', "Unable to retrieve file list")
 
         # Get the host port
         port_bindings = container.attrs['NetworkSettings']['Ports']
@@ -424,19 +419,14 @@ def check_or_create_container(request):
             }, status=500)
 
         try:
-            # Check for non-standard imports
-            non_standard_imports = check_non_standard_imports(code)
-            installed_packages = []
-            if non_standard_imports:
-                installed_packages = install_packages(container, non_standard_imports)
 
             # Check for local imports
             missing_local_imports = check_local_imports(container, code)
 
-            build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
+            build_output, files_added, installed_packages = update_code_internal(container, code, user_id, file_name, main_file_path)
             container_info['build_status'] = 'updated'
 
-            # file_structure = get_container_file_structure(container)
+            file_structure = get_container_file_structure(container)
             datailed_logs = container.logs(tail=200).decode('utf-8')  # Get last 200 lines of logs
             detailed_logger.log('warning', f"File structure: {file_structure}, \nbuild output {build_output}")
             container_info['file_structure'] = file_structure
@@ -456,9 +446,9 @@ def check_or_create_container(request):
                     'container_info': container_info,
                     'build_output': build_output,
                     'detailed_logs': detailed_logger.get_logs(),
-                    'file_list': [],
+                    'file_list': file_structure,
                     'installed_packages': installed_packages,
-                    'missing_local_imports': missing_local_imports
+                    'files_added': files_added
                 })
             else:
                 detailed_logger.log('error', f"Failed to get port mapping for container {container_name}")
@@ -467,9 +457,9 @@ def check_or_create_container(request):
                     'container_info': container_info,
                     'build_output': build_output,
                     'detailed_logs': detailed_logger.get_logs(),
-                    'file_list': [],
+                    'file_list': file_structure,
                     'installed_packages': installed_packages,
-                    'missing_local_imports': missing_local_imports
+                    'files_added': files_added
                 }, status=500)
         except Exception as e:
             detailed_logger.log('error', f"!!!Failed to update code in container: {str(e)}")
@@ -493,7 +483,7 @@ def install_packages(container, packages):
     installed_packages = []
     for package in packages:
         try:
-            result = container.exec_run(f"npm install {package}")
+            result = container.exec_run(f"yarn add {package}")
             if result.exit_code == 0:
                 installed_packages.append(package)
                 detailed_logger.log('info', f"Installed package: {package}")
@@ -504,11 +494,27 @@ def install_packages(container, packages):
     return installed_packages
 
 
+import re
+
+
 def check_non_standard_imports(code):
-    import_pattern = r'import\s+(\w+)|from\s+(\w+)\s+import'
+    # Pattern to match import statements in JavaScript/React
+    import_pattern = r'import\s+(?:{\s*[\w\s,]+\s*}|[\w]+|\*\s+as\s+[\w]+)\s+from\s+[\'"](.+?)[\'"]|require\([\'"](.+?)[\'"]\)'
     imports = re.findall(import_pattern, code)
-    standard_libs = set(sys.builtin_module_names) | set(sys.modules.keys())
-    return [imp for imp in imports if imp[0] or imp[1] not in standard_libs]
+
+    # List of common built-in or pre-installed packages in a typical React setup
+    standard_packages = {
+        'react', 'react-dom', 'prop-types', 'react-router', 'react-router-dom',
+        'redux', 'react-redux', 'axios', 'lodash', 'moment', 'styled-components'
+    }
+
+    non_standard_imports = []
+    for imp in imports:
+        package_name = imp[0] or imp[1]  # Get the non-empty group
+        if package_name and not package_name.startswith('.') and package_name not in standard_packages:
+            non_standard_imports.append(package_name)
+
+    return non_standard_imports
 
 
 def check_local_imports(container, code):

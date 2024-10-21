@@ -73,17 +73,30 @@ import time
 
 from docker.errors import NotFound, APIError
 
+
 def exec_command_with_retry(container, command, max_retries=3, delay=1):
     for attempt in range(max_retries):
         try:
-            exec_id = container.exec_create(command)
-            return container.exec_start(exec_id)
-        except (NotFound, APIError) as e:
+            container.reload()  # Refresh container status
+            if container.status != 'running':
+                logger.info(f"Container {container.id} is not running. Attempting to start it.")
+                container.start()
+                container.reload()
+                time.sleep(5)  # Wait for container to fully start
+
+            exec_id = container.client.api.exec_create(container.id, command)
+            output = container.client.api.exec_start(exec_id)
+            exec_info = container.client.api.exec_inspect(exec_id)
+
+            if exec_info['ExitCode'] != 0:
+                raise Exception(f"Command failed with exit code {exec_info['ExitCode']}: {output.decode()}")
+
+            return output
+        except Exception as e:
             if attempt == max_retries - 1:
                 raise
             logger.warning(f"Attempt {attempt + 1} failed: {str(e)}. Retrying in {delay} seconds...")
             time.sleep(delay)
-
 
 @api_view(['GET'])
 def check_container(request):

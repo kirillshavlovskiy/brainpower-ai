@@ -257,6 +257,13 @@ def check_container_ready(request):
         container = client.containers.get(container_id)
         container.reload()
 
+        # Read the saved compilation status
+        status_result = exec_command_with_retry(container, ["cat", "/app/compilation_status"])
+        compilation_status = status_result.decode().strip()
+
+        if not compilation_status:
+            compilation_status = ContainerStatus.COMPILING
+
         all_logs = container.logs(stdout=True, stderr=True).decode('utf-8').strip()
         recent_logs = container.logs(stdout=True, stderr=True, tail=50).decode('utf-8').strip()
         latest_log = recent_logs.split('\n')[-1] if recent_logs else "No recent logs"
@@ -271,39 +278,22 @@ def check_container_ready(request):
         host_port = port_mapping[0]['HostPort']
         dynamic_url = f"https://{host_port}.{HOST_URL}"
 
-        if "Compiled successfully!" in all_logs or "Compiled with warnings" in all_logs:
-            return JsonResponse({
-                'status': ContainerStatus.READY,
-                'url': dynamic_url,
-                'log': "Compiled successfully!",
-                'detailed_logs': all_logs
-            })
+        response_data = {
+            'status': compilation_status,
+            'url': dynamic_url,
+            'log': latest_log,
+            'detailed_logs': all_logs
+        }
 
-        if "Failed to compile" in all_logs or "Error:" in all_logs:
-            return JsonResponse({
-                'status': ContainerStatus.COMPILATION_FAILED,
-                'log': "Compilation failed. Check the logs for details.",
-                'detailed_logs': all_logs
-            })
+        if compilation_status == ContainerStatus.WARNING:
+            warnings = re.findall(r"warning.*\n.*\n.*\n", all_logs, re.IGNORECASE)
+            response_data['warnings'] = warnings
 
-        if "Accepting connections at http://localhost:3001" in all_logs:
-            return JsonResponse({
-                'status': ContainerStatus.READY,
-                'url': dynamic_url,
-                'log': "Server is ready",
-                'detailed_logs': all_logs
-            })
+        if compilation_status == ContainerStatus.COMPILATION_FAILED:
+            errors = re.findall(r"error.*\n.*\n.*\n", all_logs, re.IGNORECASE)
+            response_data['errors'] = errors
 
-
-        elif "Compiling..." in all_logs:
-            return JsonResponse({'status': ContainerStatus.COMPILING, 'log': "Compiling..."})
-        elif "Creating an optimized production build..." in all_logs:
-            return JsonResponse(
-                {'status': ContainerStatus.BUILDING, 'log': "Creating an optimized production build..."})
-        elif "Starting the development server..." in all_logs:
-            return JsonResponse({'status': ContainerStatus.COMPILING, 'log': "Starting the development server..."})
-        else:
-            return JsonResponse({'status': ContainerStatus.BUILDING, 'log': latest_log})
+        return JsonResponse(response_data)
 
     except docker.errors.NotFound:
         return JsonResponse({'status': ContainerStatus.NOT_FOUND, 'log': 'Container not found'}, status=404)

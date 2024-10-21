@@ -214,6 +214,10 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         exec_result = exec_command_with_retry(container, ["sh", "-c", "cd /app && yarn start"])
         logger.info(f"///Execution result: {exec_result}")
 
+        # Build the project
+        exec_result = exec_command_with_retry(container, ["sh", "-c", "cd /app && yarn start"])
+        logger.info(f"///Execution result: {exec_result}")
+
         # Process the build output
         output_lines = exec_result.decode().split('\n')
         build_output = output_lines
@@ -231,6 +235,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
 
         # Save compilation status to a file in the container
         exec_command_with_retry(container, ["sh", "-c", f"echo {compilation_status} > /app/compilation_status"])
+        logger.info(f"Saved compilation status: {compilation_status}")
 
         # Log container status and state
         container.reload()
@@ -244,22 +249,51 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         raise
 
 
+def get_compilation_status(container):
+    try:
+        # Try to read the compilation status file
+        status_result = exec_command_with_retry(container, ["cat", "/app/compilation_status"])
+        saved_status = status_result.decode().strip()
+
+        if saved_status and saved_status in [ContainerStatus.READY, ContainerStatus.WARNING,
+                                             ContainerStatus.COMPILATION_FAILED]:
+            return saved_status
+
+        # If no valid status is saved, or if it's still COMPILING, we need to check the logs
+        logs = container.logs(tail=100).decode('utf-8')
+
+        if "Compiled successfully" in logs:
+            return ContainerStatus.READY
+        elif "Compiled with warnings" in logs:
+            return ContainerStatus.WARNING
+        elif "Failed to compile" in logs:
+            return ContainerStatus.COMPILATION_FAILED
+        else:
+            return ContainerStatus.COMPILING
+    except Exception as e:
+        logger.error(f"Error getting compilation status: {str(e)}")
+        return ContainerStatus.ERROR
+
+
 @api_view(['GET'])
 def check_container_ready(request):
     container_id = request.GET.get('container_id')
     user_id = request.GET.get('user_id', 'default')
     file_name = request.GET.get('file_name')
 
+    logger.info(f"Checking container ready: container_id={container_id}, user_id={user_id}, file_name={file_name}")
+
     if not container_id:
+        logger.error("No container ID provided")
         return JsonResponse({'status': ContainerStatus.ERROR, 'error': 'No container ID provided'}, status=400)
 
     try:
         container = client.containers.get(container_id)
         container.reload()
+        logger.info(f"Container status: {container.status}")
 
-        # Read the saved compilation status
-        status_result = exec_command_with_retry(container, ["cat", "/app/compilation_status"])
-        compilation_status = status_result.decode().strip()
+        compilation_status = get_compilation_status(container)
+        logger.info(f"Compilation status: {compilation_status}")
 
         if not compilation_status:
             compilation_status = ContainerStatus.COMPILING
@@ -366,6 +400,9 @@ def check_or_create_container(request):
             container.start()
             container.reload()
             time.sleep(5)  # Wait for container to fully start
+
+        # Here's where we need to check the actual compilation status
+        compilation_status = get_compilation_status(container)
 
         container_info = {
             'container_name': container.name,

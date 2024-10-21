@@ -467,7 +467,7 @@ def check_or_create_container(request):
                     'container_info': container_info,
                     'build_output': build_output,
                     'detailed_logs': detailed_logger.get_logs(),
-                    'file_list': file_structure,
+                    'file_list': [],
                     'installed_packages': installed_packages,
                     'missing_local_imports': missing_local_imports
                 }, status=500)
@@ -477,7 +477,7 @@ def check_or_create_container(request):
                 'error': f'Failed to update code in container: {str(e)}',
                 'container_info': container_info,
                 'detailed_logs': detailed_logger.get_logs(),
-                'file_list': file_structure(),
+                'file_list': [],
             }, status=500)
 
     except Exception as e:

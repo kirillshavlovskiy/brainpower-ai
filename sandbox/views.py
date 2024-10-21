@@ -268,7 +268,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         logger.info(f"Container status after yarn start: {container.status}")
         logger.info(f"Container state: {container.attrs['State']}")
 
-        return "\n".join(build_output), files_added, compilation_status
+        return "\n".join(build_output), files_added, failed_packages, compilation_status
 
     except Exception as e:
         logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
@@ -457,7 +457,7 @@ def check_or_create_container(request):
             # Check for local imports
             missing_local_imports = check_local_imports(container, code)
 
-            build_output, files_added, compilation_status = update_code_internal(container, code, user_id, file_name,
+            build_output, files_added, failed_packages, compilation_status = update_code_internal(container, code, user_id, file_name,
                                                                                  main_file_path)
 
             datailed_logs = container.logs(tail=200).decode('utf-8')  # Get last 200 lines of logs
@@ -488,47 +488,66 @@ def check_or_create_container(request):
                 'file_list': file_structure,
             }, status=500)
 
-    except docker.errors.NotFound:
-        detailed_logger.log('info', f"Container {container_name} not found. Creating new container.")
-        host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
-        detailed_logger.log('info', f"Selected port {host_port} for new container")
-        try:
-            container = client.containers.run(
-                'react_renderer_prod',
-                command=["sh", "-c", "yarn start"],
-                detach=True,
-                name=container_name,
-                environment={
-                    'USER_ID': user_id,
-                    'REACT_APP_USER_ID': user_id,
-                    'FILE_NAME': file_name,
-                    'PORT': str(3001),
-                    'NODE_ENV': 'production',
-                    'NODE_OPTIONS': '--max-old-space-size=8192'
-                },
-                volumes={
-                    os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
-                    os.path.join(react_renderer_path, 'package-lock.json'): {'bind': '/app/package-lock.json', 'mode': 'ro'},
-                    os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
-                },
-                ports={'3001/tcp': host_port},
-                mem_limit='8g',
-                memswap_limit='16g',
-                cpu_quota=100000,
-                restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
-            )
-            detailed_logger.log('info', f"New container created: {container_name}")
-            container_info['build_status'] = 'created'
-        except docker.errors.APIError as e:
-            detailed_logger.log('error', f"Failed to create container: {str(e)}")
-            return JsonResponse({
-                'error': f'Failed to create container: {str(e)}',
-                'container_info': container_info,
-                'detailed_logs': detailed_logger.get_logs(),
-                'file_list': detailed_logger.get_file_list(),
-            }, status=500)
+
+        except docker.errors.NotFound:
+
+            detailed_logger.log('info', f"Container {container_name} not found. Creating new container.")
+            host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
+            detailed_logger.log('info', f"Selected port {host_port} for new container")
+            try:
+                container = client.containers.run(
+                    'react_renderer_prod',
+                    command=[
+                        "sh",
+                        "-c",
+                        f"""
+                            yarn create next-app {app_name} --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" &&
+                            mv {app_name}/* . &&
+                            rm -rf {app_name} &&
+                            yarn install &&
+                            yarn dev
+                            """
+                    ],
+                    detach=True,
+                    name=container_name,
+                    environment={
+                        'USER_ID': user_id,
+                        'REACT_APP_USER_ID': user_id,
+                        'FILE_NAME': file_name,
+                        'PORT': str(3001),
+                        'NODE_ENV': 'production',
+                        'NODE_OPTIONS': '--max-old-space-size=8192'
+                    },
+
+                    volumes={
+                        os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
+                        os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
+                        os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'rw'},
+                        os.path.join(react_renderer_path, 'package-lock.json'): {'bind': '/app/package-lock.json',
+                                                                                 'mode': 'rw'},
+                        os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
+
+                    },
+                    ports={'3001/tcp': host_port},
+                    mem_limit='8g',
+                    memswap_limit='16g',
+                    cpu_quota=100000,
+                    restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
+                )
+
+                detailed_logger.log('info', f"New container created: {container_name}")
+                container_info['build_status'] = 'created'
+                # Wait for Next.js project creation to complete
+                time.sleep(30)  # Adjust this wait time as needed
+
+            except docker.errors.APIError as e:
+                detailed_logger.log('error', f"Failed to create container: {str(e)}")
+                return JsonResponse({
+                    'error': f'Failed to create container: {str(e)}',
+                    'container_info': container_info,
+                    'detailed_logs': detailed_logger.get_logs(),
+                    'file_list': detailed_logger.get_file_list(),
+                }, status=500)
 
         try:
 

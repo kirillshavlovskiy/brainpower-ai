@@ -436,7 +436,7 @@ def check_or_create_container(request):
             build_output = update_code_internal(container, code, user_id, file_name, main_file_path)
             container_info['build_status'] = 'updated'
 
-            file_structure = get_container_file_structure(container)
+            # file_structure = get_container_file_structure(container)
             datailed_logs = container.logs(tail=200).decode('utf-8')  # Get last 200 lines of logs
             detailed_logger.log('warning', f"File structure: {file_structure}, \nbuild output {build_output}")
             container_info['file_structure'] = file_structure
@@ -456,7 +456,7 @@ def check_or_create_container(request):
                     'container_info': container_info,
                     'build_output': build_output,
                     'detailed_logs': detailed_logger.get_logs(),
-                    'file_list': file_structure,
+                    'file_list': [],
                     'installed_packages': installed_packages,
                     'missing_local_imports': missing_local_imports
                 })

@@ -127,7 +127,6 @@ def check_container(request):
             check_result = container.exec_run("test -d /app/src && echo 'exists' || echo 'not found'")
             logger.info(f"Check /app/src directory result: {check_result.output.decode().strip()}")
 
-            status = get_compilation_status(container)
 
             if check_result:
                 file_structure = get_container_file_structure(container)
@@ -158,7 +157,7 @@ def check_container(request):
 
 def update_code_internal(container, code, user, file_name, main_file_path):
     files_added = []
-    build_output= []
+    build_output = []
     try:
         # Update component.js
         encoded_code = base64.b64encode(code.encode()).decode()

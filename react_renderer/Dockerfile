@@ -1,7 +1,7 @@
-# Use a more recent Node runtime as the base image
+# Use Node 18.18.0 as base image
 FROM node:18.18.0
 
-# Set the working directory in the container
+# Set the working directory
 WORKDIR /app
 
 # Install necessary build tools and dependencies
@@ -12,44 +12,71 @@ RUN apt-get update && apt-get install -y \
     procps \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy package.json and yarn.lock
+# Copy package files first for better caching
 COPY package.json yarn.lock ./
+COPY tsconfig.json webpack.config.js ./
 
-# Set yarn network timeout and concurrency
-RUN yarn config set network-timeout 300000 && \
+# Configure yarn
+RUN yarn config set network-timeout 600000 && \
     yarn config set network-concurrency 1
 
-# Create .env file to skip preflight check
-RUN echo "SKIP_PREFLIGHT_CHECK=true" > .env
+# Install specific Babel dependencies first
+RUN yarn add -D \
+    @babel/core@7.22.0 \
+    @babel/traverse@7.23.2 \
+    @babel/helper-remap-async-to-generator@7.22.20 \
+    @babel/preset-env@7.22.0 \
+    @babel/preset-react@7.22.0 \
+    @babel/preset-typescript@7.22.0
 
 # Install dependencies
 RUN yarn install --frozen-lockfile && \
-    yarn add @babel/traverse@7.23.2 \
-    @babel/core@7.22.20 \
-    @babel/helper-remap-async-to-generator@7.22.20
+    yarn add html2canvas@1.4.1 && \
+    yarn global add serve@14.2.0
 
-# Add html2canvas and serve
-RUN yarn add html2canvas && \
-    yarn global add serve \
+# Create necessary directories
+RUN mkdir -p /app/src /app/public /app/build
 
+# Create .env file
+RUN echo "SKIP_PREFLIGHT_CHECK=true\n\
+DISABLE_ESLINT_PLUGIN=true\n\
+GENERATE_SOURCEMAP=false\n\
+BROWSER=none\n\
+HOST=0.0.0.0\n\
+PORT=3001" > .env
 
 # Add node_modules/.bin to PATH
 ENV PATH=/app/node_modules/.bin:$PATH
 
-# Copy the entire project
-COPY . .
-
-# Expose the port the app runs on
-EXPOSE 3001
-
-# Set environment variable for create-react-app to use the correct port
+# Set environment variables
 ENV PORT=3001
 ENV HOST=0.0.0.0
 ENV NODE_ENV=development
-ENV NODE_OPTIONS=--max-old-space-size=8192
+ENV NODE_OPTIONS="--max-old-space-size=8192"
+ENV BROWSER=none
+ENV WATCHPACK_POLLING=true
+ENV BABEL_ENV=development
+
+# Set proper permissions
+RUN chown -R node:node /app
+
+# Switch to non-root user
+USER node
 
 # Expose port
 EXPOSE 3001
 
-# Start the app using the serve script
-CMD ["yarn", "start"]
+# Create startup script
+RUN echo '#!/bin/sh\n\
+cd /app\n\
+if [ ! -f "src/component.js" ]; then\n\
+  echo "// Initial component\nexport default function Component() {\n  return <div>Loading...</div>\n}" > src/component.js\n\
+fi\n\
+yarn start' > /app/start.sh && \
+chmod +x /app/start.sh
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:3001/ || exit 1
+
+ENTRYPOINT ["/app/start.sh"]

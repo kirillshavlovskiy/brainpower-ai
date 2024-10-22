@@ -160,33 +160,6 @@ def update_code_internal(container, code, user, file_name, main_file_path):
     files_added = []
     build_output= []
     try:
-        # Check if file is TypeScript
-        is_typescript = file_name.endswith('.tsx') or file_name.endswith('.ts')
-
-        # Add type declarations if it's a TypeScript file
-        if is_typescript:
-            # Ensure the file has proper React imports for TypeScript
-            if not 'import React' in code:
-                code = 'import React from "react";\n' + code
-
-            # Add missing export if needed
-            if not 'export default' in code:
-                code = code.rstrip() + '\n\nexport default {};\n'
-
-        # Update the file
-        encoded_code = base64.b64encode(code.encode()).decode()
-        file_path = f"/app/src/{file_name}"
-
-        exec_result = container.exec_run([
-            "sh", "-c",
-            f"echo {encoded_code} | base64 -d > {file_path}"
-        ])
-
-        if exec_result.exit_code != 0:
-            raise Exception(f"Failed to update {file_name} in container: {exec_result.output.decode()}")
-
-        files_added.append(file_path)
-
         # Update component.js
         encoded_code = base64.b64encode(code.encode()).decode()
         max_attempts = 3
@@ -432,8 +405,7 @@ def check_or_create_container(request):
     file_name = data.get('file_name', 'component.js')
     main_file_path = data.get('main_file_path')
 
-    detailed_logger.log('info',
-                        f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
+    detailed_logger.log('info', f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
 
     if not all([code, language, file_name]):
         return JsonResponse({'error': 'Missing required fields'}, status=400)
@@ -524,75 +496,79 @@ def check_or_create_container(request):
             }, status=500)
 
 
-    except docker.errors.NotFound:
-        detailed_logger.log('info', f"Container {container_name} not found. Creating new container.")
-        host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
-        detailed_logger.log('info', f"Selected port {host_port} for new container")
-        try:
-            container = client.containers.run(
-                'react_renderer_prod',
-                command=[
-                    "sh",
-                    "-c",
-                    """
-                    
-                    # Start development server
-                    HOST=0.0.0.0 PORT=3001 yarn start
-                    """
-                ],
-                detach=True,
-                name=container_name,
-                environment={
-                    'USER_ID': user_id,
-                    'REACT_APP_USER_ID': user_id,
-                    'FILE_NAME': file_name,
-                    'PORT': '3001',
-                    'HOST': '0.0.0.0',
-                    'NODE_ENV': 'development',
-                    'NODE_OPTIONS': '--max-old-space-size=8192',
-                    'WATCHPACK_POLLING': 'true',
-                    'SKIP_PREFLIGHT_CHECK': 'true'
-                },
-                volumes={
-                    os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
-                },
-                ports={'3001/tcp': host_port},
-                mem_limit='8g',
-                memswap_limit='16g',
-                cpu_quota=100000,
-                restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
-            )
+        except docker.errors.NotFound:
 
-            # Add error checking for installation process
-            installation_logs = container.logs(stdout=True, stderr=True).decode()
-            if "error" in installation_logs.lower():
-                detailed_logger.log('error', f"Errors during dependency installation: {installation_logs}")
+            detailed_logger.log('info', f"Container {container_name} not found. Creating new container.")
+            host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
+            detailed_logger.log('info', f"Selected port {host_port} for new container")
+            try:
+                container = client.containers.run(
+                    'react_renderer_prod',
+                    command=[
+                        "sh",
+                        "-c",
+                        f"""
+                            yarn create next-app {app_name} --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" &&
+                            mv {app_name}/* . &&
+                            rm -rf {app_name} &&
+                            yarn install &&
+                            yarn dev
+                            """
+                    ],
+                    detach=True,
+                    name=container_name,
+                    environment={
+                        'USER_ID': user_id,
+                        'REACT_APP_USER_ID': user_id,
+                        'FILE_NAME': file_name,
+                        'PORT': str(3001),
+                        'NODE_ENV': 'development',  # Changed to development for better debugging
+                        'NODE_OPTIONS': '--max-old-space-size=8192',
+                        'WATCHPACK_POLLING': 'true'  # Enable polling for file changes
+                    },
 
-            # Wait for installation to complete
-            time.sleep(20)  # Adjust this value based on your needs
+                    volumes={
+                        os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
+                        os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
+                        os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'rw'},
+                        # Remove package-lock.json binding to avoid conflicts
+                        os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
 
-            # Verify TypeScript installation
-            verify_cmd = container.exec_run("yarn list typescript")
-            if verify_cmd.exit_code != 0:
-                detailed_logger.log('error', "TypeScript installation verification failed")
-                raise Exception("Failed to install TypeScript")
+                    },
+                    ports={'3001/tcp': host_port},
+                    mem_limit='8g',
+                    memswap_limit='16g',
+                    cpu_quota=100000,
+                    restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
+                )
 
-            detailed_logger.log('info', f"New container created: {container_name}")
-            container_info['build_status'] = 'created'
-            # Wait for Next.js project creation to complete
-            time.sleep(30)  # Adjust this wait time as needed
+                # Add error checking for installation process
+                installation_logs = container.logs(stdout=True, stderr=True).decode()
+                if "error" in installation_logs.lower():
+                    detailed_logger.log('error', f"Errors during dependency installation: {installation_logs}")
 
-        except docker.errors.APIError as e:
-            detailed_logger.log('error', f"Failed to create container: {str(e)}")
-            return JsonResponse({
-                'error': f'Failed to create container: {str(e)}',
-                'container_info': container_info,
-                'detailed_logs': detailed_logger.get_logs(),
-                'file_list': detailed_logger.get_file_list(),
-            }, status=500)
+                # Wait for installation to complete
+                time.sleep(20)  # Adjust this value based on your needs
+
+                # Verify TypeScript installation
+                verify_cmd = container.exec_run("yarn list typescript")
+                if verify_cmd.exit_code != 0:
+                    detailed_logger.log('error', "TypeScript installation verification failed")
+                    raise Exception("Failed to install TypeScript")
+
+                detailed_logger.log('info', f"New container created: {container_name}")
+                container_info['build_status'] = 'created'
+                # Wait for Next.js project creation to complete
+                time.sleep(30)  # Adjust this wait time as needed
+
+            except docker.errors.APIError as e:
+                detailed_logger.log('error', f"Failed to create container: {str(e)}")
+                return JsonResponse({
+                    'error': f'Failed to create container: {str(e)}',
+                    'container_info': container_info,
+                    'detailed_logs': detailed_logger.get_logs(),
+                    'file_list': detailed_logger.get_file_list(),
+                }, status=500)
 
         try:
 
@@ -605,7 +581,7 @@ def check_or_create_container(request):
             # Check for local imports
             missing_local_imports = check_local_imports(container, code)
 
-            build_output, files_added, failed_packages, compilation_status = update_code_internal(container, code, user_id, file_name,
+            build_output, files_added, compilation_status = update_code_internal(container, code, user_id, file_name,
                                                                                  main_file_path)
             container_info['build_status'] = 'updated'
 

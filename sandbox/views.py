@@ -531,45 +531,21 @@ def check_or_create_container(request):
         try:
             container = client.containers.run(
                 'react_renderer_prod',
-                # Initialize container with proper TypeScript setup
                 command=[
                     "sh",
                     "-c",
                     """
-                    # Install TypeScript and required dependencies
-                    yarn add typescript @types/node @types/react @types/react-dom @types/jest @typescript-eslint/parser @typescript-eslint/eslint-plugin --dev &&
+                    # Clean any existing processes
+                    pkill -f "node" || true
 
-                    # Create tsconfig.json if it doesn't exist
-                    echo '{
-                        "compilerOptions": {
-                            "target": "es5",
-                            "lib": ["dom", "dom.iterable", "esnext"],
-                            "allowJs": true,
-                            "skipLibCheck": true,
-                            "esModuleInterop": true,
-                            "allowSyntheticDefaultImports": true,
-                            "strict": true,
-                            "forceConsistentCasingInFileNames": true,
-                            "noFallthroughCasesInSwitch": true,
-                            "module": "esnext",
-                            "moduleResolution": "node",
-                            "resolveJsonModule": true,
-                            "isolatedModules": true,
-                            "noEmit": true,
-                            "jsx": "react-jsx"
-                        },
-                        "include": ["src"]
-                    }' > /app/tsconfig.json &&
+                    # Remove any lock files
+                    rm -f package-lock.json yarn.lock
 
-                    # Update package.json scripts
-                    npm pkg set scripts.start="HOST=0.0.0.0 react-scripts start" &&
-                    npm pkg set scripts.build="react-scripts build" &&
+                    # Install dependencies
+                    yarn install
 
-                    # Install additional dependencies for MUI and other required packages
-                    yarn add @mui/material @mui/icons-material @emotion/react @emotion/styled &&
-
-                    # Start the development server
-                    yarn start
+                    # Start development server
+                    HOST=0.0.0.0 PORT=3001 yarn start
                     """
                 ],
                 detach=True,
@@ -578,17 +554,17 @@ def check_or_create_container(request):
                     'USER_ID': user_id,
                     'REACT_APP_USER_ID': user_id,
                     'FILE_NAME': file_name,
-                    'PORT': str(3001),
-                    'NODE_ENV': 'development',  # Changed to development for better debugging
+                    'PORT': '3001',
+                    'HOST': '0.0.0.0',
+                    'NODE_ENV': 'development',
                     'NODE_OPTIONS': '--max-old-space-size=8192',
-                    'WATCHPACK_POLLING': 'true'  # Enable polling for file changes
+                    'WATCHPACK_POLLING': 'true',
+                    'SKIP_PREFLIGHT_CHECK': 'true'
                 },
                 volumes={
                     os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json',
-                                                                        'mode': 'rw'},
-                    # Remove package-lock.json binding to avoid conflicts
+                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
                 },
                 ports={'3001/tcp': host_port},

@@ -384,7 +384,6 @@ def get_container_logs(request):
         return JsonResponse({'error': str(e)}, status=500)
 
 
-
 def get_available_port(start, end):
     while True:
         port = random.randint(start, end)
@@ -397,6 +396,7 @@ def get_available_port(start, end):
 
 @api_view(['POST'])
 def check_or_create_container(request):
+    # Initialize variables
     file_structure = []
     data = request.data
     code = data.get('main_code')
@@ -405,13 +405,16 @@ def check_or_create_container(request):
     file_name = data.get('file_name', 'component.js')
     main_file_path = data.get('main_file_path')
 
-    detailed_logger.log('info', f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
+    detailed_logger.log('info',
+                        f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
 
+    # Validate inputs
     if not all([code, language, file_name]):
         return JsonResponse({'error': 'Missing required fields'}, status=400)
     if language != 'react':
         return JsonResponse({'error': 'Unsupported language'}, status=400)
 
+    # Setup variables
     react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'
     container_name = f'react_renderer_{user_id}_{file_name}'
     app_name = f"{user_id}_{file_name.replace('.', '-')}"
@@ -424,221 +427,132 @@ def check_or_create_container(request):
     }
 
     try:
-        container = client.containers.get(container_name)
-        detailed_logger.log('info', f"Found existing container: {container.id}")
-
-        # Check if the container is running, if not, start it
-        if container.status != 'running':
-            detailed_logger.log('info', f"Container {container.id} is not running. Attempting to start it.")
-            container.start()
-            container.reload()
-            time.sleep(5)  # Wait for container to fully start
-
-        # Here's where we need to check the actual compilation status
-        compilation_status = get_compilation_status(container)
-
-        container_info = {
-            'container_name': container.name,
-            'created_at': datetime.now().isoformat(),
-            'status': container.status,
-            'ports': container.ports,
-            'image': container.image.tags[0] if container.image.tags else 'Unknown',
-            'id': container.id
-        }
-
-
-        # Get the host port
-        port_bindings = container.attrs['NetworkSettings']['Ports']
-        host_port = None
-        if '3001/tcp' in port_bindings and port_bindings['3001/tcp']:
-            host_port = port_bindings['3001/tcp'][0]['HostPort']
-        dynamic_url = f"https://{host_port}.{HOST_URL}"
-
+        # Try to get existing container
         try:
-            # Check for non-standard imports
+            container = client.containers.get(container_name)
+            detailed_logger.log('info', f"Found existing container: {container.id}")
+
+            if container.status != 'running':
+                detailed_logger.log('info', f"Container {container.id} is not running. Starting...")
+                container.start()
+                container.reload()
+                time.sleep(5)
+
+        except docker.errors.NotFound:
+            detailed_logger.log('info', f"Creating new container: {container_name}")
+            host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
+
+            # Create new container
+            container = client.containers.run(
+                'react_renderer_prod',
+                command=[
+                    "sh", "-c",
+                    f"""
+                    yarn create next-app {app_name} --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" &&
+                    mv {app_name}/* . &&
+                    rm -rf {app_name} &&
+                    yarn add @babel/traverse@7.23.2 @babel/core@7.22.20 &&
+                    yarn add @babel/helper-remap-async-to-generator@7.22.20 &&
+                    export NODE_OPTIONS="--max-old-space-size=8192" &&
+                    yarn start
+                    """
+                ],
+                detach=True,
+                name=container_name,
+                environment={
+                    'USER_ID': user_id,
+                    'REACT_APP_USER_ID': user_id,
+                    'FILE_NAME': file_name,
+                    'PORT': str(3001),
+                    'NODE_ENV': 'development',
+                    'NODE_OPTIONS': '--max-old-space-size=8192',
+                    'WATCHPACK_POLLING': 'true'
+                },
+                volumes={
+                    os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
+                },
+                ports={'3001/tcp': host_port},
+                mem_limit='8g',
+                memswap_limit='16g',
+                cpu_quota=100000,
+                restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
+            )
+
+            # Wait for container setup
+            time.sleep(20)
+            detailed_logger.log('info', f"New container created: {container.name}")
+            container_info['build_status'] = 'created'
+
+        # Update container with code
+        try:
+            # Check and install dependencies
             non_standard_imports = check_non_standard_imports(code)
             installed_packages = []
             if non_standard_imports:
-                installed_packages = install_packages(container, non_standard_imports)
+                installed_packages, failed_packages = install_packages(container, non_standard_imports)
 
-            # Check for local imports
-            missing_local_imports = check_local_imports(container, code)
+            # Update code
+            build_output, files_added, compilation_status = update_code_internal(
+                container, code, user_id, file_name, main_file_path
+            )
 
-            build_output, files_added, failed_packages, compilation_status = update_code_internal(container, code, user_id, file_name,
-                                                                                 main_file_path)
-
-            datailed_logs = container.logs(tail=200).decode('utf-8')  # Get last 200 lines of logs
+            # Get container status
+            container.reload()
+            detailed_logs = container.logs(tail=200).decode('utf-8')
             file_structure = get_container_file_structure(container)
 
+            # Get URL
+            port_mapping = container.ports.get('3001/tcp')
+            if not port_mapping:
+                raise Exception("Failed to get port mapping")
+
+            host_port = port_mapping[0]['HostPort']
+            dynamic_url = f"https://{host_port}.{HOST_URL}"
+
+            # Return success response
             return JsonResponse({
                 'status': 'success',
                 'message': 'Container is running',
                 'container_id': container.id,
                 'url': dynamic_url,
                 'can_deploy': True,
-                'container_info': container_info,
+                'container_info': {
+                    'container_name': container.name,
+                    'created_at': container_info['created_at'],
+                    'status': container.status,
+                    'ports': container.ports,
+                    'image': container.image.tags[0] if container.image.tags else 'Unknown',
+                    'id': container.id,
+                    'file_structure': file_structure
+                },
                 'build_output': build_output,
                 'detailed_logs': detailed_logger.get_logs(),
                 'file_list': file_structure,
                 'installed_packages': installed_packages,
-                'failed_packages': failed_packages,  # New field
+                'failed_packages': failed_packages,
                 'files_added': files_added,
-                'compilation_status': compilation_status,  # New field
+                'compilation_status': compilation_status
             })
-        except Exception as update_error:
-            detailed_logger.log('error', f"Failed to update code: {str(update_error)}")
-            return JsonResponse({
-                'status': 'error',
-                'message': str(update_error),
-                'build_output': getattr(update_error, 'build_output', None),
-                'detailed_logs': detailed_logger.get_logs(),
-                'file_list': file_structure,
-            }, status=500)
 
-
-        except docker.errors.NotFound:
-
-            detailed_logger.log('info', f"Container {container_name} not found. Creating new container.")
-            host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
-            detailed_logger.log('info', f"Selected port {host_port} for new container")
-            try:
-                container = client.containers.run(
-                    'react_renderer_prod',
-                    command=[
-                        "sh",
-                        "-c",
-                        f"""
-                            yarn create next-app {app_name} --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" &&
-                            mv {app_name}/* . &&
-                            rm -rf {app_name} &&
-                            yarn add @babel/traverse@7.23.2 @babel/core@7.22.20 && \
-                            yarn add @babel/helper-remap-async-to-generator@7.22.20 && \
-                            export NODE_OPTIONS="--max-old-space-size=8192" && \
-                            yarn start
-
-                            """
-                    ],
-                    detach=True,
-                    name=container_name,
-                    environment={
-                        'USER_ID': user_id,
-                        'REACT_APP_USER_ID': user_id,
-                        'FILE_NAME': file_name,
-                        'PORT': str(3001),
-                        'NODE_ENV': 'development',
-                        'NODE_OPTIONS': '--max-old-space-size=8192',
-                        'WATCHPACK_POLLING': 'true'
-                    },
-
-                    volumes={
-                        os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
-                        os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
-                        os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'rw'},
-                        # Remove package-lock.json binding to avoid conflicts
-                        os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
-
-                    },
-                    ports={'3001/tcp': host_port},
-                    mem_limit='8g',
-                    memswap_limit='16g',
-                    cpu_quota=100000,
-                    restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
-                )
-
-                # Add error checking for installation process
-                installation_logs = container.logs(stdout=True, stderr=True).decode()
-                if "error" in installation_logs.lower():
-                    detailed_logger.log('error', f"Errors during dependency installation: {installation_logs}")
-
-                # Wait for installation to complete
-                time.sleep(20)  # Adjust this value based on your needs
-
-                # Verify TypeScript installation
-                verify_cmd = container.exec_run("yarn list typescript")
-                if verify_cmd.exit_code != 0:
-                    detailed_logger.log('error', "TypeScript installation verification failed")
-                    raise Exception("Failed to install TypeScript")
-
-                detailed_logger.log('info', f"New container created: {container_name}")
-                container_info['build_status'] = 'created'
-                # Wait for Next.js project creation to complete
-                time.sleep(30)  # Adjust this wait time as needed
-
-            except docker.errors.APIError as e:
-                detailed_logger.log('error', f"Failed to create container: {str(e)}")
-                return JsonResponse({
-                    'error': f'Failed to create container: {str(e)}',
-                    'container_info': container_info,
-                    'detailed_logs': detailed_logger.get_logs(),
-                    'file_list': detailed_logger.get_file_list(),
-                }, status=500)
-
-        try:
-
-            # Check for non-standard imports
-            non_standard_imports = check_non_standard_imports(code)
-            installed_packages = []
-            if non_standard_imports:
-                installed_packages = install_packages(container, non_standard_imports)
-
-            # Check for local imports
-            missing_local_imports = check_local_imports(container, code)
-
-            build_output, files_added, compilation_status = update_code_internal(container, code, user_id, file_name,
-                                                                                 main_file_path)
-            container_info['build_status'] = 'updated'
-
-            file_structure = get_container_file_structure(container)
-            datailed_logs = container.logs(tail=200).decode('utf-8')  # Get last 200 lines of logs
-            detailed_logger.log('warning', f"File structure: {file_structure}, \nbuild output {build_output}")
-            container_info['file_structure'] = file_structure
-
-            container.reload()
-            port_mapping = container.ports.get('3001/tcp')
-            detailed_logger.log('warning', "check that container reload successful, port mapping successful")
-            if port_mapping:
-                dynamic_url = f"https://{host_port}.{HOST_URL}"
-                detailed_logger.log('info', f"Container {container_name} running successfully: {dynamic_url}")
-                return JsonResponse({
-                    'status': 'success',
-                    'message': 'Container is running',
-                    'container_id': container.id,
-                    'url': dynamic_url,
-                    'can_deploy': True,
-                    'container_info': container_info,
-                    'build_output': build_output,
-                    'detailed_logs': detailed_logger.get_logs(),
-                    'file_list': file_structure,
-                    'installed_packages': installed_packages,
-                    'files_added': files_added
-                })
-            else:
-                detailed_logger.log('error', f"Failed to get port mapping for container {container_name}")
-                return JsonResponse({
-                    'error': 'Failed to get port mapping',
-                    'container_info': container_info,
-                    'build_output': build_output,
-                    'detailed_logs': detailed_logger.get_logs(),
-                    'file_list': file_structure,
-                    'installed_packages': installed_packages,
-                    'files_added': files_added
-                }, status=500)
         except Exception as e:
-            detailed_logger.log('error', f"!!!Failed to update code in container: {str(e)}")
+            detailed_logger.log('error', f"Failed to update container: {str(e)}")
             return JsonResponse({
-                'error': f'Failed to update code in container: {str(e)}',
+                'error': str(e),
                 'container_info': container_info,
                 'detailed_logs': detailed_logger.get_logs(),
-                'file_list': [],
+                'file_list': file_structure
             }, status=500)
 
     except Exception as e:
-        detailed_logger.log('error', f"Unexpected error: {str(e)}")
+        detailed_logger.log('error', f"Container creation/retrieval error: {str(e)}")
         return JsonResponse({
-            'error': f'Unexpected error: {str(e)}',
+            'error': str(e),
             'container_info': container_info if 'container_info' in locals() else None,
             'detailed_logs': detailed_logger.get_logs(),
-            'file_list': detailed_logger.get_file_list(),
+            'file_list': detailed_logger.get_file_list()
         }, status=500)
 
 

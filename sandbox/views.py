@@ -486,61 +486,123 @@ def check_or_create_container(request):
     }
 
     try:
-        # Try to get existing container
+        container = client.containers.get(container_name)
+        detailed_logger.log('info', f"Found existing container: {container.id}")
+
+        # Check if the container is running, if not, start it
+        if container.status != 'running':
+            detailed_logger.log('info', f"Container {container.id} is not running. Attempting to start it.")
+            container.start()
+            container.reload()
+            time.sleep(5)  # Wait for container to fully start
+
+        # Here's where we need to check the actual compilation status
+        compilation_status = get_compilation_status(container)
+
+        container_info = {
+            'container_name': container.name,
+            'created_at': datetime.now().isoformat(),
+            'status': container.status,
+            'ports': container.ports,
+            'image': container.image.tags[0] if container.image.tags else 'Unknown',
+            'id': container.id
+        }
+
+
+        # Get the host port
+        port_bindings = container.attrs['NetworkSettings']['Ports']
+        host_port = None
+        if '3001/tcp' in port_bindings and port_bindings['3001/tcp']:
+            host_port = port_bindings['3001/tcp'][0]['HostPort']
+        dynamic_url = f"https://{host_port}.{HOST_URL}"
+
         try:
-            container = client.containers.get(container_name)
-            detailed_logger.log('info', f"Found existing container: {container.id}")
+            # Check for non-standard imports
+            non_standard_imports = check_non_standard_imports(code)
+            installed_packages = []
+            if non_standard_imports:
+                installed_packages = install_packages(container, non_standard_imports)
 
-            if container.status != 'running':
-                detailed_logger.log('info', f"Container {container.id} is not running. Starting...")
-                container.start()
-                container.reload()
-                time.sleep(5)
+            # Check for local imports
+            missing_local_imports = check_local_imports(container, code)
 
-        except docker.errors.NotFound:
-            detailed_logger.log('info', f"Creating new container: {container_name}")
-            host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
+            build_output, files_added, failed_packages, compilation_status = update_code_internal(container, code, user_id, file_name,
+                                                                                 main_file_path)
 
-            # Create new container
-            container = client.containers.run(
-                'react_renderer_prod',
-                command=[
-                    "sh", "-c",
-                    f"""
-                    yarn create next-app {app_name} --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" &&
-                    mv {app_name}/* . &&
-                    rm -rf {app_name} &&
-                    yarn start
-                    """
-                ],
-                detach=True,
-                name=container_name,
-                environment={
-                    'USER_ID': user_id,
-                    'REACT_APP_USER_ID': user_id,
-                    'FILE_NAME': file_name,
-                    'PORT': str(3001),
-                    'NODE_ENV': 'development',
-                    'NODE_OPTIONS': '--max-old-space-size=8192',
-                    'WATCHPACK_POLLING': 'true'
-                },
-                volumes={
-                    os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
-                },
-                ports={'3001/tcp': host_port},
-                mem_limit='8g',
-                memswap_limit='16g',
-                cpu_quota=100000,
-                restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
-            )
+            datailed_logs = container.logs(tail=200).decode('utf-8')  # Get last 200 lines of logs
+            file_structure = get_container_file_structure(container)
 
-            # Wait for container setup
-            time.sleep(20)
-            detailed_logger.log('info', f"New container created: {container.name}")
-            container_info['build_status'] = 'created'
+            return JsonResponse({
+                'status': 'success',
+                'message': 'Container is running',
+                'container_id': container.id,
+                'url': dynamic_url,
+                'can_deploy': True,
+                'container_info': container_info,
+                'build_output': build_output,
+                'detailed_logs': detailed_logger.get_logs(),
+                'file_list': file_structure,
+                'installed_packages': installed_packages,
+                'failed_packages': failed_packages,  # New field
+                'files_added': files_added,
+                'compilation_status': compilation_status,  # New field
+            })
+        except Exception as update_error:
+            detailed_logger.log('error', f"Failed to update code: {str(update_error)}")
+            return JsonResponse({
+                'status': 'error',
+                'message': str(update_error),
+                'build_output': getattr(update_error, 'build_output', None),
+                'detailed_logs': detailed_logger.get_logs(),
+                'file_list': file_structure,
+            }, status=500)
+
+
+    except docker.errors.NotFound:
+        detailed_logger.log('info', f"Creating new container: {container_name}")
+        host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
+
+        # Create new container
+        container = client.containers.run(
+            'react_renderer_prod',
+            command=[
+                "sh", "-c",
+                f"""
+
+                yarn create next-app {app_name} --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" &&
+                mv {app_name}/* . &&
+                rm -rf {app_name} &&
+                yarn start
+                """
+            ],
+            detach=True,
+            name=container_name,
+            environment={
+                'USER_ID': user_id,
+                'REACT_APP_USER_ID': user_id,
+                'FILE_NAME': file_name,
+                'PORT': str(3001),
+                'NODE_ENV': 'development',
+                'NODE_OPTIONS': '--max-old-space-size=8192',
+                'WATCHPACK_POLLING': 'true'
+            },
+            volumes={
+                os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
+                os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
+                os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'rw'},
+                os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
+            },
+            ports={'3001/tcp': host_port},
+            mem_limit='8g',
+            memswap_limit='16g',
+            cpu_quota=100000,
+            restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
+        )
+
+        # Wait for container setup
+        time.sleep(20)
+        detailed_logger.log('info', f"New container created: {container.name}")
+        container_info['build_status'] = 'created'
 
         # Update container with code
         try:

@@ -573,7 +573,7 @@ def get_or_create_container(container_name, user_id, file_name, app_name, react_
         return container
 
 
-def get_or_create_container(container_name, user_id, file_name, app_name, react_renderer_path):
+def check_or_create_container(container_name, user_id, file_name, app_name, react_renderer_path):
     """Helper function to get existing container or create new one"""
     try:
         # Try to get existing container

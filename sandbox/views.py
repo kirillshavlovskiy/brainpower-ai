@@ -573,6 +573,69 @@ def get_or_create_container(container_name, user_id, file_name, app_name, react_
         return container
 
 
+def get_or_create_container(container_name, user_id, file_name, app_name, react_renderer_path):
+    """Helper function to get existing container or create new one"""
+    try:
+        # Try to get existing container
+        container = client.containers.get(container_name)
+        detailed_logger.log('info', f"Found existing container: {container.id}")
+
+        # Restart container if not running
+        if container.status != 'running':
+            detailed_logger.log('info', f"Starting existing container: {container.id}")
+            container.start()
+            container.reload()
+            time.sleep(5)  # Wait for container startup
+
+        return container
+
+    except docker.errors.NotFound:
+        detailed_logger.log('info', f"Creating new container: {container_name}")
+        host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
+
+        container = client.containers.run(
+            'react_renderer_prod',
+            command=[
+                "sh", "-c",
+                f"""
+                cd /app &&
+                yarn add @babel/traverse@7.23.2 @babel/core@7.22.20 &&
+                yarn add @babel/helper-remap-async-to-generator@7.22.20 &&
+                yarn install &&
+                yarn start
+                """
+            ],
+            detach=True,
+            name=container_name,
+            environment={
+                'USER_ID': user_id,
+                'REACT_APP_USER_ID': user_id,
+                'FILE_NAME': file_name,
+                'PORT': str(3001),
+                'NODE_ENV': 'development',
+                'NODE_OPTIONS': '--max-old-space-size=8192',
+                'WATCHPACK_POLLING': 'true'
+            },
+            volumes={
+                os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
+                os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
+                os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'rw'},
+                os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
+            },
+            ports={'3001/tcp': host_port},
+            mem_limit='8g',
+            memswap_limit='16g',
+            cpu_quota=100000,
+            restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
+        )
+
+        # Wait for container initialization
+        time.sleep(20)
+        detailed_logger.log('info', f"New container created with ID: {container.id}")
+
+        return container
+
+
 def install_packages(container, packages):
     installed_packages = []
     failed_packages = []

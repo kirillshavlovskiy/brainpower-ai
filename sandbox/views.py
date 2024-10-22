@@ -131,7 +131,6 @@ def check_container(request):
         return JsonResponse({'error': str(e)}, status=500)
 
 
-
 def exec_command_with_retry(container, command, max_retries=3, delay=1):
     for attempt in range(max_retries):
         try:
@@ -163,25 +162,39 @@ def exec_command_with_retry(container, command, max_retries=3, delay=1):
 
 
 def set_container_permissions(container):
-    """Set proper permissions for container directories"""
+    """Set proper permissions for container directories with read-only handling"""
     try:
+        # Check if src directory exists
+        check_result = container.exec_run(
+            "test -d /app/src || mkdir -p /app/src",
+            user='root'
+        )
+
+        # Only try to set permissions for writable directories
         commands = [
-            "mkdir -p /app/src",
-            "chown -R node:node /app",
-            "chmod -R 755 /app",
-            "chmod -R g+w /app/src"  # Add group write permissions
+            "chown -R node:node /app/src",
+            "chmod -R 755 /app/src",
+            "chmod -R g+w /app/src",
+            "touch /app/compilation_status",
+            "chown node:node /app/compilation_status",
+            "chmod 644 /app/compilation_status"
         ]
 
         for cmd in commands:
-            exec_result = container.exec_run(
-                ["sh", "-c", cmd],
-                user='root'
-            )
-            if exec_result.exit_code != 0:
-                raise Exception(f"Failed to set permissions: {exec_result.output.decode()}")
+            try:
+                exec_result = container.exec_run(
+                    ["sh", "-c", cmd],
+                    user='root'
+                )
+                if exec_result.exit_code != 0:
+                    logger.warning(f"Command {cmd} failed with: {exec_result.output.decode()}")
+            except Exception as cmd_error:
+                logger.warning(f"Error executing {cmd}: {str(cmd_error)}")
+                continue
 
-        logger.info("Container permissions set successfully")
+        logger.info("Container permissions set successfully for writable directories")
         return True
+
     except Exception as e:
         logger.error(f"Error setting container permissions: {str(e)}")
         return False
@@ -470,7 +483,7 @@ def check_or_create_container(request):
     main_file_path = data.get('main_file_path')
 
     detailed_logger.log('info',
-                        f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
+                        f"Received request to check or create container for user {user_id}, file {file_name}, path {main_file_path}")
 
     # Validate inputs
     if not all([code, language, file_name]):
@@ -482,6 +495,7 @@ def check_or_create_container(request):
     react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'
     container_name = f'react_renderer_{user_id}_{file_name}'
     app_name = f"{user_id}_{file_name.replace('.', '-')}"
+    temp_dir = None
 
     container_info = {
         'container_name': container_name,
@@ -492,6 +506,7 @@ def check_or_create_container(request):
 
     try:
         try:
+            # Try to get existing container
             container = client.containers.get(container_name)
             detailed_logger.log('info', f"Found existing container: {container.id}")
 
@@ -501,87 +516,59 @@ def check_or_create_container(request):
                 container.reload()
                 time.sleep(5)
 
-            # Verify permissions
-            if not set_container_permissions(container):
-                raise Exception("Failed to set container permissions")
-
-            # Get compilation status and container info
-            compilation_status = get_compilation_status(container)
-            container_info.update({
-                'status': container.status,
-                'ports': container.ports,
-                'image': container.image.tags[0] if container.image.tags else 'Unknown',
-                'id': container.id
-            })
-
-            # Check port bindings through NetworkSettings
-            port_bindings = container.attrs['NetworkSettings']['Ports']
-            host_port = None
-            if '3001/tcp' in port_bindings and port_bindings['3001/tcp']:
-                host_port = port_bindings['3001/tcp'][0]['HostPort']
-
-            if not host_port:
-                raise Exception("No port mapping found")
-
-            dynamic_url = f"https://{host_port}.{HOST_URL}"
-
-            # Handle imports and dependencies
-            non_standard_imports = check_non_standard_imports(code)
-            installed_packages = []
-            failed_packages = []
-            if non_standard_imports:
-                installed_packages, failed_packages = install_packages(container, non_standard_imports)
-
-            # Check local imports
-            missing_local_imports = check_local_imports(container, code)
-
-            # Update code
-            build_output, files_added, compilation_status = update_code_internal(
-                container, code, user_id, file_name, main_file_path
-            )
-
-            # Get latest container status
-            container.reload()
-            detailed_logs = container.logs(tail=200).decode('utf-8')
-            file_structure = get_container_file_structure(container)
-
-            return JsonResponse({
-                'status': 'success',
-                'message': 'Container is running',
-                'container_id': container.id,
-                'url': dynamic_url,
-                'can_deploy': True,
-                'container_info': container_info,
-                'build_output': build_output,
-                'detailed_logs': detailed_logger.get_logs(),
-                'file_list': file_structure,
-                'installed_packages': installed_packages,
-                'failed_packages': failed_packages,
-                'files_added': files_added,
-                'compilation_status': compilation_status,
-                'missing_local_imports': missing_local_imports
-            })
+            # Create essential directories with proper permissions
+            create_dirs_cmd = """
+                mkdir -p /app/src /app/node_modules && \
+                chown -R node:node /app/src /app/node_modules && \
+                chmod -R 755 /app/src /app/node_modules
+            """
+            container.exec_run(["sh", "-c", create_dirs_cmd], user='root')
 
         except docker.errors.NotFound:
             detailed_logger.log('info', f"Creating new container: {container_name}")
             host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
+
+            # Create temporary directory for container setup
+            temp_dir = tempfile.mkdtemp(prefix='react_renderer_')
+            os.makedirs(os.path.join(temp_dir, 'src'), exist_ok=True)
+            os.makedirs(os.path.join(temp_dir, 'node_modules'), exist_ok=True)
+
+            # Copy necessary files to temp directory
+            shutil.copy2(os.path.join(react_renderer_path, 'package.json'), temp_dir)
+            if os.path.exists(os.path.join(react_renderer_path, 'yarn.lock')):
+                shutil.copy2(os.path.join(react_renderer_path, 'yarn.lock'), temp_dir)
+
+            # Set proper permissions on temp directory
+            os.chmod(temp_dir, 0o755)
+            os.chmod(os.path.join(temp_dir, 'src'), 0o755)
+            os.chmod(os.path.join(temp_dir, 'node_modules'), 0o755)
 
             container = client.containers.run(
                 'react_renderer_prod',
                 command=[
                     "sh", "-c",
                     f"""
-                    mkdir -p /app/src && \
+                    # Initial setup
+                    mkdir -p /app/src /app/node_modules && \
                     chown -R node:node /app && \
                     chmod -R 755 /app && \
 
+                    # Create compilation status file
+                    touch /app/compilation_status && \
+                    chown node:node /app/compilation_status && \
+                    chmod 644 /app/compilation_status && \
+
+                    # Setup Next.js app
+                    cd /app && \
                     yarn create next-app {app_name} --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" && \
                     mv {app_name}/* . && \
                     rm -rf {app_name} && \
 
+                    # Install dependencies
                     yarn add @babel/traverse@7.23.2 @babel/core@7.22.20 && \
                     yarn add @babel/helper-remap-async-to-generator@7.22.20 && \
 
+                    # Start development server
                     export NODE_OPTIONS="--max-old-space-size=8192" && \
                     yarn start
                     """
@@ -599,10 +586,8 @@ def check_or_create_container(request):
                     'WATCHPACK_POLLING': 'true'
                 },
                 volumes={
-                    os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
+                    temp_dir: {'bind': '/app', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'ro'},
                 },
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',
@@ -614,61 +599,74 @@ def check_or_create_container(request):
             time.sleep(20)
             detailed_logger.log('info', f"New container created: {container.name}")
 
-            # Set proper permissions
-            if not set_container_permissions(container):
-                raise Exception("Failed to set initial container permissions")
+        # Common setup for both new and existing containers
+        if not set_container_permissions(container):
+            raise Exception("Failed to set container permissions")
 
-            # Process imports and update code
-            non_standard_imports = check_non_standard_imports(code)
-            installed_packages = []
-            failed_packages = []
-            if non_standard_imports:
-                installed_packages, failed_packages = install_packages(container, non_standard_imports)
+        # Process imports and dependencies
+        non_standard_imports = check_non_standard_imports(code)
+        installed_packages = []
+        failed_packages = []
+        if non_standard_imports:
+            installed_packages, failed_packages = install_packages(container, non_standard_imports)
 
-            build_output, files_added, compilation_status = update_code_internal(
-                container, code, user_id, file_name, main_file_path
-            )
+        # Check local imports
+        missing_local_imports = check_local_imports(container, code)
 
-            # Get final status
-            container.reload()
-            detailed_logs = container.logs(tail=200).decode('utf-8')
-            file_structure = get_container_file_structure(container)
+        # Update code
+        build_output, files_added, compilation_status = update_code_internal(
+            container, code, user_id, file_name, main_file_path
+        )
 
-            # Verify port mapping
-            port_mapping = container.ports.get('3001/tcp')
-            if not port_mapping:
-                raise Exception("Failed to get port mapping")
+        # Get container status and URL
+        container.reload()
+        port_mapping = container.ports.get('3001/tcp')
+        if not port_mapping:
+            raise Exception("Failed to get port mapping")
 
-            host_port = port_mapping[0]['HostPort']
-            dynamic_url = f"https://{host_port}.{HOST_URL}"
+        host_port = port_mapping[0]['HostPort']
+        dynamic_url = f"https://{host_port}.{HOST_URL}"
 
-            return JsonResponse({
-                'status': 'success',
-                'message': 'Container is running',
-                'container_id': container.id,
-                'url': dynamic_url,
-                'can_deploy': True,
-                'container_info': {
-                    'container_name': container.name,
-                    'created_at': container_info['created_at'],
-                    'status': container.status,
-                    'ports': container.ports,
-                    'image': container.image.tags[0] if container.image.tags else 'Unknown',
-                    'id': container.id,
-                    'file_structure': file_structure
-                },
-                'build_output': build_output,
-                'detailed_logs': detailed_logger.get_logs(),
-                'file_list': file_structure,
-                'installed_packages': installed_packages,
-                'failed_packages': failed_packages,
-                'files_added': files_added,
-                'compilation_status': compilation_status
-            })
+        # Get final container status
+        detailed_logs = container.logs(tail=200).decode('utf-8')
+        file_structure = get_container_file_structure(container)
+
+        return JsonResponse({
+            'status': 'success',
+            'message': 'Container is running',
+            'container_id': container.id,
+            'url': dynamic_url,
+            'can_deploy': True,
+            'container_info': {
+                'container_name': container.name,
+                'created_at': container_info['created_at'],
+                'status': container.status,
+                'ports': container.ports,
+                'image': container.image.tags[0] if container.image.tags else 'Unknown',
+                'id': container.id,
+                'file_structure': file_structure
+            },
+            'build_output': build_output,
+            'detailed_logs': detailed_logger.get_logs(),
+            'file_list': file_structure,
+            'installed_packages': installed_packages,
+            'failed_packages': failed_packages,
+            'files_added': files_added,
+            'compilation_status': compilation_status,
+            'missing_local_imports': missing_local_imports
+        })
 
     except Exception as e:
         error_message = str(e)
         detailed_logger.log('error', f"Container error: {error_message}")
+
+        # Cleanup temp directory if it exists
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception as cleanup_error:
+                detailed_logger.log('error', f"Error cleaning up temp directory: {str(cleanup_error)}")
+
         return JsonResponse({
             'error': error_message,
             'container_info': container_info if 'container_info' in locals() else None,
@@ -676,28 +674,64 @@ def check_or_create_container(request):
             'file_list': detailed_logger.get_file_list()
         }, status=500)
 
+    finally:
+        # Cleanup temp directory in success case
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception as cleanup_error:
+                detailed_logger.log('error', f"Error cleaning up temp directory: {str(cleanup_error)}")
+
 
 def get_compilation_status(container):
+    """Get compilation status with error recovery"""
     try:
         # Try to read the compilation status file
-        status_result = exec_command_with_retry(container, ["cat", "/app/compilation_status"])
-        saved_status = status_result.decode().strip()
+        status_result = container.exec_run(
+            [
+                "sh", "-c",
+                "cat /app/compilation_status 2>/dev/null || echo 'COMPILING'"
+            ],
+            user='root'
+        )
+        saved_status = status_result.output.decode().strip()
 
-        if saved_status and saved_status in [ContainerStatus.READY, ContainerStatus.WARNING,
-                                             ContainerStatus.COMPILATION_FAILED]:
+        if saved_status and saved_status in [
+            ContainerStatus.READY,
+            ContainerStatus.WARNING,
+            ContainerStatus.COMPILATION_FAILED
+        ]:
             return saved_status
 
-        # If no valid status is saved, or if it's still COMPILING, we need to check the logs
+        # Create status file if it doesn't exist
+        container.exec_run(
+            [
+                "sh", "-c",
+                "touch /app/compilation_status && chown node:node /app/compilation_status && chmod 644 /app/compilation_status"
+            ],
+            user='root'
+        )
+
+        # Check logs for status
         logs = container.logs(tail=100).decode('utf-8')
 
         if "Compiled successfully" in logs:
-            return ContainerStatus.READY
+            new_status = ContainerStatus.READY
         elif "Compiled with warnings" in logs:
-            return ContainerStatus.WARNING
+            new_status = ContainerStatus.WARNING
         elif "Failed to compile" in logs:
-            return ContainerStatus.COMPILATION_FAILED
+            new_status = ContainerStatus.COMPILATION_FAILED
         else:
-            return ContainerStatus.COMPILING
+            new_status = ContainerStatus.COMPILING
+
+        # Save the new status
+        container.exec_run(
+            ["sh", "-c", f"echo {new_status} > /app/compilation_status"],
+            user='root'
+        )
+
+        return new_status
+
     except Exception as e:
         logger.error(f"Error getting compilation status: {str(e)}")
         return ContainerStatus.ERROR
@@ -825,6 +859,7 @@ def check_container(request):
             'error_details': traceback.format_exc()
         }, status=500)
 
+
 @api_view(['GET'])
 def get_container_logs(request):
     container_id = request.GET.get('container_id')
@@ -839,16 +874,6 @@ def get_container_logs(request):
         return JsonResponse({'error': 'Container not found'}, status=404)
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
-
-
-def get_available_port(start, end):
-    while True:
-        port = random.randint(start, end)
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        result = sock.connect_ex(('localhost', port))
-        sock.close()
-        if result != 0:
-            return port
 
 
 def install_packages(container, packages):

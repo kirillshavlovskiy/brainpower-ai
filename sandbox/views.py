@@ -535,15 +535,7 @@ def check_or_create_container(request):
                     "sh",
                     "-c",
                     """
-                    # Clean any existing processes
-                    pkill -f "node" || true
-
-                    # Remove any lock files
-                    rm -f package-lock.json yarn.lock
-
-                    # Install dependencies
-                    yarn install
-
+                    
                     # Start development server
                     HOST=0.0.0.0 PORT=3001 yarn start
                     """

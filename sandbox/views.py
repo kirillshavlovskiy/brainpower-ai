@@ -158,187 +158,155 @@ def check_container(request):
 
 def update_code_internal(container, code, user, file_name, main_file_path):
     files_added = []
-    build_output = []
-    failed_packages = []
-
+    build_output= []
     try:
-        # First verify container is running and healthy
-        try:
-            exec_command_with_retry(container, ["echo", "Container health check"])
-        except Exception as e:
-            logger.error(f"Container health check failed: {str(e)}")
-            # Try to restart the container
-            container.restart()
-            time.sleep(10)
-            container.reload()
-
         # Check if file is TypeScript
         is_typescript = file_name.endswith('.tsx') or file_name.endswith('.ts')
 
         # Add type declarations if it's a TypeScript file
         if is_typescript:
+            # Ensure the file has proper React imports for TypeScript
             if not 'import React' in code:
                 code = 'import React from "react";\n' + code
+
+            # Add missing export if needed
             if not 'export default' in code:
                 code = code.rstrip() + '\n\nexport default {};\n'
 
-        # Update files with retry mechanism
-        def write_file_with_retry(content, filepath):
-            encoded_content = base64.b64encode(content.encode()).decode()
-            exec_result = exec_command_with_retry(
-                container,
-                ["sh", "-c", f"echo {encoded_content} | base64 -d > {filepath}"]
-            )
-            return filepath
-
-        # Update main file
+        # Update the file
+        encoded_code = base64.b64encode(code.encode()).decode()
         file_path = f"/app/src/{file_name}"
-        try:
-            write_file_with_retry(code, file_path)
-            files_added.append(file_path)
-            logger.info(f"Successfully updated {file_path}")
-        except Exception as e:
-            logger.error(f"Failed to update {file_path}: {str(e)}")
-            raise
+
+        exec_result = container.exec_run([
+            "sh", "-c",
+            f"echo {encoded_code} | base64 -d > {file_path}"
+        ])
+
+        if exec_result.exit_code != 0:
+            raise Exception(f"Failed to update {file_name} in container: {exec_result.output.decode()}")
+
+        files_added.append(file_path)
 
         # Update component.js
-        try:
-            write_file_with_retry(code, '/app/src/component.js')
-            files_added.append('/app/src/component.js')
-            logger.info("Successfully updated component.js")
-        except Exception as e:
-            logger.error(f"Failed to update component.js: {str(e)}")
-            raise
+        encoded_code = base64.b64encode(code.encode()).decode()
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                exec_result = container.exec_run([
+                    "sh", "-c",
+                    f"echo {encoded_code} | base64 -d > /app/src/component.js"
+                ])
+                if exec_result.exit_code != 0:
+                    raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
+                files_added.append('/app/src/component.js')
+                break
+            except docker.errors.APIError as e:
+                if attempt == max_attempts - 1:
+                    raise
+                logger.warning(f"API error on attempt {attempt + 1}, retrying: {str(e)}")
+                time.sleep(1)
 
-        # Process imports
+        logger.info(f"Updated component.js in container with content from {file_name} at path {main_file_path}")
+        logger.info(f"Processing for user: {user}")
+
+        # Get the directory of the main file
         base_path = os.path.dirname(main_file_path)
+        logger.info(f"Base path derived from main file: {base_path}")
+
+        # Handle all imports (CSS, JS, TS, JSON, etc.)
         import_pattern = r"import\s+(?:(?:{\s*[\w\s,]+\s*})|(?:[\w]+)|\*\s+as\s+[\w]+)\s+from\s+['\"](.+?)['\"]|import\s+['\"](.+?)['\"]"
         imports = re.findall(import_pattern, code)
 
         for import_match in imports:
-            import_path = import_match[0] or import_match[1]
-            if not import_path:
-                continue
-
-            logger.info(f"Processing import: {import_path}")
-            try:
+            import_path = import_match[0] or import_match[1]  # Get the non-empty group
+            if import_path:
+                logger.info(f"Attempting to retrieve content for imported file: {import_path}")
                 file_content = FileStructureConsumer.get_file_content_for_container(user, import_path, base_path)
-                container_path = f"/app/src/{import_path}"
-
                 if file_content is not None:
-                    # Create directory and write file with retry
-                    exec_command_with_retry(
-                        container,
-                        ["sh", "-c", f"mkdir -p $(dirname {container_path})"]
-                    )
-                    write_file_with_retry(file_content, container_path)
+                    logger.info(f"Retrieved content for file: {import_path}")
+                    encoded_content = base64.b64encode(file_content.encode()).decode()
+                    container_path = f"/app/src/{import_path}"
+                    exec_result = container.exec_run([
+                        "sh", "-c",
+                        f"mkdir -p $(dirname {container_path}) && echo {encoded_content} | base64 -d > {container_path}"
+                    ])
+                    if exec_result.exit_code != 0:
+                        raise Exception(f"Failed to update {import_path} in container: {exec_result.output.decode()}")
+                    logger.info(f"Updated {import_path} in container")
                     files_added.append(container_path)
-                    logger.info(f"Successfully processed import: {import_path}")
                 else:
-                    # Create empty file
-                    exec_command_with_retry(
-                        container,
-                        ["sh", "-c", f"mkdir -p $(dirname {container_path}) && touch {container_path}"]
-                    )
-                    files_added.append(container_path)
-                    logger.info(f"Created empty file for import: {import_path}")
-            except Exception as e:
-                logger.error(f"Error processing import {import_path}: {str(e)}")
-                # Continue with other imports instead of failing
+                    logger.warning(f"File {import_path} not found or empty. Creating empty file in container.")
+                    container_path = f"/app/src/{import_path}"
+                    exec_result = container.exec_run([
+                        "sh", "-c",
+                        f"mkdir -p $(dirname {container_path}) && touch {container_path}"
+                    ])
+                    if exec_result.exit_code != 0:
+                        logger.error(
+                            f"Failed to create empty file {import_path} in container: {exec_result.output.decode()}")
+                    else:
+                        logger.info(f"Created empty file {import_path} in container")
+                        files_added.append(container_path)
 
-        # Handle non-standard imports
+        # Check for non-standard imports
         non_standard_imports = check_non_standard_imports(code)
         if non_standard_imports:
-            logger.info(f"Installing non-standard packages: {', '.join(non_standard_imports)}")
+            logger.info(f"Detected non-standard imports: {', '.join(non_standard_imports)}")
             installed_packages, failed_packages = install_packages(container, non_standard_imports)
+
             if failed_packages:
-                logger.warning(f"Failed to install packages: {', '.join(failed_packages)}")
+                logger.warning(f"Some packages failed to install: {', '.join(failed_packages)}")
 
-        # Update page.js
-        try:
-            write_file_with_retry(code, '/app/src/page.js')
-            files_added.append('/app/src/page.js')
-            logger.info("Successfully updated page.js")
-        except Exception as e:
-            logger.error(f"Failed to update page.js: {str(e)}")
-            # Continue despite page.js error
+            # You might want to decide here if you want to continue or raise an exception if some packages failed to install
 
-        # Start development server with retries and proper cleanup
-        logger.info("Starting development server")
-        try:
-            # First stop any existing processes
-            exec_command_with_retry(container, ["sh", "-c", "pkill -f 'node' || true"])
-            time.sleep(2)  # Wait for processes to stop
+        else:
+            logger.info("No non-standard imports detected")
+        encoded_code = base64.b64encode(code.encode()).decode()
+        exec_result = container.exec_run([
+            "sh", "-c",
+            f"echo {encoded_code} | base64 -d > /app/src/page.js"  # Adjust this path as needed
+        ])
+        if exec_result.exit_code != 0:
+            raise Exception(f"Failed to update page.js in container: {exec_result.output.decode()}")
+        files_added.append('/app/src/app/page.js')
+        # Start the development server
+        logger.info("Starting the development server with 'yarn start'")
+        exec_result = exec_command_with_retry(container, ["sh", "-c", "cd /app && yarn start"])
 
-            # Start the server
-            exec_result = exec_command_with_retry(
-                container,
-                ["sh", "-c", "cd /app && yarn start"],
-                max_retries=5,  # More retries for server start
-                delay=5  # Longer delay between retries
-            )
+        # Process the output
+        output_lines = exec_result.decode().split('\n')
+        build_output = output_lines
+        compilation_status = ContainerStatus.COMPILING
 
-            output_lines = exec_result.decode().split('\n')
-            build_output = output_lines
-            compilation_status = ContainerStatus.COMPILING
+        logger.info("Analyzing build output...")
+        for line in output_lines:
+            if "Compiled successfully" in line:
+                compilation_status = ContainerStatus.READY
+                logger.info("Compilation successful")
+                break
+            elif "Compiled with warnings" in line:
+                compilation_status = ContainerStatus.WARNING
+                logger.warning("Compilation completed with warnings")
+                break
+            elif "Failed to compile" in line:
+                compilation_status = ContainerStatus.COMPILATION_FAILED
+                logger.error("Compilation failed")
+                break
 
-            # Analyze build output
-            compilation_status = analyze_build_output(output_lines)
+        # Save compilation status
+        exec_command_with_retry(container, ["sh", "-c", f"echo {compilation_status} > /app/compilation_status"])
+        logger.info(f"Saved compilation status: {compilation_status}")
 
-            # Save compilation status
-            exec_command_with_retry(
-                container,
-                ["sh", "-c", f"echo {compilation_status} > /app/compilation_status"]
-            )
-
-            # Verify server is running
-            verify_server_running(container)
-
-        except Exception as e:
-            logger.error(f"Error starting development server: {str(e)}")
-            compilation_status = ContainerStatus.ERROR
-            build_output = [f"Error starting server: {str(e)}"]
-
+        # Log container status
         container.reload()
-        logger.info(f"Final container status: {container.status}")
-        logger.info(f"Final container state: {container.attrs['State']}")
+        logger.info(f"Container status after yarn start: {container.status}")
+        logger.info(f"Container state: {container.attrs['State']}")
 
         return "\n".join(build_output), files_added, failed_packages, compilation_status
 
     except Exception as e:
-        logger.error(f"Error in update_code_internal: {str(e)}", exc_info=True)
+        logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
         raise
-
-
-def analyze_build_output(output_lines):
-    """Analyze build output to determine compilation status"""
-    for line in output_lines:
-        if "Compiled successfully" in line:
-            return ContainerStatus.READY
-        elif "Compiled with warnings" in line:
-            return ContainerStatus.WARNING
-        elif "Failed to compile" in line:
-            return ContainerStatus.COMPILATION_FAILED
-    return ContainerStatus.COMPILING
-
-
-def verify_server_running(container):
-    """Verify that the development server is running"""
-    max_attempts = 5
-    for attempt in range(max_attempts):
-        try:
-            result = exec_command_with_retry(
-                container,
-                ["sh", "-c", "ps aux | grep 'node' | grep -v grep || true"]
-            )
-            if result:
-                return True
-            time.sleep(5)
-        except Exception as e:
-            if attempt == max_attempts - 1:
-                raise Exception(f"Server verification failed: {str(e)}")
-            time.sleep(5)
-    raise Exception("Server not running after verification attempts")
 
 
 def get_compilation_status(container):
@@ -443,6 +411,7 @@ def get_container_logs(request):
         return JsonResponse({'error': str(e)}, status=500)
 
 
+
 def get_available_port(start, end):
     while True:
         port = random.randint(start, end)
@@ -452,55 +421,6 @@ def get_available_port(start, end):
         if result != 0:
             return port
 
-
-def verify_container_health(container, max_wait=30):
-    """
-    Verify container health with wait logic for container start
-    """
-    start_time = time.time()
-    while time.time() - start_time < max_wait:
-        try:
-            container.reload()
-
-            if container.status == 'running':
-                # Basic health check
-                try:
-                    result = exec_command_with_retry(
-                        container,
-                        ["echo", "health check"],
-                        max_retries=1  # Single retry since we're already in a retry loop
-                    )
-                    return True, {"status": "healthy", "container_status": container.status}
-                except Exception as e:
-                    logger.warning(f"Health check failed, container state: {container.status}: {str(e)}")
-            elif container.status == 'restarting':
-                logger.info(f"Container is restarting, waiting...")
-            elif container.status == 'exited':
-                logger.warning(f"Container exited, attempting restart...")
-                try:
-                    container.start()
-                except Exception as e:
-                    logger.error(f"Failed to restart container: {str(e)}")
-            else:
-                logger.warning(f"Container in unexpected state: {container.status}")
-
-            time.sleep(2)  # Wait before next check
-
-        except Exception as e:
-            logger.error(f"Error checking container: {str(e)}")
-            time.sleep(2)
-
-    # If we get here, container failed to become healthy
-    try:
-        logs = container.logs().decode('utf-8')
-    except:
-        logs = "Could not retrieve logs"
-
-    return False, {
-        "status": "unhealthy",
-        "container_status": container.status,
-        "logs": logs
-    }
 
 @api_view(['POST'])
 def check_or_create_container(request):
@@ -513,9 +433,8 @@ def check_or_create_container(request):
     main_file_path = data.get('main_file_path')
 
     detailed_logger.log('info',
-                        f"Received request to check or create container for user {user_id}, file {file_name}, path {main_file_path}")
+                        f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
 
-    # Validate input
     if not all([code, language, file_name]):
         return JsonResponse({'error': 'Missing required fields'}, status=400)
     if language != 'react':
@@ -533,51 +452,99 @@ def check_or_create_container(request):
     }
 
     try:
-        # First try to get existing container
+        container = client.containers.get(container_name)
+        detailed_logger.log('info', f"Found existing container: {container.id}")
+
+        # Check if the container is running, if not, start it
+        if container.status != 'running':
+            detailed_logger.log('info', f"Container {container.id} is not running. Attempting to start it.")
+            container.start()
+            container.reload()
+            time.sleep(5)  # Wait for container to fully start
+
+        # Here's where we need to check the actual compilation status
+        compilation_status = get_compilation_status(container)
+
+        container_info = {
+            'container_name': container.name,
+            'created_at': datetime.now().isoformat(),
+            'status': container.status,
+            'ports': container.ports,
+            'image': container.image.tags[0] if container.image.tags else 'Unknown',
+            'id': container.id
+        }
+
+
+        # Get the host port
+        port_bindings = container.attrs['NetworkSettings']['Ports']
+        host_port = None
+        if '3001/tcp' in port_bindings and port_bindings['3001/tcp']:
+            host_port = port_bindings['3001/tcp'][0]['HostPort']
+        dynamic_url = f"https://{host_port}.{HOST_URL}"
+
         try:
-            container = client.containers.get(container_name)
-            detailed_logger.log('info', f"Found existing container: {container.id}")
+            # Check for non-standard imports
+            non_standard_imports = check_non_standard_imports(code)
+            installed_packages = []
+            if non_standard_imports:
+                installed_packages = install_packages(container, non_standard_imports)
 
-            # Try to ensure container is healthy
-            is_healthy, health_info = verify_container_health(container)
-            if not is_healthy:
-                detailed_logger.log('warning', f"Existing container unhealthy: {health_info}")
-                # Remove unhealthy container
-                container.remove(force=True)
-                raise docker.errors.NotFound("Removed unhealthy container")
-            try:
-                exec_command_with_retry(container, ["echo", "Container health check"])
-            except Exception as health_error:
-                detailed_logger.log('warning', f"Container health check failed: {str(health_error)}")
-                # Remove unhealthy container and raise NotFound to recreate it
-                container.remove(force=True)
-                raise docker.errors.NotFound("Container not healthy")
+            # Check for local imports
+            missing_local_imports = check_local_imports(container, code)
 
-            # Start container if not running
-            if container.status != 'running':
-                detailed_logger.log('info', f"Starting container {container.id}")
-                container.start()
-                container.reload()
-                time.sleep(5)
+            build_output, files_added, failed_packages, compilation_status = update_code_internal(container, code, user_id, file_name,
+                                                                                 main_file_path)
 
-            compilation_status = get_compilation_status(container)
+            datailed_logs = container.logs(tail=200).decode('utf-8')  # Get last 200 lines of logs
+            file_structure = get_container_file_structure(container)
 
-        except docker.errors.NotFound:
-            # Create new container
-            detailed_logger.log('info', f"Creating new container: {container_name}")
-            host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
+            return JsonResponse({
+                'status': 'success',
+                'message': 'Container is running',
+                'container_id': container.id,
+                'url': dynamic_url,
+                'can_deploy': True,
+                'container_info': container_info,
+                'build_output': build_output,
+                'detailed_logs': detailed_logger.get_logs(),
+                'file_list': file_structure,
+                'installed_packages': installed_packages,
+                'failed_packages': failed_packages,  # New field
+                'files_added': files_added,
+                'compilation_status': compilation_status,  # New field
+            })
+        except Exception as update_error:
+            detailed_logger.log('error', f"Failed to update code: {str(update_error)}")
+            return JsonResponse({
+                'status': 'error',
+                'message': str(update_error),
+                'build_output': getattr(update_error, 'build_output', None),
+                'detailed_logs': detailed_logger.get_logs(),
+                'file_list': file_structure,
+            }, status=500)
 
+
+    except docker.errors.NotFound:
+        detailed_logger.log('info', f"Container {container_name} not found. Creating new container.")
+        host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
+        detailed_logger.log('info', f"Selected port {host_port} for new container")
+        try:
             container = client.containers.run(
                 'react_renderer_prod',
                 command=[
-                    "sh", "-c",
+                    "sh",
+                    "-c",
                     """
-                    set -e
+                    # Clean any existing processes
                     pkill -f "node" || true
+
+                    # Remove any lock files
                     rm -f package-lock.json yarn.lock
-                    echo "Installing dependencies..."
+
+                    # Install dependencies
                     yarn install
-                    echo "Starting development server..."
+
+                    # Start development server
                     HOST=0.0.0.0 PORT=3001 yarn start
                     """
                 ],
@@ -604,109 +571,103 @@ def check_or_create_container(request):
                 mem_limit='8g',
                 memswap_limit='16g',
                 cpu_quota=100000,
-                restart_policy={"Name": "always"}  # Changed to always restart
+                restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
 
-            # Wait for container to be healthy
-            is_healthy, health_info = verify_container_health(container, max_wait=60)
-            if not is_healthy:
-                container.remove(force=True)
-                raise Exception(f"New container failed health check: {health_info}")
+            # Add error checking for installation process
+            installation_logs = container.logs(stdout=True, stderr=True).decode()
+            if "error" in installation_logs.lower():
+                detailed_logger.log('error', f"Errors during dependency installation: {installation_logs}")
 
-            # Wait for container to initialize
-            time.sleep(10)
-            container.reload()
+            # Wait for installation to complete
+            time.sleep(20)  # Adjust this value based on your needs
 
-            # Verify container setup with retry
-            try:
-                exec_command_with_retry(container, ["yarn", "--version"], max_retries=5)
-            except Exception as e:
-                detailed_logger.log('error', f"Container setup verification failed: {str(e)}")
-                container.remove(force=True)
-                raise Exception("Container setup failed")
+            # Verify TypeScript installation
+            verify_cmd = container.exec_run("yarn list typescript")
+            if verify_cmd.exit_code != 0:
+                detailed_logger.log('error', "TypeScript installation verification failed")
+                raise Exception("Failed to install TypeScript")
 
-        # Update container info
-        container_info.update({
-            'container_name': container.name,
-            'status': container.status,
-            'ports': container.ports,
-            'image': container.image.tags[0] if container.image.tags else 'Unknown',
-            'id': container.id
-        })
+            detailed_logger.log('info', f"New container created: {container_name}")
+            container_info['build_status'] = 'created'
+            # Wait for Next.js project creation to complete
+            time.sleep(30)  # Adjust this wait time as needed
 
-        # Get port mapping
-        port_bindings = container.attrs['NetworkSettings']['Ports']
-        host_port = port_bindings.get('3001/tcp', [{}])[0].get('HostPort')
-        if not host_port:
-            raise Exception("No port mapping found")
+        except docker.errors.APIError as e:
+            detailed_logger.log('error', f"Failed to create container: {str(e)}")
+            return JsonResponse({
+                'error': f'Failed to create container: {str(e)}',
+                'container_info': container_info,
+                'detailed_logs': detailed_logger.get_logs(),
+                'file_list': detailed_logger.get_file_list(),
+            }, status=500)
 
-        dynamic_url = f"https://{host_port}.{HOST_URL}"
-
-        # Process code updates
         try:
-            # Install any required packages
+
+            # Check for non-standard imports
             non_standard_imports = check_non_standard_imports(code)
             installed_packages = []
-            failed_packages = []
             if non_standard_imports:
-                installed_packages, failed_packages = install_packages(container, non_standard_imports)
+                installed_packages = install_packages(container, non_standard_imports)
 
-            # Update code in container
-            build_output, files_added, failed_packages, compilation_status = update_code_internal(
-                container, code, user_id, file_name, main_file_path
-            )
+            # Check for local imports
+            missing_local_imports = check_local_imports(container, code)
 
-            # Get container status and logs
-            container.reload()
-            detailed_logs = container.logs(tail=200).decode('utf-8')
+            build_output, files_added, failed_packages, compilation_status = update_code_internal(container, code, user_id, file_name,
+                                                                                 main_file_path)
+            container_info['build_status'] = 'updated'
+
             file_structure = get_container_file_structure(container)
+            datailed_logs = container.logs(tail=200).decode('utf-8')  # Get last 200 lines of logs
+            detailed_logger.log('warning', f"File structure: {file_structure}, \nbuild output {build_output}")
+            container_info['file_structure'] = file_structure
 
-            # Verify server is running
-            verify_server_running(container)
-
+            container.reload()
+            port_mapping = container.ports.get('3001/tcp')
+            detailed_logger.log('warning', "check that container reload successful, port mapping successful")
+            if port_mapping:
+                dynamic_url = f"https://{host_port}.{HOST_URL}"
+                detailed_logger.log('info', f"Container {container_name} running successfully: {dynamic_url}")
+                return JsonResponse({
+                    'status': 'success',
+                    'message': 'Container is running',
+                    'container_id': container.id,
+                    'url': dynamic_url,
+                    'can_deploy': True,
+                    'container_info': container_info,
+                    'build_output': build_output,
+                    'detailed_logs': detailed_logger.get_logs(),
+                    'file_list': file_structure,
+                    'installed_packages': installed_packages,
+                    'files_added': files_added
+                })
+            else:
+                detailed_logger.log('error', f"Failed to get port mapping for container {container_name}")
+                return JsonResponse({
+                    'error': 'Failed to get port mapping',
+                    'container_info': container_info,
+                    'build_output': build_output,
+                    'detailed_logs': detailed_logger.get_logs(),
+                    'file_list': file_structure,
+                    'installed_packages': installed_packages,
+                    'files_added': files_added
+                }, status=500)
+        except Exception as e:
+            detailed_logger.log('error', f"!!!Failed to update code in container: {str(e)}")
             return JsonResponse({
-                'status': 'success',
-                'message': 'Container is running',
-                'container_id': container.id,
-                'url': dynamic_url,
-                'can_deploy': True,
+                'error': f'Failed to update code in container: {str(e)}',
                 'container_info': container_info,
-                'build_output': build_output,
                 'detailed_logs': detailed_logger.get_logs(),
-                'file_list': file_structure,
-                'installed_packages': installed_packages,
-                'failed_packages': failed_packages,
-                'files_added': files_added,
-                'compilation_status': compilation_status,
-            })
-
-        except Exception as update_error:
-            detailed_logger.log('error', f"Failed to update code: {str(update_error)}")
-            # Don't remove container on update error, it might be recoverable
-            return JsonResponse({
-                'status': 'error',
-                'message': str(update_error),
-                'container_info': container_info,
-                'build_output': getattr(update_error, 'build_output', None),
-                'detailed_logs': detailed_logger.get_logs(),
-                'file_list': file_structure,
+                'file_list': [],
             }, status=500)
 
     except Exception as e:
-        detailed_logger.log('error', f"Critical error: {str(e)}")
-        # Try to cleanup on critical error
-        try:
-            if 'container' in locals():
-                container.remove(force=True)
-        except:
-            pass
-
+        detailed_logger.log('error', f"Unexpected error: {str(e)}")
         return JsonResponse({
-            'error': f'Critical error: {str(e)}',
+            'error': f'Unexpected error: {str(e)}',
             'container_info': container_info if 'container_info' in locals() else None,
             'detailed_logs': detailed_logger.get_logs(),
             'file_list': detailed_logger.get_file_list(),
-            'traceback': traceback.format_exc()
         }, status=500)
 
 

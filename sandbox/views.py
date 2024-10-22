@@ -432,7 +432,8 @@ def check_or_create_container(request):
     file_name = data.get('file_name', 'component.js')
     main_file_path = data.get('main_file_path')
 
-    detailed_logger.log('info', f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
+    detailed_logger.log('info',
+                        f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
 
     if not all([code, language, file_name]):
         return JsonResponse({'error': 'Missing required fields'}, status=400)
@@ -523,108 +524,107 @@ def check_or_create_container(request):
             }, status=500)
 
 
-        except docker.errors.NotFound:
+    except docker.errors.NotFound:
+        detailed_logger.log('info', f"Container {container_name} not found. Creating new container.")
+        host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
+        detailed_logger.log('info', f"Selected port {host_port} for new container")
+        try:
+            container = client.containers.run(
+                'react_renderer_prod',
+                # Initialize container with proper TypeScript setup
+                command=[
+                    "sh",
+                    "-c",
+                    """
+                    # Install TypeScript and required dependencies
+                    yarn add typescript @types/node @types/react @types/react-dom @types/jest @typescript-eslint/parser @typescript-eslint/eslint-plugin --dev &&
 
-            detailed_logger.log('info', f"Container {container_name} not found. Creating new container.")
-            host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
-            detailed_logger.log('info', f"Selected port {host_port} for new container")
-            try:
-                container = client.containers.run(
-                    'react_renderer_prod',
-                    # Initialize container with proper TypeScript setup
-                    command=[
-                        "sh",
-                        "-c",
-                        """
-                        # Install TypeScript and required dependencies
-                        yarn add typescript @types/node @types/react @types/react-dom @types/jest @typescript-eslint/parser @typescript-eslint/eslint-plugin --dev &&
+                    # Create tsconfig.json if it doesn't exist
+                    echo '{
+                        "compilerOptions": {
+                            "target": "es5",
+                            "lib": ["dom", "dom.iterable", "esnext"],
+                            "allowJs": true,
+                            "skipLibCheck": true,
+                            "esModuleInterop": true,
+                            "allowSyntheticDefaultImports": true,
+                            "strict": true,
+                            "forceConsistentCasingInFileNames": true,
+                            "noFallthroughCasesInSwitch": true,
+                            "module": "esnext",
+                            "moduleResolution": "node",
+                            "resolveJsonModule": true,
+                            "isolatedModules": true,
+                            "noEmit": true,
+                            "jsx": "react-jsx"
+                        },
+                        "include": ["src"]
+                    }' > /app/tsconfig.json &&
 
-                        # Create tsconfig.json if it doesn't exist
-                        echo '{
-                            "compilerOptions": {
-                                "target": "es5",
-                                "lib": ["dom", "dom.iterable", "esnext"],
-                                "allowJs": true,
-                                "skipLibCheck": true,
-                                "esModuleInterop": true,
-                                "allowSyntheticDefaultImports": true,
-                                "strict": true,
-                                "forceConsistentCasingInFileNames": true,
-                                "noFallthroughCasesInSwitch": true,
-                                "module": "esnext",
-                                "moduleResolution": "node",
-                                "resolveJsonModule": true,
-                                "isolatedModules": true,
-                                "noEmit": true,
-                                "jsx": "react-jsx"
-                            },
-                            "include": ["src"]
-                        }' > /app/tsconfig.json &&
+                    # Update package.json scripts
+                    npm pkg set scripts.start="HOST=0.0.0.0 react-scripts start" &&
+                    npm pkg set scripts.build="react-scripts build" &&
 
-                        # Update package.json scripts
-                        npm pkg set scripts.start="HOST=0.0.0.0 react-scripts start" &&
-                        npm pkg set scripts.build="react-scripts build" &&
+                    # Install additional dependencies for MUI and other required packages
+                    yarn add @mui/material @mui/icons-material @emotion/react @emotion/styled &&
 
-                        # Install additional dependencies for MUI and other required packages
-                        yarn add @mui/material @mui/icons-material @emotion/react @emotion/styled &&
+                    # Start the development server
+                    yarn start
+                    """
+                ],
+                detach=True,
+                name=container_name,
+                environment={
+                    'USER_ID': user_id,
+                    'REACT_APP_USER_ID': user_id,
+                    'FILE_NAME': file_name,
+                    'PORT': str(3001),
+                    'NODE_ENV': 'development',  # Changed to development for better debugging
+                    'NODE_OPTIONS': '--max-old-space-size=8192',
+                    'WATCHPACK_POLLING': 'true'  # Enable polling for file changes
+                },
+                volumes={
+                    os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json',
+                                                                        'mode': 'rw'},
+                    # Remove package-lock.json binding to avoid conflicts
+                    os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
+                },
+                ports={'3001/tcp': host_port},
+                mem_limit='8g',
+                memswap_limit='16g',
+                cpu_quota=100000,
+                restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
+            )
 
-                        # Start the development server
-                        yarn start
-                        """
-                    ],
-                    detach=True,
-                    name=container_name,
-                    environment={
-                        'USER_ID': user_id,
-                        'REACT_APP_USER_ID': user_id,
-                        'FILE_NAME': file_name,
-                        'PORT': str(3001),
-                        'NODE_ENV': 'development',  # Changed to development for better debugging
-                        'NODE_OPTIONS': '--max-old-space-size=8192',
-                        'WATCHPACK_POLLING': 'true'  # Enable polling for file changes
-                    },
-                    volumes={
-                        os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
-                        os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
-                        os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json',
-                                                                            'mode': 'rw'},
-                        # Remove package-lock.json binding to avoid conflicts
-                        os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
-                    },
-                    ports={'3001/tcp': host_port},
-                    mem_limit='8g',
-                    memswap_limit='16g',
-                    cpu_quota=100000,
-                    restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
-                )
+            # Add error checking for installation process
+            installation_logs = container.logs(stdout=True, stderr=True).decode()
+            if "error" in installation_logs.lower():
+                detailed_logger.log('error', f"Errors during dependency installation: {installation_logs}")
 
-                # Add error checking for installation process
-                installation_logs = container.logs(stdout=True, stderr=True).decode()
-                if "error" in installation_logs.lower():
-                    detailed_logger.log('error', f"Errors during dependency installation: {installation_logs}")
+            # Wait for installation to complete
+            time.sleep(20)  # Adjust this value based on your needs
 
-                # Wait for installation to complete
-                time.sleep(20)  # Adjust this value based on your needs
+            # Verify TypeScript installation
+            verify_cmd = container.exec_run("yarn list typescript")
+            if verify_cmd.exit_code != 0:
+                detailed_logger.log('error', "TypeScript installation verification failed")
+                raise Exception("Failed to install TypeScript")
 
-                # Verify TypeScript installation
-                verify_cmd = container.exec_run("yarn list typescript")
-                if verify_cmd.exit_code != 0:
-                    detailed_logger.log('error', "TypeScript installation verification failed")
-                    raise Exception("Failed to install TypeScript")
+            detailed_logger.log('info', f"New container created: {container_name}")
+            container_info['build_status'] = 'created'
+            # Wait for Next.js project creation to complete
+            time.sleep(30)  # Adjust this wait time as needed
 
-                detailed_logger.log('info', f"New container created: {container_name}")
-                container_info['build_status'] = 'created'
-                # Wait for Next.js project creation to complete
-                time.sleep(30)  # Adjust this wait time as needed
-
-            except docker.errors.APIError as e:
-                detailed_logger.log('error', f"Failed to create container: {str(e)}")
-                return JsonResponse({
-                    'error': f'Failed to create container: {str(e)}',
-                    'container_info': container_info,
-                    'detailed_logs': detailed_logger.get_logs(),
-                    'file_list': detailed_logger.get_file_list(),
-                }, status=500)
+        except docker.errors.APIError as e:
+            detailed_logger.log('error', f"Failed to create container: {str(e)}")
+            return JsonResponse({
+                'error': f'Failed to create container: {str(e)}',
+                'container_info': container_info,
+                'detailed_logs': detailed_logger.get_logs(),
+                'file_list': detailed_logger.get_file_list(),
+            }, status=500)
 
         try:
 

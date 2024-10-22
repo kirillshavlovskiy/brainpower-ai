@@ -649,6 +649,7 @@ def install_packages(container, packages):
 
     return installed_packages, failed_packages
 
+
 def check_non_standard_imports(code):
     import_pattern = r'import\s+(?:{\s*[\w\s,]+\s*}|[\w]+|\*\s+as\s+[\w]+)\s+from\s+[\'"](.+?)[\'"]|require\([\'"](.+?)[\'"]\)'
     imports = re.findall(import_pattern, code)

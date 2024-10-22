@@ -411,7 +411,6 @@ def get_container_logs(request):
         return JsonResponse({'error': str(e)}, status=500)
 
 
-
 def get_available_port(start, end):
     while True:
         port = random.randint(start, end)

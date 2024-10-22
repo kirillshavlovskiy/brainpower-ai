@@ -453,6 +453,55 @@ def get_available_port(start, end):
             return port
 
 
+def verify_container_health(container, max_wait=30):
+    """
+    Verify container health with wait logic for container start
+    """
+    start_time = time.time()
+    while time.time() - start_time < max_wait:
+        try:
+            container.reload()
+
+            if container.status == 'running':
+                # Basic health check
+                try:
+                    result = exec_command_with_retry(
+                        container,
+                        ["echo", "health check"],
+                        max_retries=1  # Single retry since we're already in a retry loop
+                    )
+                    return True, {"status": "healthy", "container_status": container.status}
+                except Exception as e:
+                    logger.warning(f"Health check failed, container state: {container.status}: {str(e)}")
+            elif container.status == 'restarting':
+                logger.info(f"Container is restarting, waiting...")
+            elif container.status == 'exited':
+                logger.warning(f"Container exited, attempting restart...")
+                try:
+                    container.start()
+                except Exception as e:
+                    logger.error(f"Failed to restart container: {str(e)}")
+            else:
+                logger.warning(f"Container in unexpected state: {container.status}")
+
+            time.sleep(2)  # Wait before next check
+
+        except Exception as e:
+            logger.error(f"Error checking container: {str(e)}")
+            time.sleep(2)
+
+    # If we get here, container failed to become healthy
+    try:
+        logs = container.logs().decode('utf-8')
+    except:
+        logs = "Could not retrieve logs"
+
+    return False, {
+        "status": "unhealthy",
+        "container_status": container.status,
+        "logs": logs
+    }
+
 @api_view(['POST'])
 def check_or_create_container(request):
     file_structure = []
@@ -489,7 +538,13 @@ def check_or_create_container(request):
             container = client.containers.get(container_name)
             detailed_logger.log('info', f"Found existing container: {container.id}")
 
-            # Verify container is healthy
+            # Try to ensure container is healthy
+            is_healthy, health_info = verify_container_health(container)
+            if not is_healthy:
+                detailed_logger.log('warning', f"Existing container unhealthy: {health_info}")
+                # Remove unhealthy container
+                container.remove(force=True)
+                raise docker.errors.NotFound("Removed unhealthy container")
             try:
                 exec_command_with_retry(container, ["echo", "Container health check"])
             except Exception as health_error:
@@ -549,8 +604,14 @@ def check_or_create_container(request):
                 mem_limit='8g',
                 memswap_limit='16g',
                 cpu_quota=100000,
-                restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
+                restart_policy={"Name": "always"}  # Changed to always restart
             )
+
+            # Wait for container to be healthy
+            is_healthy, health_info = verify_container_health(container, max_wait=60)
+            if not is_healthy:
+                container.remove(force=True)
+                raise Exception(f"New container failed health check: {health_info}")
 
             # Wait for container to initialize
             time.sleep(10)

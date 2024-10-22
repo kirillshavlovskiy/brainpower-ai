@@ -568,10 +568,16 @@ def check_or_create_container(request):
             command=[
                 "sh", "-c",
                 f"""
-
+                mkdir -p /app/src && \
+                chown -R node:node /app/src && \
+                chmod -R 755 /app/src && \
                 yarn create next-app {app_name} --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" &&
                 mv {app_name}/* . &&
                 rm -rf {app_name} &&
+                yarn add @babel/traverse@7.23.2 @babel/core@7.22.20 &&
+                yarn add @babel/helper-remap-async-to-generator@7.22.20 &&
+                export NODE_OPTIONS="--max-old-space-size=8192" &&
+                yarn create next-app {app_name} --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" &&
                 yarn start
                 """
             ],

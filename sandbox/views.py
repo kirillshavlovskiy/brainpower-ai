@@ -131,7 +131,7 @@ def check_container(request):
         return JsonResponse({'error': str(e)}, status=500)
 
 
-def exec_command_with_retry(container, command, max_retries=3, delay=1):
+def exec_command_with_retry(container, command, user='node', max_retries=3, delay=1):
     for attempt in range(max_retries):
         try:
             container.reload()
@@ -141,19 +141,17 @@ def exec_command_with_retry(container, command, max_retries=3, delay=1):
                 container.reload()
                 time.sleep(5)  # Wait for container to fully start
 
-            # Run command as root to avoid permission issues
-            exec_id = container.client.api.exec_create(
-                container.id,
-                command,
-                user='root'  # Execute as root
+            exec_result = container.exec_run(
+                cmd=command,
+                user=user,
+                stdout=True,
+                stderr=True
             )
-            output = container.client.api.exec_start(exec_id)
-            exec_info = container.client.api.exec_inspect(exec_id)
 
-            if exec_info['ExitCode'] != 0:
-                raise Exception(f"Command failed with exit code {exec_info['ExitCode']}: {output.decode()}")
+            if exec_result.exit_code != 0:
+                raise Exception(f"Command failed with exit code {exec_result.exit_code}: {exec_result.output.decode()}")
 
-            return output
+            return exec_result
         except Exception as e:
             if attempt == max_retries - 1:
                 raise
@@ -204,114 +202,63 @@ def update_code_internal(container, code, user, file_name, main_file_path):
     files_added = []
     build_output = []
     try:
-        # Set proper permissions first
-        if not set_container_permissions(container):
-            raise Exception("Failed to set container permissions")
-
-        # Update component.js
+        # Encode the code to base64 to handle special characters
         encoded_code = base64.b64encode(code.encode()).decode()
-        max_attempts = 3
 
-        # Get base path before using it
-        base_path = os.path.dirname(main_file_path) if main_file_path else 'Root'
-        logger.info(f"Updated component.js in container with content from {file_name}")
-        logger.info(f"Processing for user: {user}")
-        logger.info(f"Base path derived from main file: {base_path}")
-
-        # Create component.js with proper permissions
-        for attempt in range(max_attempts):
-            try:
-                exec_result = container.exec_run(
-                    [
-                        "sh", "-c",
-                        f"mkdir -p /app/src && echo {encoded_code} | base64 -d > /app/src/component.js && chmod 644 /app/src/component.js"
-                    ],
-                    user='root'
-                )
-                if exec_result.exit_code != 0:
-                    raise Exception(f"Failed to update component.js: {exec_result.output.decode()}")
-                files_added.append('/app/src/component.js')
-                break
-            except docker.errors.APIError as e:
-                if attempt == max_attempts - 1:
-                    raise
-                logger.warning(f"API error on attempt {attempt + 1}, retrying: {str(e)}")
-                time.sleep(1)
-
-        # Create page.js with proper permissions
+        # Determine target file path inside the container
+        target_file = '/app/pages/index.js'
+        # Create pages directory if it doesn't exist
         exec_result = container.exec_run(
-            [
-                "sh", "-c",
-                f"mkdir -p /app/src && echo {encoded_code} | base64 -d > /app/src/page.js && chmod 644 /app/src/page.js"
-            ],
-            user='root'
+            ["mkdir", "-p", "/app/pages"],
+            user='node'
         )
-
         if exec_result.exit_code != 0:
-            raise Exception(f"Failed to update page.js: {exec_result.output.decode()}")
+            raise Exception(f"Failed to create pages directory: {exec_result.output.decode()}")
 
-        files_added.append('/app/src/page.js')
-
-        # Start development server
-        logger.info("Starting development server")
+        # Write the code to the target file
         exec_result = container.exec_run(
-            ["sh", "-c", "cd /app && yarn start"],
-            user='node'  # Use node user for yarn commands
+            ["sh", "-c", f"echo {encoded_code} | base64 -d > {target_file}"],
+            user='node'
         )
+        if exec_result.exit_code != 0:
+            raise Exception(f"Failed to update {target_file}: {exec_result.output.decode()}")
+        files_added.append(target_file)
 
-        # Process build output
-        if hasattr(exec_result, 'output') and isinstance(exec_result.output, bytes):
-            output_lines = exec_result.output.decode().split('\n')
-        else:
-            # Handle streamed output
-            output_lines = []
-            try:
-                for line in exec_result:
-                    if isinstance(line, bytes):
-                        output_lines.append(line.decode('utf-8').strip())
-                    else:
-                        output_lines.append(line)
-            except Exception as e:
-                logger.warning(f"Error processing output stream: {str(e)}")
-                output_lines = ["Error processing build output"]
+        logger.info(f"Updated index.js in container with content from {file_name}")
+        logger.info(f"Processing for user: {user}")
 
-        build_output = output_lines
+        # No need to restart the server; Next.js supports hot reloading
+
+        # Get build output (logs)
+        build_output = container.logs(tail=100).decode('utf-8').split('\n')
+
+        # Determine compilation status based on logs
         compilation_status = ContainerStatus.COMPILING
-
-        # Check compilation status from output
         joined_output = '\n'.join(build_output)
-        if "Compiled successfully" in joined_output:
+        if "compiled successfully" in joined_output.lower():
             compilation_status = ContainerStatus.READY
-        elif "Compiled with warnings" in joined_output:
+        elif "compiled with warnings" in joined_output.lower():
             compilation_status = ContainerStatus.WARNING
-        elif "Failed to compile" in joined_output:
+        elif "failed to compile" in joined_output.lower():
             compilation_status = ContainerStatus.COMPILATION_FAILED
 
         # Save compilation status
         try:
             status_result = exec_command_with_retry(
                 container,
-                ["sh", "-c", f"echo {compilation_status} > /app/compilation_status"]
+                f"echo {compilation_status} > /app/compilation_status",
+                user='node'
             )
-
             if status_result and hasattr(status_result, 'exit_code') and status_result.exit_code != 0:
                 logger.warning(
-                    f"Failed to save compilation status: {status_result.output.decode() if hasattr(status_result.output, 'decode') else 'Unknown error'}")
+                    f"Failed to save compilation status: {status_result.output.decode() if hasattr(status_result.output, 'decode') else 'Unknown error'}"
+                )
         except Exception as e:
             logger.warning(f"Error saving compilation status: {str(e)}")
 
         return "\n".join(build_output), files_added, compilation_status
-
     except Exception as e:
         logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
-        try:
-            # Try to cleanup
-            container.exec_run(
-                "rm -rf /app/src/* && echo error > /app/compilation_status",
-                user='root'
-            )
-        except:
-            pass
         raise
 
 
@@ -471,9 +418,7 @@ def check_or_create_container(request):
     user_id = data.get('user_id', '0')
     file_name = data.get('file_name', 'component.js')
     main_file_path = data.get('main_file_path')
-
-    detailed_logger.log('info',
-                       f"Received request to check or create container for user {user_id}, file {file_name}, path {main_file_path}")
+    detailed_logger.log('info', f"Received request to check or create container for user {user_id}, file {file_name}, path {main_file_path}")
 
     # Validate inputs
     if not all([code, language, file_name]):
@@ -482,11 +427,9 @@ def check_or_create_container(request):
         return JsonResponse({'error': 'Unsupported language'}, status=400)
 
     # Setup variables
-    react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'
     container_name = f'react_renderer_{user_id}_{file_name}'
     app_name = f"{user_id}_{file_name.replace('.', '-')}"
     temp_dir = None
-
     container_info = {
         'container_name': container_name,
         'created_at': datetime.now().isoformat(),
@@ -499,54 +442,28 @@ def check_or_create_container(request):
             # Try to get existing container
             container = client.containers.get(container_name)
             detailed_logger.log('info', f"Found existing container: {container.id}")
-
             if container.status != 'running':
                 detailed_logger.log('info', f"Container {container.id} is not running. Starting...")
                 container.start()
                 container.reload()
                 time.sleep(5)
-
         except docker.errors.NotFound:
             detailed_logger.log('info', f"Creating new container: {container_name}")
             host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
 
-            # Create temporary directory for container setup
-            temp_dir = tempfile.mkdtemp(prefix='react_renderer_')
-            os.makedirs(os.path.join(temp_dir, 'src'), exist_ok=True)
-
+            # Start the Next.js development server directly without unnecessary shell commands
             container = client.containers.run(
-                'react_renderer_prod',
-                command=[
-                    "sh", "-c",
-                    # Add initial setup commands
-                    """
-                    # Set proper ownership and permissions
-                    chown -R node:node /app && \
-                    chmod -R 755 /app && \
-
-                    # Create writable directories
-                    mkdir -p /app/src && \
-                    chown node:node /app/src && \
-                    chmod 755 /app/src && \
-
-                    # Start development server as node user
-                    su node -c "cd /app && yarn start"
-                    """
-                ],
-                user='root',  # Start as root to set permissions
-                volumes={
-                    os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'node_modules'): {'bind': '/app/node_modules', 'mode': 'rw'},
-                },
+                'react_renderer_prod',  # Assuming this is the correct image name
+                command=['yarn', 'dev', '-p', '3001'],
+                user='node',  # Run as node user
                 detach=True,
                 name=container_name,
                 environment={
                     'USER_ID': user_id,
                     'APP_NAME': app_name,
                     'FILE_NAME': file_name,
-                    'PORT': str(3001),
+                    'PORT': '3001',
+                    'HOST': '0.0.0.0',
                     'NODE_ENV': 'development',
                 },
                 ports={'3001/tcp': host_port},
@@ -555,7 +472,6 @@ def check_or_create_container(request):
                 cpu_quota=100000,
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
-
             time.sleep(20)  # Wait for container initialization
             detailed_logger.log('info', f"New container created: {container.name}")
 
@@ -579,7 +495,6 @@ def check_or_create_container(request):
         port_mapping = container.ports.get('3001/tcp')
         if not port_mapping:
             raise Exception("Failed to get port mapping")
-
         host_port = port_mapping[0]['HostPort']
         dynamic_url = f"https://{host_port}.{HOST_URL}"
 
@@ -603,7 +518,7 @@ def check_or_create_container(request):
                 'file_structure': file_structure
             },
             'build_output': build_output,
-            'detailed_logs': detailed_logger.get_logs(),
+            'detailed_logs': detailed_logs,
             'file_list': file_structure,
             'installed_packages': installed_packages,
             'failed_packages': failed_packages,
@@ -611,18 +526,15 @@ def check_or_create_container(request):
             'compilation_status': compilation_status,
             'missing_local_imports': missing_local_imports
         })
-
     except Exception as e:
         error_message = str(e)
         detailed_logger.log('error', f"Container error: {error_message}")
-
         return JsonResponse({
             'error': error_message,
             'container_info': container_info if 'container_info' in locals() else None,
             'detailed_logs': detailed_logger.get_logs(),
             'file_list': detailed_logger.get_file_list()
         }, status=500)
-
     finally:
         # Cleanup temp directory if it exists
         if temp_dir and os.path.exists(temp_dir):

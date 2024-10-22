@@ -234,54 +234,22 @@ def update_code_internal(container, code, user, file_name, main_file_path):
 
         logger.info(f"Updated component.js in container with content from {file_name}")
         logger.info(f"Processing for user: {user}")
-
-        # Get the directory of the main file
-        base_path = os.path.dirname(main_file_path)
         logger.info(f"Base path derived from main file: {base_path}")
-
-        # Handle all imports
-        import_pattern = r"import\s+(?:(?:{\s*[\w\s,]+\s*})|(?:[\w]+)|\*\s+as\s+[\w]+)\s+from\s+['\"](.+?)['\"]|import\s+['\"](.+?)['\"]"
-        imports = re.findall(import_pattern, code)
-
-        for import_match in imports:
-            import_path = import_match[0] or import_match[1]
-            if import_path:
-                logger.info(f"Processing import: {import_path}")
-                file_content = FileStructureConsumer.get_file_content_for_container(user, import_path, base_path)
-
-                if file_content is not None:
-                    encoded_content = base64.b64encode(file_content.encode()).decode()
-                    container_path = f"/app/src/{import_path}"
-
-                    # Create directory and file with proper permissions
-                    exec_result = container.exec_run([
-                        "sh", "-c",
-                        f"""
-                        mkdir -p $(dirname {container_path}) && \
-                        echo {encoded_content} | base64 -d > {container_path} && \
-                        chown node:node {container_path} && \
-                        chmod 644 {container_path}
-                        """
-                    ], user='root')
-
-                    if exec_result.exit_code != 0:
-                        raise Exception(f"Failed to update {import_path}: {exec_result.output.decode()}")
-
-                    files_added.append(container_path)
-                else:
-                    logger.warning(f"File {import_path} not found or empty")
 
         # Create page.js with proper permissions
         encoded_code = base64.b64encode(code.encode()).decode()
-        exec_result = container.exec_run([
-            "sh", "-c",
-            f"""
-            mkdir -p /app/src && \
-            echo {encoded_code} | base64 -d > /app/src/page.js && \
-            chown node:node /app/src/page.js && \
-            chmod 644 /app/src/page.js
-            """
-        ], user='root')
+        exec_result = container.exec_run(
+            [
+                "sh", "-c",
+                f"""
+                mkdir -p /app/src && \
+                echo {encoded_code} | base64 -d > /app/src/page.js && \
+                chown node:node /app/src/page.js && \
+                chmod 644 /app/src/page.js
+                """
+            ],
+            user='root'
+        )
 
         if exec_result.exit_code != 0:
             raise Exception(f"Failed to update page.js: {exec_result.output.decode()}")
@@ -292,16 +260,21 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         logger.info("Starting development server")
         exec_result = container.exec_run(
             ["sh", "-c", "cd /app && yarn start"],
-            user='node'  # Run server as node user
+            user='node',  # Run server as node user
+            stream=True  # Stream the output
         )
 
         # Process build output
-        output_lines = exec_result.decode().split('\n')
-        build_output = output_lines
+        build_output = []
         compilation_status = ContainerStatus.COMPILING
 
-        # Analyze build output
-        for line in output_lines:
+        # Process the streamed output
+        for line in exec_result.output:
+            if isinstance(line, bytes):
+                line = line.decode('utf-8').strip()
+            build_output.append(line)
+
+            # Check compilation status
             if "Compiled successfully" in line:
                 compilation_status = ContainerStatus.READY
                 break
@@ -313,10 +286,13 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                 break
 
         # Save compilation status
-        exec_result = exec_command_with_retry(
+        status_result = exec_command_with_retry(
             container,
             ["sh", "-c", f"echo {compilation_status} > /app/compilation_status"]
         )
+
+        if status_result and status_result.exit_code != 0:
+            logger.warning(f"Failed to save compilation status: {status_result.output.decode()}")
 
         return "\n".join(build_output), files_added, compilation_status
 

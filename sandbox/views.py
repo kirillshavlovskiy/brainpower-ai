@@ -212,13 +212,19 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         encoded_code = base64.b64encode(code.encode()).decode()
         max_attempts = 3
 
+        # Get base path before using it
+        base_path = os.path.dirname(main_file_path) if main_file_path else 'Root'
+        logger.info(f"Updated component.js in container with content from {file_name}")
+        logger.info(f"Processing for user: {user}")
+        logger.info(f"Base path derived from main file: {base_path}")
+
         # Create component.js with proper permissions
         for attempt in range(max_attempts):
             try:
                 exec_result = container.exec_run(
                     [
                         "sh", "-c",
-                        f"echo {encoded_code} | base64 -d > /app/src/component.js && chmod 644 /app/src/component.js"
+                        f"mkdir -p /app/src && echo {encoded_code} | base64 -d > /app/src/component.js && chmod 644 /app/src/component.js"
                     ],
                     user='root'
                 )
@@ -232,21 +238,11 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                 logger.warning(f"API error on attempt {attempt + 1}, retrying: {str(e)}")
                 time.sleep(1)
 
-        logger.info(f"Updated component.js in container with content from {file_name}")
-        logger.info(f"Processing for user: {user}")
-        logger.info(f"Base path derived from main file: {base_path}")
-
         # Create page.js with proper permissions
-        encoded_code = base64.b64encode(code.encode()).decode()
         exec_result = container.exec_run(
             [
                 "sh", "-c",
-                f"""
-                mkdir -p /app/src && \
-                echo {encoded_code} | base64 -d > /app/src/page.js && \
-                chown node:node /app/src/page.js && \
-                chmod 644 /app/src/page.js
-                """
+                f"mkdir -p /app/src && echo {encoded_code} | base64 -d > /app/src/page.js && chmod 644 /app/src/page.js"
             ],
             user='root'
         )
@@ -260,39 +256,49 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         logger.info("Starting development server")
         exec_result = container.exec_run(
             ["sh", "-c", "cd /app && yarn start"],
-            user='node',  # Run server as node user
-            stream=True  # Stream the output
+            user='node'  # Use node user for yarn commands
         )
 
         # Process build output
-        build_output = []
+        if hasattr(exec_result, 'output') and isinstance(exec_result.output, bytes):
+            output_lines = exec_result.output.decode().split('\n')
+        else:
+            # Handle streamed output
+            output_lines = []
+            try:
+                for line in exec_result:
+                    if isinstance(line, bytes):
+                        output_lines.append(line.decode('utf-8').strip())
+                    else:
+                        output_lines.append(line)
+            except Exception as e:
+                logger.warning(f"Error processing output stream: {str(e)}")
+                output_lines = ["Error processing build output"]
+
+        build_output = output_lines
         compilation_status = ContainerStatus.COMPILING
 
-        # Process the streamed output
-        for line in exec_result.output:
-            if isinstance(line, bytes):
-                line = line.decode('utf-8').strip()
-            build_output.append(line)
-
-            # Check compilation status
-            if "Compiled successfully" in line:
-                compilation_status = ContainerStatus.READY
-                break
-            elif "Compiled with warnings" in line:
-                compilation_status = ContainerStatus.WARNING
-                break
-            elif "Failed to compile" in line:
-                compilation_status = ContainerStatus.COMPILATION_FAILED
-                break
+        # Check compilation status from output
+        joined_output = '\n'.join(build_output)
+        if "Compiled successfully" in joined_output:
+            compilation_status = ContainerStatus.READY
+        elif "Compiled with warnings" in joined_output:
+            compilation_status = ContainerStatus.WARNING
+        elif "Failed to compile" in joined_output:
+            compilation_status = ContainerStatus.COMPILATION_FAILED
 
         # Save compilation status
-        status_result = exec_command_with_retry(
-            container,
-            ["sh", "-c", f"echo {compilation_status} > /app/compilation_status"]
-        )
+        try:
+            status_result = exec_command_with_retry(
+                container,
+                ["sh", "-c", f"echo {compilation_status} > /app/compilation_status"]
+            )
 
-        if status_result and status_result.exit_code != 0:
-            logger.warning(f"Failed to save compilation status: {status_result.output.decode()}")
+            if status_result and hasattr(status_result, 'exit_code') and status_result.exit_code != 0:
+                logger.warning(
+                    f"Failed to save compilation status: {status_result.output.decode() if hasattr(status_result.output, 'decode') else 'Unknown error'}")
+        except Exception as e:
+            logger.warning(f"Error saving compilation status: {str(e)}")
 
         return "\n".join(build_output), files_added, compilation_status
 

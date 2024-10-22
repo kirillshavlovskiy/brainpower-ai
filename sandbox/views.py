@@ -502,6 +502,7 @@ def verify_container_health(container, max_wait=30):
         "logs": logs
     }
 
+
 @api_view(['POST'])
 def check_or_create_container(request):
     file_structure = []
@@ -533,114 +534,131 @@ def check_or_create_container(request):
     }
 
     try:
-        # First try to get existing container
+        # First try to cleanup any existing containers
         try:
-            container = client.containers.get(container_name)
-            detailed_logger.log('info', f"Found existing container: {container.id}")
-
-            # Try to ensure container is healthy
-            is_healthy, health_info = verify_container_health(container)
-            if not is_healthy:
-                detailed_logger.log('warning', f"Existing container unhealthy: {health_info}")
-                # Remove unhealthy container
-                container.remove(force=True)
-                raise docker.errors.NotFound("Removed unhealthy container")
-            try:
-                exec_command_with_retry(container, ["echo", "Container health check"])
-            except Exception as health_error:
-                detailed_logger.log('warning', f"Container health check failed: {str(health_error)}")
-                # Remove unhealthy container and raise NotFound to recreate it
-                container.remove(force=True)
-                raise docker.errors.NotFound("Container not healthy")
-
-            # Start container if not running
-            if container.status != 'running':
-                detailed_logger.log('info', f"Starting container {container.id}")
-                container.start()
-                container.reload()
-                time.sleep(5)
-
-            compilation_status = get_compilation_status(container)
-
+            old_container = client.containers.get(container_name)
+            detailed_logger.log('info', f"Found existing container: {old_container.id}")
+            old_container.remove(force=True)
+            detailed_logger.log('info', f"Removed existing container")
         except docker.errors.NotFound:
-            # Create new container
-            detailed_logger.log('info', f"Creating new container: {container_name}")
-            host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
+            pass
+        except Exception as e:
+            detailed_logger.log('warning', f"Error removing existing container: {str(e)}")
 
-            container = client.containers.run(
-                'react_renderer_prod',
-                command=[
-                    "sh", "-c",
-                    """
-                    set -e
-                    pkill -f "node" || true
-                    rm -f package-lock.json yarn.lock
-                    echo "Installing dependencies..."
-                    yarn install
-                    echo "Starting development server..."
-                    HOST=0.0.0.0 PORT=3001 yarn start
-                    """
-                ],
-                detach=True,
-                name=container_name,
-                environment={
-                    'USER_ID': user_id,
-                    'REACT_APP_USER_ID': user_id,
-                    'FILE_NAME': file_name,
-                    'PORT': '3001',
-                    'HOST': '0.0.0.0',
-                    'NODE_ENV': 'development',
-                    'NODE_OPTIONS': '--max-old-space-size=8192',
-                    'WATCHPACK_POLLING': 'true',
-                    'SKIP_PREFLIGHT_CHECK': 'true'
-                },
-                volumes={
-                    os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
-                },
-                ports={'3001/tcp': host_port},
-                mem_limit='8g',
-                memswap_limit='16g',
-                cpu_quota=100000,
-                restart_policy={"Name": "always"}  # Changed to always restart
-            )
+        # Create new container
+        detailed_logger.log('info', f"Creating new container: {container_name}")
+        host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
 
-            # Wait for container to be healthy
-            is_healthy, health_info = verify_container_health(container, max_wait=60)
-            if not is_healthy:
-                container.remove(force=True)
-                raise Exception(f"New container failed health check: {health_info}")
+        container = client.containers.run(
+            'react_renderer_prod',
+            detach=True,
+            name=container_name,
+            environment={
+                'USER_ID': user_id,
+                'REACT_APP_USER_ID': user_id,
+                'FILE_NAME': file_name,
+                'PORT': '3001',
+                'HOST': '0.0.0.0',
+                'NODE_ENV': 'development',
+                'NODE_OPTIONS': '--max-old-space-size=8192',
+                'WATCHPACK_POLLING': 'true',
+                'SKIP_PREFLIGHT_CHECK': 'true'
+            },
+            volumes={
+                os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
+                os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
+                os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'rw'},
+                os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
+            },
+            ports={'3001/tcp': host_port},
+            mem_limit='8g',
+            memswap_limit='16g',
+            cpu_quota=100000,
+            restart_policy={"Name": "on-failure", "MaximumRetryCount": 3},
+            healthcheck={
+                "test": ["CMD", "curl", "-f", "http://localhost:3001"],
+                "interval": 10000000000,
+                "timeout": 5000000000,
+                "retries": 3,
+                "start_period": 10000000000
+            }
+        )
 
-            # Wait for container to initialize
-            time.sleep(10)
-            container.reload()
+        # Wait for container to be ready
+        detailed_logger.log('info', f"Waiting for container to be ready...")
+        is_healthy = False
+        start_time = time.time()
+        initialization_errors = []
 
-            # Verify container setup with retry
+        while time.time() - start_time < 60:  # Wait up to 60 seconds
             try:
-                exec_command_with_retry(container, ["yarn", "--version"], max_retries=5)
+                container.reload()
+
+                if container.status == 'running':
+                    try:
+                        # Verify basic functionality
+                        yarn_check = exec_command_with_retry(
+                            container,
+                            ["yarn", "--version"],
+                            max_retries=1
+                        )
+                        node_check = exec_command_with_retry(
+                            container,
+                            ["node", "--version"],
+                            max_retries=1
+                        )
+                        dir_check = exec_command_with_retry(
+                            container,
+                            ["sh", "-c", "test -d /app/src && echo 'OK'"],
+                            max_retries=1
+                        )
+
+                        if yarn_check and node_check and dir_check:
+                            is_healthy = True
+                            break
+                    except Exception as check_error:
+                        initialization_errors.append(f"Health check error: {str(check_error)}")
+                elif container.status == 'restarting':
+                    detailed_logger.log('info', "Container is restarting, waiting...")
+                elif container.status == 'exited':
+                    logs = container.logs().decode('utf-8')
+                    initialization_errors.append(f"Container exited. Logs: {logs}")
+                    break
+                else:
+                    initialization_errors.append(f"Unexpected container status: {container.status}")
+
             except Exception as e:
-                detailed_logger.log('error', f"Container setup verification failed: {str(e)}")
+                initialization_errors.append(f"Container check error: {str(e)}")
+
+            time.sleep(2)
+
+        if not is_healthy:
+            logs = container.logs().decode('utf-8')
+            detailed_logger.log('error', f"Container initialization failed. Errors: {initialization_errors}")
+            detailed_logger.log('error', f"Container logs: {logs}")
+
+            try:
                 container.remove(force=True)
-                raise Exception("Container setup failed")
+            except:
+                pass
+
+            return JsonResponse({
+                'error': 'Container initialization failed',
+                'details': {
+                    'errors': initialization_errors,
+                    'logs': logs
+                }
+            }, status=500)
 
         # Update container info
         container_info.update({
-            'container_name': container.name,
+            'id': container.id,
             'status': container.status,
             'ports': container.ports,
             'image': container.image.tags[0] if container.image.tags else 'Unknown',
-            'id': container.id
+            'build_status': 'created',
+            'url': f"https://{host_port}.{HOST_URL}"
         })
-
-        # Get port mapping
-        port_bindings = container.attrs['NetworkSettings']['Ports']
-        host_port = port_bindings.get('3001/tcp', [{}])[0].get('HostPort')
-        if not host_port:
-            raise Exception("No port mapping found")
-
-        dynamic_url = f"https://{host_port}.{HOST_URL}"
 
         # Process code updates
         try:
@@ -648,27 +666,32 @@ def check_or_create_container(request):
             non_standard_imports = check_non_standard_imports(code)
             installed_packages = []
             failed_packages = []
+
             if non_standard_imports:
                 installed_packages, failed_packages = install_packages(container, non_standard_imports)
+                if failed_packages:
+                    detailed_logger.log('warning', f"Failed to install packages: {failed_packages}")
 
             # Update code in container
             build_output, files_added, failed_packages, compilation_status = update_code_internal(
                 container, code, user_id, file_name, main_file_path
             )
 
-            # Get container status and logs
+            # Verify server is running
+            server_check = verify_server_running(container)
+            if not server_check:
+                raise Exception("Development server failed to start")
+
+            # Get final container status
             container.reload()
             detailed_logs = container.logs(tail=200).decode('utf-8')
             file_structure = get_container_file_structure(container)
-
-            # Verify server is running
-            verify_server_running(container)
 
             return JsonResponse({
                 'status': 'success',
                 'message': 'Container is running',
                 'container_id': container.id,
-                'url': dynamic_url,
+                'url': container_info['url'],
                 'can_deploy': True,
                 'container_info': container_info,
                 'build_output': build_output,
@@ -682,30 +705,34 @@ def check_or_create_container(request):
 
         except Exception as update_error:
             detailed_logger.log('error', f"Failed to update code: {str(update_error)}")
-            # Don't remove container on update error, it might be recoverable
+            error_logs = container.logs().decode('utf-8') if container else "No container logs available"
+
             return JsonResponse({
                 'status': 'error',
                 'message': str(update_error),
                 'container_info': container_info,
                 'build_output': getattr(update_error, 'build_output', None),
                 'detailed_logs': detailed_logger.get_logs(),
-                'file_list': file_structure,
+                'error_logs': error_logs,
+                'file_list': file_structure if 'file_structure' in locals() else [],
             }, status=500)
 
     except Exception as e:
         detailed_logger.log('error', f"Critical error: {str(e)}")
-        # Try to cleanup on critical error
-        try:
-            if 'container' in locals():
+
+        # Cleanup on critical error
+        if 'container' in locals():
+            try:
+                logs = container.logs().decode('utf-8')
+                detailed_logger.log('error', f"Container logs before removal: {logs}")
                 container.remove(force=True)
-        except:
-            pass
+            except:
+                pass
 
         return JsonResponse({
             'error': f'Critical error: {str(e)}',
             'container_info': container_info if 'container_info' in locals() else None,
             'detailed_logs': detailed_logger.get_logs(),
-            'file_list': detailed_logger.get_file_list(),
             'traceback': traceback.format_exc()
         }, status=500)
 

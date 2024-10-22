@@ -577,6 +577,7 @@ def check_or_create_container(request):
             ],
             detach=True,
             name=container_name,
+            user='node',
             environment={
                 'USER_ID': user_id,
                 'REACT_APP_USER_ID': user_id,

@@ -510,29 +510,28 @@ def check_or_create_container(request):
                 'react_renderer_prod',
                 command=[
                     "sh", "-c",
-                    f"""
-                    # Initial setup
-                    mkdir -p /app/src /app/node_modules && \
+                    # Add initial setup commands
+                    """
+                    # Set proper ownership and permissions
                     chown -R node:node /app && \
                     chmod -R 755 /app && \
 
-                    # Create compilation status file
-                    touch /app/compilation_status && \
-                    chown node:node /app/compilation_status && \
-                    chmod 644 /app/compilation_status && \
+                    # Create writable directories
+                    mkdir -p /app/src && \
+                    chown node:node /app/src && \
+                    chmod 755 /app/src && \
 
-                    # Setup Next.js app
-                    cd /app && \
-                    yarn create next-app {app_name} --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" && \
-                    mv {app_name}/* . && \
-                    rm -rf {app_name} && \
-
-                   
-                    # Start development server
-                    export NODE_OPTIONS="--max-old-space-size=8192" && \
-                    yarn start
+                    # Start development server as node user
+                    su node -c "cd /app && yarn start"
                     """
                 ],
+                user='root',  # Start as root to set permissions
+                volumes={
+                    os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'node_modules'): {'bind': '/app/node_modules', 'mode': 'rw'},
+                },
                 detach=True,
                 name=container_name,
                 environment={
@@ -541,12 +540,6 @@ def check_or_create_container(request):
                     'FILE_NAME': file_name,
                     'PORT': str(3001),
                     'NODE_ENV': 'development',
-                },
-                volumes={
-                    os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
                 },
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',

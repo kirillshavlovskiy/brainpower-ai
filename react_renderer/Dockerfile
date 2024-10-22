@@ -10,7 +10,8 @@ RUN apt-get update && apt-get install -y \
     make \
     g++ \
     procps \
-    && rm -rf /var/lib/apt/lists/*
+    curl && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install create-next-app globally
 RUN yarn global add create-next-app@latest
@@ -34,10 +35,7 @@ RUN yarn add \
     html2canvas@1.4.1
 
 # Create necessary directories
-RUN mkdir -p /app/src \
-    /app/public \
-    /app/build \
-    /app/.next \
+RUN mkdir -p /app/src /app/public /app/build /app/.next && \
     chown -R node:node /app && \
     chmod -R 755 /app
 
@@ -71,12 +69,12 @@ cd /app\n\
 \n\
 # Check if we need to create a new Next.js project\n\
 if [ ! -f "next.config.js" ]; then\n\
-    if [ -n "$APP_NAME" ]; then\n\
-        echo "Creating new Next.js project: $APP_NAME"\n\
-        yarn create next-app $APP_NAME --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" && \
-        mv $APP_NAME/* . && \
-        rm -rf $APP_NAME\n\
-    fi\n\
+  if [ -n "$APP_NAME" ]; then\n\
+    echo "Creating new Next.js project: $APP_NAME"\n\
+    yarn create next-app $APP_NAME --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" && \n\
+    mv $APP_NAME/* . && \n\
+    rm -rf $APP_NAME\n\
+  fi\n\
 fi\n\
 \n\
 # Install/update Babel dependencies\n\
@@ -84,11 +82,11 @@ yarn add @babel/traverse@7.23.2 @babel/core@7.22.20 @babel/helper-remap-async-to
 \n\
 # Start development server\n\
 yarn dev -p 3001' > /app/start.sh && \
-    chmod +x /app/start.sh
+chmod +x /app/start.sh
 
 # Add healthcheck
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:3001/ || exit 1
+  CMD curl -f http://localhost:3001/ || exit 1
 
 # Set the entrypoint
 ENTRYPOINT ["/app/start.sh"]

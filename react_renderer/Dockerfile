@@ -27,7 +27,10 @@ RUN yarn install
 
 # Add html2canvas and serve
 RUN yarn add html2canvas && \
-    yarn global add serve
+    yarn global add serve \
+    yarn add @babel/traverse@7.23.2 @babel/core@7.22.20 && \
+    yarn add @babel/helper-remap-async-to-generator@7.22.20 && \
+    export NODE_OPTIONS="--max-old-space-size=8192" && \
 
 # Add node_modules/.bin to PATH
 ENV PATH=/app/node_modules/.bin:$PATH

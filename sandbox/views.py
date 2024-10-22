@@ -299,15 +299,19 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                     f"Failed to save compilation status: {status_result.output.decode() if hasattr(status_result.output, 'decode') else 'Unknown error'}")
         except Exception as e:
             logger.warning(f"Error saving compilation status: {str(e)}")
+
+        return "\n".join(build_output), files_added, compilation_status
+
+    except Exception as e:
+        logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
+        try:
             # Try to cleanup
             container.exec_run(
                 "rm -rf /app/src/* && echo error > /app/compilation_status",
                 user='root'
             )
-        return "\n".join(build_output), files_added, compilation_status
-
-    except Exception as e:
-        logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
+        except:
+            pass
         raise
 
 

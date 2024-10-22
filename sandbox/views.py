@@ -511,8 +511,11 @@ def check_or_create_container(request):
                             yarn create next-app {app_name} --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" &&
                             mv {app_name}/* . &&
                             rm -rf {app_name} &&
-                            yarn install &&
-                            yarn dev
+                            yarn add @babel/traverse@7.23.2 @babel/core@7.22.20 && \
+                            yarn add @babel/helper-remap-async-to-generator@7.22.20 && \
+                            export NODE_OPTIONS="--max-old-space-size=8192" && \
+                            yarn start
+
                             """
                     ],
                     detach=True,
@@ -522,9 +525,9 @@ def check_or_create_container(request):
                         'REACT_APP_USER_ID': user_id,
                         'FILE_NAME': file_name,
                         'PORT': str(3001),
-                        'NODE_ENV': 'development',  # Changed to development for better debugging
+                        'NODE_ENV': 'development',
                         'NODE_OPTIONS': '--max-old-space-size=8192',
-                        'WATCHPACK_POLLING': 'true'  # Enable polling for file changes
+                        'WATCHPACK_POLLING': 'true'
                     },
 
                     volumes={

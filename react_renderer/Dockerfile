@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y \
     python3 \
     make \
     g++ \
-    procps \  # For pkill
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy package.json and yarn.lock

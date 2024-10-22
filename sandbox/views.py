@@ -237,8 +237,8 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         encoded_code = base64.b64encode(code.encode()).decode()
         exec_result = container.exec_run([
             "sh", "-c",
-            f"echo {encoded_code} | base64 -d > /app/src/page.js"  # Adjust this path as needed
-        ])
+            f"echo {encoded_code} | base64 -d > /app/src/page.js"
+        ], user='root')
         if exec_result.exit_code != 0:
             raise Exception(f"Failed to update page.js in container: {exec_result.output.decode()}")
         files_added.append('/app/src/app/page.js')
@@ -507,6 +507,9 @@ def check_or_create_container(request):
                 command=[
                     "sh", "-c",
                     f"""
+                    mkdir -p /app/src && \
+                    chown -R node:node /app/src && \
+                    chmod -R 755 /app/src && \
                     yarn create next-app {app_name} --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" &&
                     mv {app_name}/* . &&
                     rm -rf {app_name} &&

@@ -37,7 +37,9 @@ RUN yarn add \
 RUN mkdir -p /app/src \
     /app/public \
     /app/build \
-    /app/.next
+    /app/.next \
+    chown -R node:node /app && \
+    chmod -R 755 /app
 
 # Set environment variables
 ENV PORT=3001

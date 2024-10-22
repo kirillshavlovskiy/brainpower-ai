@@ -12,11 +12,8 @@ RUN apt-get update && apt-get install -y \
     procps \  # For pkill
     && rm -rf /var/lib/apt/lists/*
 
-# Install yarn globally
-RUN npm install -g yarn
-
-# Copy package files
-COPY package*.json ./
+# Copy package.json and yarn.lock
+COPY package.json yarn.lock ./
 
 # Set yarn network timeout and concurrency
 RUN yarn config set network-timeout 300000 && \
@@ -28,13 +25,20 @@ RUN echo "SKIP_PREFLIGHT_CHECK=true" > .env
 # Install dependencies
 RUN yarn install
 
+# Add html2canvas and serve
+RUN yarn add html2canvas && \
+    yarn global add serve
+
 # Add node_modules/.bin to PATH
 ENV PATH=/app/node_modules/.bin:$PATH
 
-# Create necessary directories
-RUN mkdir -p src public build
+# Copy the entire project
+COPY . .
 
-# Set environment variables
+# Expose the port the app runs on
+EXPOSE 3001
+
+# Set environment variable for create-react-app to use the correct port
 ENV PORT=3001
 ENV HOST=0.0.0.0
 ENV NODE_ENV=development
@@ -43,13 +47,5 @@ ENV NODE_OPTIONS=--max-old-space-size=8192
 # Expose port
 EXPOSE 3001
 
-# Add healthcheck
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD node -e "process.exit(require('http').get('http://localhost:3001', (r) => r.statusCode === 200 ? 0 : 1).on('error', () => process.exit(1)))"
-
-# Start command wrapper script
-COPY docker-entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-
-ENTRYPOINT ["docker-entrypoint.sh"]
+# Start the app using the serve script
 CMD ["yarn", "start"]

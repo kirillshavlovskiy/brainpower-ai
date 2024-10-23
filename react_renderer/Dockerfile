@@ -15,6 +15,15 @@ RUN apt-get update && apt-get install -y \
 # Set the working directory
 WORKDIR /app
 
+# Copy package.json and yarn.lock files to the working directory
+COPY package.json yarn.lock ./
+
+# Install dependencies
+RUN yarn install
+
+# Copy the rest of the application code
+COPY . .
+
 # Create a non-root user for better security
 RUN useradd -m -s /bin/bash -u 1001 nextjs && \
     chown -R nextjs:nextjs /app
@@ -36,5 +45,5 @@ ENV NEXT_TELEMETRY_DISABLED=1
 HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=3 \
     CMD nc -z localhost 3001 || exit 1
 
-# Start command - will install dependencies and start dev server
-CMD ["sh", "-c", "yarn install && yarn dev -p 3001"]
+# Start the Next.js development server
+CMD ["yarn", "dev", "-p", "3001"]

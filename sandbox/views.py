@@ -726,7 +726,7 @@ def check_or_create_container(request):
             # Create new container with Next.js setup
             container = client.containers.run(
                 'react_renderer_prod',
-                command=["sh", "-c", "cd /app && yarn install && yarn dev -p 3001"],
+                ["sh", "-c", "cd /app && yarn dev -p 3001"],
                 detach=True,
                 name=container_name,
                 environment={
@@ -804,129 +804,6 @@ def check_or_create_container(request):
                 'detailed_logs': detailed_logger.get_logs(),
                 'file_list': file_structure
             }, status=500)
-
-
-@api_view(['GET'])
-def check_container(request):
-    """
-    Check container status and return detailed information about its state
-    """
-    user_id = request.GET.get('user_id', '0')
-    file_name = request.GET.get('file_name', 'test-component.js')
-    container_name = f'react_renderer_{user_id}_{file_name}'
-
-    logger.info(f"Checking container status for {container_name}")
-
-    try:
-        container = client.containers.get(container_name)
-        container.reload()
-
-        # Get basic container info
-        container_info = {
-            'container_name': container.name,
-            'created_at': container.attrs['Created'],
-            'status': container.status,
-            'ports': container.ports,
-            'image': container.image.tags[0] if container.image.tags else 'Unknown',
-            'id': container.id,
-            'health_status': container.attrs.get('State', {}).get('Health', {}).get('Status', 'unknown')
-        }
-
-        # Check if container is running
-        if container.status != 'running':
-            try:
-                logger.info(f"Container {container_name} not running, attempting to start")
-                container.start()
-                container.reload()
-                time.sleep(5)  # Wait for container to start
-            except Exception as start_error:
-                logger.error(f"Failed to start container: {str(start_error)}")
-                return JsonResponse({
-                    'status': 'error',
-                    'container_id': container.id,
-                    'message': f"Failed to start container: {str(start_error)}",
-                    'container_info': container_info
-                })
-
-        # Check port mapping
-        port_mapping = container.ports.get('3001/tcp')
-        if not port_mapping:
-            logger.warning(f"No port mapping found for container {container_name}")
-            return JsonResponse({
-                'status': 'not_ready',
-                'container_id': container.id,
-                'message': 'Container running but port not mapped',
-                'container_info': container_info
-            })
-
-        # Check directory permissions and structure
-        try:
-            # Run directory check as root to avoid permission issues
-            check_result = container.exec_run(
-                "test -d /app/src && echo 'exists' || echo 'not found'",
-                user='root'
-            )
-
-            if check_result.exit_code != 0 or 'not found' in check_result.output.decode():
-                logger.warning(f"/app/src directory not found in container {container_name}")
-                # Attempt to fix directory permissions
-                set_container_permissions(container)
-
-            # Get file structure
-            file_structure = get_container_file_structure(container)
-
-            # Get compilation status
-            compilation_status = get_compilation_status(container)
-
-            # Get container logs
-            logs = container.logs(tail=100).decode('utf-8')
-
-            host_port = port_mapping[0]['HostPort']
-            url = f"https://{host_port}.{HOST_URL}"
-
-            # Check if container is actually ready
-            ready_status = (
-                    container.status == 'running' and
-                    compilation_status in [ContainerStatus.READY, ContainerStatus.WARNING] and
-                    bool(port_mapping)
-            )
-
-            return JsonResponse({
-                'status': 'ready' if ready_status else 'initializing',
-                'container_id': container.id,
-                'container_info': container_info,
-                'url': url,
-                'file_list': file_structure,
-                'compilation_status': compilation_status,
-                'detailed_logs': detailed_logger.get_logs(),
-                'recent_logs': logs,
-                'port': host_port,
-                'message': 'Container is ready' if ready_status else 'Container is initializing'
-            })
-
-        except Exception as check_error:
-            logger.error(f"Error checking container structure: {str(check_error)}")
-            return JsonResponse({
-                'status': 'error',
-                'container_id': container.id,
-                'message': f"Error checking container structure: {str(check_error)}",
-                'container_info': container_info
-            })
-
-    except docker.errors.NotFound:
-        logger.warning(f"Container {container_name} not found")
-        return JsonResponse({
-            'status': 'not_found',
-            'message': f"Container {container_name} not found"
-        }, status=404)
-
-    except Exception as e:
-        logger.error(f"Error checking container {container_name}: {str(e)}", exc_info=True)
-        return JsonResponse({
-            'status': 'error',
-            'message': str(e),
-            'error_details': traceback.format_exc()
-        }, status=500)
 
 
 @api_view(['GET'])

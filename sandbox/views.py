@@ -209,7 +209,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                     "sh", "-c",
                     f"echo {encoded_code} | base64 -d > /app/components/DynamicComponent.js"
                 ], 
-                    user='nextjs')
+                    user='root')
                 if exec_result.exit_code != 0:
                     raise Exception(f"Failed to update DynamicComponent.js in container: {exec_result.output.decode()}")
                 files_added.append('/app/components/DynamicComponent.js')
@@ -536,7 +536,7 @@ def check_or_create_container(request):
             container = client.containers.run(
                 'react_renderer_prod',
                 command=["sh", "-c", "yarn dev"],
-                user='nextjs',
+                user='root',
                 detach=True,
                 name=container_name,
                 environment={

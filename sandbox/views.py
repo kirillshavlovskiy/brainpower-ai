@@ -473,98 +473,145 @@ def check_or_create_container(request):
     file_name = data.get('file_name', 'component.js')
     main_file_path = data.get('main_file_path')
 
-    detailed_logger.log('info', f"Received request to check or create container for user {user_id}, file {file_name}")
+    detailed_logger.log('info', f"Starting container setup for user {user_id}, file {file_name}")
 
     if not all([code, language, file_name]):
         return JsonResponse({'error': 'Missing required fields'}, status=400)
     if language != 'react':
         return JsonResponse({'error': 'Unsupported language'}, status=400)
 
-    # Update path to match Next.js structure
     react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'
     container_name = f'react_renderer_{user_id}_{file_name}'
-    app_name = f"{user_id}_{file_name.replace('.', '-')}"
 
     try:
-        # Try to get existing container
-        container = client.containers.get(container_name)
-        detailed_logger.log('info', f"Found existing container: {container.id}")
+        # Cleanup any existing container
+        try:
+            old_container = client.containers.get(container_name)
+            old_container.stop()
+            old_container.remove()
+            detailed_logger.log('info', f"Removed old container: {container_name}")
+        except docker.errors.NotFound:
+            pass
 
-        if container.status != 'running':
-            detailed_logger.log('info', f"Starting container {container.id}")
-            container.start()
-            container.reload()
-            time.sleep(5)
+        # Create necessary directories in the host
+        os.makedirs(os.path.join(react_renderer_path, 'pages'), exist_ok=True)
+        os.makedirs(os.path.join(react_renderer_path, 'components'), exist_ok=True)
+        os.makedirs(os.path.join(react_renderer_path, 'public'), exist_ok=True)
+        os.makedirs(os.path.join(react_renderer_path, 'styles'), exist_ok=True)
 
-    except docker.errors.NotFound:
-        detailed_logger.log('info', f"Creating new container: {container_name}")
+        # Set proper permissions
+        for dir_path in ['pages', 'components', 'public', 'styles']:
+            full_path = os.path.join(react_renderer_path, dir_path)
+            os.system(f"chmod -R 777 {full_path}")
+
         host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
 
-        try:
-            # Updated volume mounts for Next.js structure
-            container = client.containers.run(
-                'react_renderer_prod',
-                command=["tail", "-f", "/dev/null"],  # Initial command to keep container running
-                detach=True,
-                name=container_name,
-                user='node',
-                environment={
-                    'USER_ID': user_id,
-                    'NEXT_PUBLIC_USER_ID': user_id,
-                    'FILE_NAME': file_name,
-                    'PORT': str(3001),
-                    'NODE_ENV': 'production',
-                    'NODE_OPTIONS': '--max-old-space-size=8192'
-                },
-                volumes={
-                    # Mount Next.js specific directories
-                    os.path.join(react_renderer_path, 'pages'): {'bind': '/app/pages', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'styles'): {'bind': '/app/styles', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'components'): {'bind': '/app/components', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
-                    os.path.join(react_renderer_path, 'next.config.js'): {'bind': '/app/next.config.js', 'mode': 'ro'},
-                },
-                ports={'3001/tcp': host_port},
-                mem_limit='8g',
-                memswap_limit='16g',
-                cpu_quota=100000,
-                restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
-            )
-            detailed_logger.log('info', f"Container created: {container.id}")
+        # Create container with proper setup
+        container = client.containers.run(
+            'react_renderer_prod',
+            command=[
+                "sh", "-c",
+                "cd /app && yarn install && yarn dev || (cat yarn-error.log && exit 1)"
+            ],
+            detach=True,
+            name=container_name,
+            user='root',  # Start as root to set up permissions
+            environment={
+                'USER_ID': user_id,
+                'NEXT_PUBLIC_USER_ID': user_id,
+                'FILE_NAME': file_name,
+                'PORT': '3001',
+                'HOST': '0.0.0.0',
+                'NODE_ENV': 'development',
+                'NODE_OPTIONS': '--max-old-space-size=8192'
+            },
+            volumes={
+                os.path.join(react_renderer_path, 'pages'): {'bind': '/app/pages', 'mode': 'rw'},
+                os.path.join(react_renderer_path, 'components'): {'bind': '/app/components', 'mode': 'rw'},
+                os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
+                os.path.join(react_renderer_path, 'styles'): {'bind': '/app/styles', 'mode': 'rw'},
+                os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
+                os.path.join(react_renderer_path, 'next.config.js'): {'bind': '/app/next.config.js', 'mode': 'ro'},
+            },
+            ports={'3001/tcp': host_port},
+            mem_limit='8g',
+            memswap_limit='16g',
+            cpu_quota=100000,
+            working_dir='/app',
+            restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
+        )
 
-        except docker.errors.APIError as e:
-            detailed_logger.log('error', f"Container creation failed: {str(e)}")
-            return JsonResponse({'error': f'Failed to create container: {str(e)}'}, status=500)
+        # Wait for container to be running
+        max_wait = 30
+        wait_count = 0
+        while wait_count < max_wait:
+            container.reload()
+            if container.status == 'running':
+                break
+            time.sleep(1)
+            wait_count += 1
 
-    try:
-        # Update code internal now targets Next.js structure
-        build_output, files_added, compilation_status = update_code_internal(container, code, user_id, file_name,
-                                                                             main_file_path)
+        if container.status != 'running':
+            logs = container.logs().decode('utf-8')
+            raise Exception(f"Container failed to start. Logs: {logs}")
 
-        # Get container status and URL
+        # Set up proper permissions and directories inside container
+        setup_commands = [
+            "chown -R node:node /app",
+            "chmod -R 755 /app",
+            "mkdir -p /app/.next",
+            "chown -R node:node /app/.next",
+            "chmod -R 777 /app/.next",
+            "su node -c 'cd /app && node -v && npm -v && yarn -v'"
+        ]
+
+        for cmd in setup_commands:
+            exec_result = container.exec_run(cmd)
+            if exec_result.exit_code != 0:
+                detailed_logger.log('warning', f"Command failed: {cmd}: {exec_result.output.decode()}")
+
+        # Now update the code
+        build_output, files_added, compilation_status = update_code_internal(
+            container, code, user_id, file_name, main_file_path
+        )
+
+        # Check container health
         container.reload()
+        if container.status != 'running':
+            raise Exception(f"Container stopped after code update. Status: {container.status}")
+
+        # Get URL and status
         port_mapping = container.ports.get('3001/tcp')
-        if not port_mapping:
-            raise Exception('No port mapping found after container setup')
+        if port_mapping:
+            host_port = port_mapping[0]['HostPort']
+            dynamic_url = f"https://{host_port}.{HOST_URL}"
+            detailed_logger.log('info', f"Container setup complete. URL: {dynamic_url}")
 
-        host_port = port_mapping[0]['HostPort']
-        dynamic_url = f"https://{host_port}.{HOST_URL}"
-
-        return JsonResponse({
-            'status': 'success',
-            'message': 'Container is running',
-            'container_id': container.id,
-            'url': dynamic_url,
-            'can_deploy': True,
-            'compilation_status': compilation_status,
-            'build_output': build_output,
-            'files_added': files_added
-        })
+            return JsonResponse({
+                'status': 'success',
+                'message': 'Container is running',
+                'container_id': container.id,
+                'url': dynamic_url,
+                'can_deploy': True,
+                'compilation_status': compilation_status,
+                'build_output': build_output
+            })
+        else:
+            raise Exception("No port mapping found after container setup")
 
     except Exception as e:
-        detailed_logger.log('error', f"Setup failed: {str(e)}")
-        return JsonResponse({'error': str(e)}, status=500)
+        detailed_logger.log('error', f"Container setup failed: {str(e)}")
+        # Try to get container logs if available
+        try:
+            if 'container' in locals():
+                logs = container.logs().decode('utf-8')
+                detailed_logger.log('error', f"Container logs: {logs}")
+        except:
+            pass
+        return JsonResponse({
+            'error': str(e),
+            'logs': detailed_logger.get_logs()
+        }, status=500)
 
 
 def get_compilation_status(container):

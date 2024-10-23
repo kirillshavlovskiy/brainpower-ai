@@ -167,12 +167,12 @@ def update_code_internal(container, code, user, file_name, main_file_path):
             try:
                 exec_result = container.exec_run([
                     "sh", "-c",
-                    f"echo {encoded_code} | base64 -d > /app/component/DynamicComponent.js"
+                    f"echo {encoded_code} | base64 -d > /app/components/DynamicComponent.js"
                 ], 
                     user='nextjs')
                 if exec_result.exit_code != 0:
                     raise Exception(f"Failed to update DynamicComponent.js in container: {exec_result.output.decode()}")
-                files_added.append('/app/component/DynamicComponent.js')
+                files_added.append('/app/components/DynamicComponent.js')
                 break
             except docker.errors.APIError as e:
                 if attempt == max_attempts - 1:
@@ -180,7 +180,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                 logger.warning(f"API error on attempt {attempt + 1}, retrying: {str(e)}")
                 time.sleep(1)
 
-        logger.info(f"Updated component.js in container with content from {file_name} at path {main_file_path}")
+        logger.info(f"Updated DynamicComponent.js in container with content from {file_name} at path {main_file_path}")
         logger.info(f"Processing for user: {user}")
 
         # Get the directory of the main file
@@ -199,7 +199,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                 if file_content is not None:
                     logger.info(f"Retrieved content for file: {import_path}")
                     encoded_content = base64.b64encode(file_content.encode()).decode()
-                    container_path = f"/app/component/{import_path}"
+                    container_path = f"/app/components/{import_path}"
                     exec_result = container.exec_run([
                         "sh", "-c",
                         f"mkdir -p $(dirname {container_path}) && echo {encoded_content} | base64 -d > {container_path}"
@@ -210,7 +210,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                     files_added.append(container_path)
                 else:
                     logger.warning(f"File {import_path} not found or empty. Creating empty file in container.")
-                    container_path = f"/app/component/{import_path}"
+                    container_path = f"/app/components/{import_path}"
                     exec_result = container.exec_run([
                         "sh", "-c",
                         f"mkdir -p $(dirname {container_path}) && touch {container_path}"

@@ -217,6 +217,7 @@ def check_container(request):
 
 
 def exec_command_with_retry(container, command, user='node', max_retries=3, delay=1):
+    """Execute command with retry logic and handle detached processes"""
     for attempt in range(max_retries):
         try:
             container.reload()
@@ -616,6 +617,7 @@ def get_available_port(start, end):
 
 @api_view(['POST'])
 def check_or_create_container(request):
+    file_structure = []
     data = request.data
     code = data.get('main_code')
     language = data.get('language')
@@ -623,7 +625,7 @@ def check_or_create_container(request):
     file_name = data.get('file_name', 'component.js')
     main_file_path = data.get('main_file_path')
 
-    detailed_logger.log('info', f"Received request to check or create container for user {user_id}, file {file_name}")
+    detailed_logger.log('info', f"Checking container for user {user_id}, file {file_name}, path {main_file_path}")
 
     if not all([code, language, file_name]):
         return JsonResponse({'error': 'Missing required fields'}, status=400)
@@ -634,6 +636,13 @@ def check_or_create_container(request):
     react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'
     container_name = f'react_renderer_{user_id}_{file_name}'
     app_name = f"{user_id}_{file_name.replace('.', '-')}"
+
+    container_info = {
+        'container_name': container_name,
+        'created_at': datetime.now().isoformat(),
+        'files_added': [],
+        'build_status': 'pending'
+    }
 
     try:
         # Try to get existing container
@@ -646,6 +655,69 @@ def check_or_create_container(request):
             container.reload()
             time.sleep(5)
 
+            # Verify Next.js server is running
+            exec_result = container.exec_run(
+                ["sh", "-c", "cd /app && yarn dev -p 3001"],
+                detach=True
+            )
+
+        # Get container status and port information
+        container.reload()
+        container_info.update({
+            'status': container.status,
+            'ports': container.ports,
+            'image': container.image.tags[0] if container.image.tags else 'Unknown',
+            'id': container.id
+        })
+
+        # Get port mapping
+        port_mapping = container.ports.get('3001/tcp')
+        if not port_mapping:
+            detailed_logger.log('warning', "No port mapping found. Checking container logs...")
+            logs = container.logs().decode('utf-8')
+            return JsonResponse({
+                'status': 'error',
+                'message': 'No port mapping found',
+                'container_info': container_info,
+                'logs': logs
+            }, status=500)
+
+        host_port = port_mapping[0]['HostPort']
+        dynamic_url = f"https://{host_port}.{HOST_URL}"
+
+        try:
+            # Update component code
+            build_output, files_added = update_code_internal(container, code, user_id, file_name, main_file_path)
+            container_info['build_status'] = 'updated'
+            container_info['files_added'] = files_added
+
+            # Get file structure and logs
+            file_structure = get_container_file_structure(container)
+            detailed_logs = container.logs(tail=200).decode('utf-8')
+
+            return JsonResponse({
+                'status': 'success',
+                'message': 'Container is running',
+                'container_id': container.id,
+                'url': dynamic_url,
+                'can_deploy': True,
+                'container_info': container_info,
+                'build_output': build_output,
+                'detailed_logs': detailed_logs,
+                'file_list': file_structure,
+                'files_added': files_added
+            })
+
+        except Exception as update_error:
+            detailed_logger.log('error', f"Failed to update code: {str(update_error)}")
+            return JsonResponse({
+                'status': 'error',
+                'message': str(update_error),
+                'build_output': getattr(update_error, 'build_output', None),
+                'detailed_logs': detailed_logger.get_logs(),
+                'file_list': file_structure,
+            }, status=500)
+
     except docker.errors.NotFound:
         detailed_logger.log('info', f"Creating new container: {container_name}")
         host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
@@ -654,17 +726,15 @@ def check_or_create_container(request):
             # Updated volume mounts for Next.js structure
             container = client.containers.run(
                 'react_renderer_prod',
-                command=["tail", "-f", "/dev/null"],  # Initial command to keep container running
+                command=["sh", "-c", "cd /app && yarn dev -p 3001"],
                 detach=True,
                 name=container_name,
-                user='node',
                 environment={
-                    'USER_ID': user_id,
-                    'NEXT_PUBLIC_USER_ID': user_id,
-                    'FILE_NAME': file_name,
-                    'PORT': str(3001),
-                    'NODE_ENV': 'production',
-                    'NODE_OPTIONS': '--max-old-space-size=8192'
+                    'PORT': '3001',
+                    'HOST': '0.0.0.0',
+                    'NODE_ENV': 'development',
+                    'NODE_OPTIONS': '--max-old-space-size=8192',
+                    'NEXT_TELEMETRY_DISABLED': '1'
                 },
                 volumes={
                     # Mount Next.js specific directories
@@ -679,166 +749,61 @@ def check_or_create_container(request):
                 mem_limit='8g',
                 memswap_limit='16g',
                 cpu_quota=100000,
-                restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
+                working_dir='/app',
+                user='nextjs'  # Use non-root user from Dockerfile
             )
             detailed_logger.log('info', f"Container created: {container.id}")
 
-        except docker.errors.APIError as e:
-            detailed_logger.log('error', f"Container creation failed: {str(e)}")
-            return JsonResponse({'error': f'Failed to create container: {str(e)}'}, status=500)
-
-    try:
-        # Update code internal now targets Next.js structure
-        build_output, files_added, compilation_status = update_code_internal(container, code, user_id, file_name,
-                                                                             main_file_path)
-
-        # Get container status and URL
-        container.reload()
-        port_mapping = container.ports.get('3001/tcp')
-        if not port_mapping:
-            raise Exception('No port mapping found after container setup')
-
-        host_port = port_mapping[0]['HostPort']
-        dynamic_url = f"https://{host_port}.{HOST_URL}"
-
-        return JsonResponse({
-            'status': 'success',
-            'message': 'Container is running',
-            'container_id': container.id,
-            'url': dynamic_url,
-            'can_deploy': True,
-            'compilation_status': compilation_status,
-            'build_output': build_output,
-            'files_added': files_added
-        })
-
-    except Exception as e:
-        detailed_logger.log('error', f"Setup failed: {str(e)}")
-        return JsonResponse({'error': str(e)}, status=500)
-
-
-
-@api_view(['GET'])
-def check_container(request):
-    """
-    Check container status and return detailed information about its state
-    """
-    user_id = request.GET.get('user_id', '0')
-    file_name = request.GET.get('file_name', 'test-component.js')
-    container_name = f'react_renderer_{user_id}_{file_name}'
-
-    logger.info(f"Checking container status for {container_name}")
-
-    try:
-        container = client.containers.get(container_name)
-        container.reload()
-
-        # Get basic container info
-        container_info = {
-            'container_name': container.name,
-            'created_at': container.attrs['Created'],
-            'status': container.status,
-            'ports': container.ports,
-            'image': container.image.tags[0] if container.image.tags else 'Unknown',
-            'id': container.id,
-            'health_status': container.attrs.get('State', {}).get('Health', {}).get('Status', 'unknown')
-        }
-
-        # Check if container is running
-        if container.status != 'running':
-            try:
-                logger.info(f"Container {container_name} not running, attempting to start")
-                container.start()
+            # Wait for container readiness
+            max_wait = 30
+            wait_count = 0
+            while wait_count < max_wait:
                 container.reload()
-                time.sleep(5)  # Wait for container to start
-            except Exception as start_error:
-                logger.error(f"Failed to start container: {str(start_error)}")
-                return JsonResponse({
-                    'status': 'error',
-                    'container_id': container.id,
-                    'message': f"Failed to start container: {str(start_error)}",
-                    'container_info': container_info
-                })
+                logs = container.logs().decode('utf-8')
+                if 'Ready' in logs and container.status == 'running':
+                    break
+                if container.status == 'exited':
+                    raise Exception(f"Container exited. Logs:\n{logs}")
+                time.sleep(1)
+                wait_count += 1
 
-        # Check port mapping
-        port_mapping = container.ports.get('3001/tcp')
-        if not port_mapping:
-            logger.warning(f"No port mapping found for container {container_name}")
-            return JsonResponse({
-                'status': 'not_ready',
-                'container_id': container.id,
-                'message': 'Container running but port not mapped',
-                'container_info': container_info
-            })
+            # Update component code
+            build_output, files_added = update_code_internal(container, code, user_id, file_name, main_file_path)
+            container_info['build_status'] = 'updated'
 
-        # Check directory permissions and structure
-        try:
-            # Run directory check as root to avoid permission issues
-            check_result = container.exec_run(
-                "test -d /app/src && echo 'exists' || echo 'not found'",
-                user='root'
-            )
-
-            if check_result.exit_code != 0 or 'not found' in check_result.output.decode():
-                logger.warning(f"/app/src directory not found in container {container_name}")
-                # Attempt to fix directory permissions
-                set_container_permissions(container)
-
-            # Get file structure
+            # Get final status
             file_structure = get_container_file_structure(container)
+            detailed_logs = container.logs(tail=200).decode('utf-8')
 
-            # Get compilation status
-            compilation_status = get_compilation_status(container)
+            container.reload()
+            port_mapping = container.ports.get('3001/tcp')
 
-            # Get container logs
-            logs = container.logs(tail=100).decode('utf-8')
+            if port_mapping:
+                dynamic_url = f"https://{host_port}.{HOST_URL}"
+                detailed_logger.log('info', f"Container ready: {dynamic_url}")
+                return JsonResponse({
+                    'status': 'success',
+                    'message': 'Container is running',
+                    'container_id': container.id,
+                    'url': dynamic_url,
+                    'can_deploy': True,
+                    'container_info': container_info,
+                    'build_output': build_output,
+                    'detailed_logs': detailed_logs,
+                    'file_list': file_structure,
+                    'files_added': files_added
+                })
+            else:
+                raise Exception("No port mapping found after container setup")
 
-            host_port = port_mapping[0]['HostPort']
-            url = f"https://{host_port}.{HOST_URL}"
-
-            # Check if container is actually ready
-            ready_status = (
-                    container.status == 'running' and
-                    compilation_status in [ContainerStatus.READY, ContainerStatus.WARNING] and
-                    bool(port_mapping)
-            )
-
+        except Exception as e:
+            detailed_logger.log('error', f"Container setup failed: {str(e)}")
             return JsonResponse({
-                'status': 'ready' if ready_status else 'initializing',
-                'container_id': container.id,
+                'error': str(e),
                 'container_info': container_info,
-                'url': url,
-                'file_list': file_structure,
-                'compilation_status': compilation_status,
                 'detailed_logs': detailed_logger.get_logs(),
-                'recent_logs': logs,
-                'port': host_port,
-                'message': 'Container is ready' if ready_status else 'Container is initializing'
-            })
-
-        except Exception as check_error:
-            logger.error(f"Error checking container structure: {str(check_error)}")
-            return JsonResponse({
-                'status': 'error',
-                'container_id': container.id,
-                'message': f"Error checking container structure: {str(check_error)}",
-                'container_info': container_info
-            })
-
-    except docker.errors.NotFound:
-        logger.warning(f"Container {container_name} not found")
-        return JsonResponse({
-            'status': 'not_found',
-            'message': f"Container {container_name} not found"
-        }, status=404)
-
-    except Exception as e:
-        logger.error(f"Error checking container {container_name}: {str(e)}", exc_info=True)
-        return JsonResponse({
-            'status': 'error',
-            'message': str(e),
-            'error_details': traceback.format_exc()
-        }, status=500)
+                'file_list': file_structure
+            }, status=500)
 
 
 @api_view(['GET'])

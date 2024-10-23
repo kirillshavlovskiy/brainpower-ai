@@ -3,21 +3,20 @@ const nextConfig = {
   reactStrictMode: true,
   pageExtensions: ['js', 'jsx', 'ts', 'tsx'],
   transpilePackages: [
-    "@mui/material",
-    "@mui/icons-material",
-    "@emotion/react",
-    "@emotion/styled",
-    "lucide-react"
+    '@mui/material',
+    '@mui/icons-material',
+    '@emotion/react',
+    '@emotion/styled',
+    'lucide-react',
   ],
-  webpack: (config, { buildId, dev, isServer, defaultLoaders }) => {
+  webpack: (config, { dev }) => {
     // Handle both JS and TS files
     config.module.rules.push({
       test: /\.(js|jsx|ts|tsx)$/,
-      use: [defaultLoaders.babel],
       exclude: /node_modules/,
     });
 
-    // Add watching options
+    // Add watching options for Docker
     if (dev) {
       config.watchOptions = {
         poll: 1000,
@@ -28,9 +27,8 @@ const nextConfig = {
     return config;
   },
   compiler: {
-    // Enable emotion
-    emotion: true
-  }
-}
+    emotion: true,
+  },
+};
 
-module.exports = nextConfig
+module.exports = nextConfig;

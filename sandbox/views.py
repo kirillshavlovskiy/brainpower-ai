@@ -332,90 +332,46 @@ def set_container_permissions(container):
 
 
 def update_code_internal(container, code, user, file_name, main_file_path):
-    """Track file updates and handle dependencies for mounted Next.js structure"""
-    files_added = []
-    build_output = []
-    failed_packages = []
-
+    """Track files and setup for mounted Next.js structure"""
     try:
-        # First verify container is running and healthy
+        # Check container and server status
         try:
             exec_command_with_retry(container, ["echo", "Container health check"])
         except Exception as e:
             logger.error(f"Container health check failed: {str(e)}")
-            # Try to restart the container
             container.restart()
             time.sleep(10)
             container.reload()
 
-        # Check if file is TypeScript
-        is_typescript = file_name.endswith('.tsx') or file_name.endswith('.ts')
-        file_path = f"/app/components/DynamicComponent.{'tsx' if is_typescript else 'jsx'}"
-        files_added.append(file_path)
+        # Verify Next.js setup
+        verify_nextjs_setup(container)
 
-        # Process imports
+        # Track files in use
+        files_added = []
+        is_typescript = file_name.endswith('.tsx') or file_name.endswith('.ts')
+
+        # Track component file
+        component_path = f"/app/components/DynamicComponent.{'tsx' if is_typescript else 'jsx'}"
+        files_added.append(component_path)
+
+        # Track index file
+        files_added.append('/app/pages/index.js')
+
+        # Process imports for tracking
         base_path = os.path.dirname(main_file_path)
         import_pattern = r"import\s+(?:(?:{\s*[\w\s,]+\s*})|(?:[\w]+)|\*\s+as\s+[\w]+)\s+from\s+['\"](.+?)['\"]|import\s+['\"](.+?)['\"]"
         imports = re.findall(import_pattern, code)
 
         for import_match in imports:
             import_path = import_match[0] or import_match[1]
-            if not import_path:
-                continue
+            if import_path:
+                container_path = f"/app/{import_path}"
+                files_added.append(container_path)
 
-            logger.info(f"Processing import: {import_path}")
-            container_path = f"/app/{import_path}"
-            files_added.append(container_path)
+        # Get build output
+        logs = container.logs(tail=100).decode('utf-8').split('\n')
 
-        # Handle non-standard imports
-        non_standard_imports = check_non_standard_imports(code)
-        if non_standard_imports:
-            logger.info(f"Installing non-standard packages: {', '.join(non_standard_imports)}")
-            installed_packages, failed_packages = install_packages(container, non_standard_imports)
-            if failed_packages:
-                logger.warning(f"Failed to install packages: {', '.join(failed_packages)}")
-
-        # Check Next.js development server
-        logger.info("Checking Next.js development server")
-        try:
-            # Check if Next.js is running
-            check_result = exec_command_with_retry(
-                container,
-                ["sh", "-c", "ps aux | grep 'next dev' | grep -v grep || true"]
-            )
-
-            if not check_result.output:
-                # Start the server if not running
-                logger.info("Starting Next.js development server")
-                exec_result = exec_command_with_retry(
-                    container,
-                    ["sh", "-c", "cd /app && yarn dev -p 3001"],
-                    max_retries=5,
-                    delay=5,
-                    detach=True
-                )
-
-            # Wait for Next.js to pick up changes
-            time.sleep(2)
-
-            # Get build status
-            logs = container.logs(tail=100).decode('utf-8').split('\n')
-            build_output = logs
-            compilation_status = analyze_build_output(logs)
-
-            # Verify server is responding
-            verify_server_running(container)
-
-        except Exception as e:
-            logger.error(f"Error with Next.js server: {str(e)}")
-            compilation_status = ContainerStatus.ERROR
-            build_output = [f"Error with Next.js server: {str(e)}"]
-
-        container.reload()
-        logger.info(f"Final container status: {container.status}")
-        logger.info(f"Final container state: {container.attrs['State']}")
-
-        return "\n".join(build_output), files_added, failed_packages, compilation_status
+        return logs, files_added
 
     except Exception as e:
         logger.error(f"Error in update_code_internal: {str(e)}", exc_info=True)

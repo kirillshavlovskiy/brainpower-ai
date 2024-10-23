@@ -645,7 +645,7 @@ def check_or_create_container(request):
             container = client.containers.get(container_name)
             detailed_logger.log('info', f"Found existing container: {container.id}")
 
-            # If container exists but is not running, remove it and create new
+            # If container exists but is not running, remove it
             if container.status != 'running':
                 detailed_logger.log('info', f"Removing non-running container: {container.id}")
                 container.remove(force=True)
@@ -659,10 +659,29 @@ def check_or_create_container(request):
             components_dir = os.path.join(react_renderer_path, 'components')
             os.makedirs(components_dir, exist_ok=True)
 
+            # Startup script to ensure Next.js is installed and running correctly
+            startup_script = """
+            cd /app && 
+            if [ ! -f "package.json" ]; then
+                echo "Initializing Next.js project..."
+                yarn init -y
+                yarn add next@latest react@latest react-dom@latest
+                mkdir -p pages components
+            fi
+
+            # Ensure Next.js script is in package.json
+            if ! grep -q '"dev":' package.json; then
+                sed -i 's/"scripts": {/"scripts": {\n    "dev": "next dev",/' package.json
+            fi
+
+            # Start Next.js development server
+            npx next dev -p 3001
+            """
+
             # Create new container
             container = client.containers.run(
                 'react_renderer_prod',
-                command=["sh", "-c", "cd /app && yarn dev -p 3001"],
+                command=["sh", "-c", startup_script],
                 detach=True,
                 name=container_name,
                 environment={
@@ -689,20 +708,23 @@ def check_or_create_container(request):
             detailed_logger.log('info', f"New container created: {container_name}")
             container_info['build_status'] = 'created'
 
-        # Wait for container to be fully running
-        max_wait = 30
-        wait_count = 0
-        while wait_count < max_wait:
-            container.reload()
-            if container.status == 'running':
-                time.sleep(2)  # Give the process a moment to stabilize
-                break
-            if wait_count == max_wait - 1:
-                raise Exception("Container failed to start within timeout period")
-            wait_count += 1
-            time.sleep(1)
+            # Wait for Next.js to be ready
+            max_wait = 30
+            wait_count = 0
+            while wait_count < max_wait:
+                container.reload()
+                logs = container.logs().decode('utf-8')
+                if container.status == 'running' and (
+                        'ready started server on' in logs or 'Listening on port 3001' in logs):
+                    detailed_logger.log('info', "Next.js server is ready")
+                    break
+                if 'error' in logs.lower() or container.status == 'exited':
+                    logs = container.logs().decode('utf-8')
+                    raise Exception(f"Container failed to start properly. Logs:\n{logs}")
+                wait_count += 1
+                time.sleep(1)
 
-        # Now that container is running, try to update code
+        # Now that container is running, update code
         try:
             build_output, files_added, compilation_status, installed_packages = update_code_internal(
                 container, code, user_id, file_name, main_file_path
@@ -742,11 +764,13 @@ def check_or_create_container(request):
 
         except Exception as update_error:
             detailed_logger.log('error', f"Failed to update code: {str(update_error)}")
+            container_logs = container.logs().decode('utf-8') if container else "No container logs available"
             return JsonResponse({
                 'status': 'error',
                 'message': str(update_error),
                 'container_info': container_info,
-                'detailed_logs': detailed_logger.get_logs()
+                'detailed_logs': detailed_logger.get_logs(),
+                'container_logs': container_logs
             }, status=500)
 
     except Exception as e:

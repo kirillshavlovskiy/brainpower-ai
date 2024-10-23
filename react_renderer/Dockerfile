@@ -1,45 +1,58 @@
-# Use a more recent Node runtime as the base image
-FROM node:16
+FROM node:18.18.0-slim
 
-# Set the working directory in the container
-WORKDIR /app
-
-# Install necessary build tools and dependencies
+# Install necessary system dependencies
 RUN apt-get update && apt-get install -y \
     python3 \
     make \
     g++ \
+    procps \
+    curl \
+    netcat-traditional \
+    lsof \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy package.json and yarn.lock
+# Set the working directory
+WORKDIR /app
+
+# Create Next.js directory structure
+RUN mkdir -p /app/pages /app/components /app/public /app/styles
+
+# Create a non-root user
+RUN useradd -m -s /bin/bash -u 1001 nextjs && \
+    chown -R nextjs:nextjs /app
+
+# Copy configuration files
 COPY package.json yarn.lock ./
-
-# Set yarn network timeout and concurrency
-RUN yarn config set network-timeout 300000 && \
-    yarn config set network-concurrency 1
-
-# Create .env file to skip preflight check
-RUN echo "SKIP_PREFLIGHT_CHECK=true" > .env
+COPY next.config.js .babelrc ./
 
 # Install dependencies
 RUN yarn install
 
-# Add html2canvas and serve
-RUN yarn add html2canvas && \
-    yarn global add serve
+# Set permissions
+RUN chown -R nextjs:nextjs /app && \
+    chmod -R 755 /app
 
-# Add node_modules/.bin to PATH
-ENV PATH=/app/node_modules/.bin:$PATH
+# Create necessary Next.js directories with correct permissions
+RUN mkdir -p /app/.next && \
+    chown -R nextjs:nextjs /app/.next && \
+    chmod -R 755 /app/.next
 
-# Copy the entire project
-COPY . .
+USER nextjs
 
-# Expose the port the app runs on
+# Expose port 3001
 EXPOSE 3001
 
-# Set environment variable for create-react-app to use the correct port
+# Set environment variables
 ENV PORT=3001
 ENV HOST=0.0.0.0
+ENV NODE_ENV=development
+ENV NODE_OPTIONS="--max-old-space-size=8192"
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV WATCHPACK_POLLING=true
 
-# Start the app using the serve script
-CMD ["yarn", "serve"]
+# Add healthcheck
+HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=3 \
+    CMD nc -z localhost 3001 || exit 1
+
+# Start Next.js development server
+CMD ["yarn", "dev"]

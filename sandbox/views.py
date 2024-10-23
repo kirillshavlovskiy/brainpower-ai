@@ -494,7 +494,8 @@ def check_or_create_container(request):
         try:
             container = client.containers.run(
                 'react_renderer_prod',
-                command=["sh", "-c", "yarn start"],
+                command=["sh", "-c", "yarn dev"],
+                user='nextjs',
                 detach=True,
                 name=container_name,
                 environment={

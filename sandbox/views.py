@@ -77,7 +77,7 @@ from docker.errors import NotFound, APIError
 
 @api_view(['GET'])
 def check_container(request):
-    """Check container status with Next.js-specific checks"""
+    """Single comprehensive container status check"""
     user_id = request.GET.get('user_id', '0')
     file_name = request.GET.get('file_name', 'test-component.js')
     container_name = f'react_renderer_{user_id}_{file_name}'
@@ -99,102 +99,72 @@ def check_container(request):
             'health_status': container.attrs.get('State', {}).get('Health', {}).get('Status', 'unknown')
         }
 
+        port_mapping = container.ports.get('3001/tcp')
+        is_port_mapped = bool(port_mapping)
+        host_port = port_mapping[0]['HostPort'] if port_mapping else None
+        server_url = f"https://{host_port}.{HOST_URL}" if host_port else None
+
         if container.status == 'running':
-            # Check Next.js compilation status
-            compilation_status = get_compilation_status(container)
-            port_mapping = container.ports.get('3001/tcp')
-
-            # Check directory structure
-            try:
-                check_result = container.exec_run(
-                    ["sh", "-c", "test -d /app/components && echo 'exists' || echo 'not found'"]
-                )
-                dir_status = check_result.output.decode().strip()
-                logger.info(f"Check /app/components directory result: {dir_status}")
-            except Exception as e:
-                logger.warning(f"Error checking directory structure: {str(e)}")
-                dir_status = "error"
-
-            # Get file structure if directory exists
-            try:
-                file_structure = get_container_file_structure(container)
-                logger.info(f"File structure retrieved: {len(file_structure)} items")
-            except Exception as e:
-                logger.warning(f"Error getting file structure: {str(e)}")
-                file_structure = []
-
-            # Get recent logs
             logs = container.logs(tail=50).decode('utf-8')
             log_lines = logs.split('\n')
 
-            # Parse for warnings and errors
-            warnings = [line for line in log_lines if 'warning' in line.lower()]
-            errors = [line for line in log_lines if 'error' in line.lower()]
+            # Check for Next.js ready state
+            is_ready = any('✓ Ready in' in line for line in log_lines)
+            has_warnings = any('warning' in line.lower() for line in log_lines)
+            has_errors = any('error' in line.lower() for line in log_lines)
+            is_compiling = any('Compiling' in line for line in log_lines)
 
-            response_data = {
-                'status': compilation_status,
-                'container_id': container.id,
-                'container_info': container_info,
-                'compilation_status': compilation_status,
-                'directory_status': dir_status,
-                'file_list': file_structure,
-                'detailed_logs': detailed_logger.get_logs(),
-                'recent_logs': log_lines[-10:],  # Last 10 lines
-                'warnings': warnings,
-                'errors': errors
-            }
+            # Determine final status
+            if has_errors:
+                status = 'error'
+                message = "Container is running but has errors"
+            elif is_ready and is_port_mapped:
+                status = 'warning' if has_warnings else 'ready'
+                message = "Container is ready" + (" with warnings" if has_warnings else "")
+            elif is_compiling:
+                status = 'compiling'
+                message = "Container is compiling"
+            else:
+                status = 'starting'
+                message = "Container is starting"
 
-            # Add URL if port is mapped
-            if port_mapping:
-                host_port = port_mapping[0]['HostPort']
-                response_data.update({
-                    'url': f"https://{host_port}.{HOST_URL}",
-                    'port': host_port,
-                    'port_status': 'mapped'
-                })
-
-            # Add Next.js specific status
-            if compilation_status == ContainerStatus.READY:
-                response_data['message'] = "Container is running and Next.js server is ready"
-            elif compilation_status == ContainerStatus.WARNING:
-                response_data['message'] = "Container is running with warnings"
-            elif compilation_status == ContainerStatus.COMPILING:
-                response_data['message'] = "Next.js is still compiling"
-            elif compilation_status == ContainerStatus.ERROR:
-                response_data['message'] = "Container is running but Next.js encountered errors"
-
-                # Add network status for debugging
-                try:
-                    exec_result = container.exec_run(
-                        ["sh", "-c", "netstat -tlnp | grep 3001"]
-                    )
-                    response_data['network_status'] = exec_result.output.decode()
-                except Exception as e:
-                    response_data['network_status_error'] = str(e)
-
-            return JsonResponse(response_data)
-        else:
-            # Container exists but not running
             return JsonResponse({
-                'status': ContainerStatus.ERROR,
+                'status': status,
+                'message': message,
                 'container_id': container.id,
                 'container_info': container_info,
+                'is_running': True,
+                'is_ready': is_ready,
+                'has_warnings': has_warnings,
+                'has_errors': has_errors,
+                'url': server_url,
+                'port': host_port,
+                'recent_logs': log_lines[-10:],
+                'warnings': [line for line in log_lines if 'warning' in line.lower()],
+                'errors': [line for line in log_lines if 'error' in line.lower()]
+            })
+        else:
+            return JsonResponse({
+                'status': 'stopped',
                 'message': f"Container is {container.status}",
-                'detailed_logs': detailed_logger.get_logs()
+                'container_id': container.id,
+                'container_info': container_info,
+                'is_running': False
             })
 
     except docker.errors.NotFound:
-        detailed_logger.log('warning', f"Container {container_name} not found")
         return JsonResponse({
-            'status': ContainerStatus.NOT_FOUND,
-            'message': f"Container {container_name} not found"
-        }, status=404)
+            'status': 'not_found',
+            'message': f"Container {container_name} not found",
+            'is_running': False
+        })
 
     except Exception as e:
         detailed_logger.log('error', f"Error checking container {container_name}: {str(e)}", exc_info=True)
         return JsonResponse({
-            'status': ContainerStatus.ERROR,
+            'status': 'error',
             'message': str(e),
+            'is_running': False,
             'error_details': traceback.format_exc()
         }, status=500)
 
@@ -1109,20 +1079,52 @@ def get_container_file_structure(container):
 
 @api_view(['POST'])
 def stop_container(request):
+    """Stop and remove a container"""
     container_id = request.data.get('container_id')
+    user_id = request.data.get('user_id', '0')
+    file_name = request.data.get('file_name', 'test-component.js')
 
     if not container_id:
         return JsonResponse({'error': 'No container ID provided'}, status=400)
 
     try:
         container = client.containers.get(container_id)
-        container.stop(timeout=10)
-        container.remove(force=True)
-        return JsonResponse({'status': 'Container stopped and removed'})
+        detailed_logger.log('info', f"Stopping container {container.name}")
+
+        # Stop the container
+        try:
+            container.stop(timeout=10)
+        except Exception as stop_error:
+            detailed_logger.log('warning', f"Error stopping container: {stop_error}. Proceeding with removal.")
+
+        # Remove the container forcefully
+        try:
+            container.remove(force=True)
+            detailed_logger.log('info', f"Container {container.name} removed successfully")
+        except Exception as remove_error:
+            detailed_logger.log('error', f"Error removing container: {remove_error}")
+            raise
+
+        return JsonResponse({
+            'status': 'success',
+            'message': 'Container stopped and removed successfully',
+            'container_id': container_id
+        })
+
     except docker.errors.NotFound:
-        return JsonResponse({'status': 'Container not found, possibly already removed'})
+        detailed_logger.log('info', f"Container {container_id} already removed")
+        return JsonResponse({
+            'status': 'success',
+            'message': 'Container not found, possibly already removed',
+            'container_id': container_id
+        })
     except Exception as e:
-        return JsonResponse({'error': f"Failed to stop container: {str(e)}"}, status=500)
+        detailed_logger.log('error', f"Failed to stop container: {str(e)}", exc_info=True)
+        return JsonResponse({
+            'status': 'error',
+            'message': f"Failed to stop container: {str(e)}",
+            'container_id': container_id
+        }, status=500)
 
 
 @api_view(['POST'])

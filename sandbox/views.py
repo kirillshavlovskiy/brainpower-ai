@@ -217,6 +217,7 @@ def check_container(request):
 
 
 def exec_command_with_retry(container, command, user='node', max_retries=3, delay=1):
+    """Execute command with retry logic and handle detached processes"""
     for attempt in range(max_retries):
         try:
             container.reload()
@@ -226,22 +227,69 @@ def exec_command_with_retry(container, command, user='node', max_retries=3, dela
                 container.reload()
                 time.sleep(5)  # Wait for container to fully start
 
-            exec_result = container.exec_run(
-                cmd=command,
-                user=user,
-                stdout=True,
-                stderr=True
-            )
+            # Check if this is a background/detached process command
+            is_background = isinstance(command, (list, tuple)) and any('&' in str(cmd) for cmd in command)
+            is_dev_server = isinstance(command, (list, tuple)) and any('dev' in str(cmd) for cmd in command)
 
-            if exec_result.exit_code != 0:
+            if is_background or is_dev_server:
+                exec_result = container.exec_run(
+                    cmd=command,
+                    user=user,
+                    stdout=True,
+                    stderr=True,
+                    detach=True
+                )
+            else:
+                exec_result = container.exec_run(
+                    cmd=command,
+                    user=user,
+                    stdout=True,
+                    stderr=True
+                )
+
+            # For detached processes, we don't check exit code
+            if not (is_background or is_dev_server) and exec_result.exit_code != 0:
                 raise Exception(f"Command failed with exit code {exec_result.exit_code}: {exec_result.output.decode()}")
 
             return exec_result
+
         except Exception as e:
             if attempt == max_retries - 1:
                 raise
             logger.warning(f"Attempt {attempt + 1} failed: {str(e)}. Retrying in {delay} seconds...")
             time.sleep(delay)
+
+
+def verify_nextjs_setup(container):
+    """Verify Next.js directory structure and server status"""
+    # Check for required directories
+    directories = ['pages', 'components', 'public']
+
+    for dir_name in directories:
+        result = container.exec_run(f"test -d /app/{dir_name}", user='root')
+        if result.exit_code != 0:
+            logger.warning(f"/app/{dir_name} directory not found. Creating...")
+            container.exec_run(f"mkdir -p /app/{dir_name}", user='root')
+            container.exec_run(f"chown -R nextjs:nextjs /app/{dir_name}", user='root')
+
+    # Check if Next.js server is running
+    ps_result = container.exec_run(
+        "ps aux | grep 'next dev' | grep -v grep",
+        user='root'
+    )
+
+    server_running = ps_result.exit_code == 0
+
+    if not server_running:
+        logger.info("Starting Next.js development server")
+        container.exec_run(
+            "cd /app && yarn dev -p 3001",
+            user='nextjs',
+            detach=True
+        )
+        time.sleep(5)  # Give server time to start
+
+    return server_running
 
 
 def set_container_permissions(container):

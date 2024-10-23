@@ -882,11 +882,10 @@ def check_container(request):
             # Run directory check as root to avoid permission issues
             check_result = container.exec_run(
                 "test -d /app/components && echo 'exists' || echo 'not found'",
-                user='nextjs'
             )
 
             if check_result.exit_code != 0 or 'not found' in check_result.output.decode():
-                logger.warning(f"/app/components directory not found in container {container_name}")
+                logger.warning(f"{check_result.output.decode()}/app/components directory not found in container {container_name}")
                 # Attempt to fix directory permissions
 
             # Get file structure

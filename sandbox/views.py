@@ -243,42 +243,42 @@ def exec_command_with_retry(container, command, max_retries=3, delay=1):
             time.sleep(delay)
 
 
-# def set_container_permissions(container):
-#     """Set proper permissions for container directories with read-only handling"""
-#     try:
-#         # Check if src directory exists
-#         check_result = container.exec_run(
-#             "test -d /app/components || mkdir -p /app/components",
-#         )
-#
-#         # Only try to set permissions for writable directories
-#         commands = [
-#             "chown -R node:node /app/components",
-#             "chmod -R 755 /app/components",
-#             "chmod -R g+w /app/components",
-#             "touch /app/compilation_status",
-#             "chown node:node /app/compilation_status",
-#             "chmod 644 /app/compilation_status"
-#         ]
-#
-#         for cmd in commands:
-#             try:
-#                 exec_result = container.exec_run(
-#                     ["sh", "-c", cmd],
-#                     user='root'
-#                 )
-#                 if exec_result.exit_code != 0:
-#                     logger.warning(f"Command {cmd} failed with: {exec_result.output.decode()}")
-#             except Exception as cmd_error:
-#                 logger.warning(f"Error executing {cmd}: {str(cmd_error)}")
-#                 continue
-#
-#         logger.info("Container permissions set successfully for writable directories")
-#         return True
-#
-#     except Exception as e:
-#         logger.error(f"Error setting container permissions: {str(e)}")
-#         return False
+def set_container_permissions(container):
+    """Set proper permissions for container directories with read-only handling"""
+    try:
+        # Check if src directory exists
+        check_result = container.exec_run(
+            "test -d /app/components || mkdir -p /app/components",
+        )
+
+        # Only try to set permissions for writable directories
+        commands = [
+            "chown -R node:node /app/components",
+            "chmod -R 755 /app/components",
+            "chmod -R g+w /app/components",
+            "touch /app/compilation_status",
+            "chown node:node /app/compilation_status",
+            "chmod 644 /app/compilation_status"
+        ]
+
+        for cmd in commands:
+            try:
+                exec_result = container.exec_run(
+                    ["sh", "-c", cmd],
+                    user='root'
+                )
+                if exec_result.exit_code != 0:
+                    logger.warning(f"Command {cmd} failed with: {exec_result.output.decode()}")
+            except Exception as cmd_error:
+                logger.warning(f"Error executing {cmd}: {str(cmd_error)}")
+                continue
+
+        logger.info("Container permissions set successfully for writable directories")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error setting container permissions: {str(e)}")
+        return False
 
 
 def update_code_internal(container, code, user, file_name, main_file_path):
@@ -305,7 +305,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         ]
         for cmd in exec_commands:
             logger.info(f"Executing command: {cmd}")
-            exec_result = container.exec_run(["sh", "-c", cmd])
+            exec_result = container.exec_run(["sh", "-c", cmd], user='nextjs')
             if exec_result.exit_code != 0:
                 error_output = exec_result.output
                 if isinstance(error_output, bytes):
@@ -334,7 +334,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                     exec_result = container.exec_run([
                         "sh", "-c",
                         f"mkdir -p $(dirname {container_path}) && echo {encoded_content} | base64 -d > {container_path}"
-                    ])
+                    ], user='node')
 
                     if exec_result.exit_code != 0:
                         error_output = exec_result.output
@@ -882,11 +882,13 @@ def check_container(request):
             # Run directory check as root to avoid permission issues
             check_result = container.exec_run(
                 "test -d /app/components && echo 'exists' || echo 'not found'",
+                user='nextjs'
             )
 
-            # if check_result.exit_code != 0 or 'not found' in check_result.output.decode():
-            #     logger.warning(f"{check_result.output.decode()}/app/components directory not found in container {container_name}")
+            if check_result.exit_code != 0 or 'not found' in check_result.output.decode():
+                logger.warning(f"/app/components directory not found in container {container_name}")
                 # Attempt to fix directory permissions
+                set_container_permissions(container)
 
             # Get file structure
             file_structure = get_container_file_structure(container)
@@ -969,7 +971,8 @@ def install_packages(container, packages):
 
     try:
         # First ensure proper permissions
-
+        if not set_container_permissions(container):
+            raise Exception("Failed to set container permissions for package installation")
 
         for package in packages:
             try:

@@ -77,20 +77,18 @@ from docker.errors import NotFound, APIError
 
 @api_view(['GET'])
 def check_container(request):
-    """
-    Primary container status check - verifies container existence and basic health
-    """
+    """Check container status with Next.js-specific checks"""
     user_id = request.GET.get('user_id', '0')
     file_name = request.GET.get('file_name', 'test-component.js')
     container_name = f'react_renderer_{user_id}_{file_name}'
 
-    logger.info(f"Checking container status for {container_name}")
+    detailed_logger.log('info', f"Checking container status for {container_name}")
 
     try:
         container = client.containers.get(container_name)
         container.reload()
 
-        # Get comprehensive container info
+        # Get basic container info
         container_info = {
             'container_name': container.name,
             'created_at': container.attrs['Created'],
@@ -98,119 +96,104 @@ def check_container(request):
             'ports': container.ports,
             'image': container.image.tags[0] if container.image.tags else 'Unknown',
             'id': container.id,
-            'health_status': container.attrs.get('State', {}).get('Health', {}).get('Status', 'unknown'),
-            'state_details': container.attrs.get('State', {}),
-            'exit_code': container.attrs.get('State', {}).get('ExitCode', None)
+            'health_status': container.attrs.get('State', {}).get('Health', {}).get('Status', 'unknown')
         }
 
-        # Extended container state check
-        if container.status != 'running':
+        if container.status == 'running':
+            # Check Next.js compilation status
+            compilation_status = get_compilation_status(container)
+            port_mapping = container.ports.get('3001/tcp')
+
+            # Check directory structure
             try:
-                logger.info(f"Starting container {container_name}")
-                container.start()
+                check_result = container.exec_run(
+                    ["sh", "-c", "test -d /app/components && echo 'exists' || echo 'not found'"]
+                )
+                dir_status = check_result.output.decode().strip()
+                logger.info(f"Check /app/components directory result: {dir_status}")
+            except Exception as e:
+                logger.warning(f"Error checking directory structure: {str(e)}")
+                dir_status = "error"
 
-                # Wait for container to fully start
-                start_time = time.time()
-                max_wait = 30  # seconds
-                while time.time() - start_time < max_wait:
-                    container.reload()
-                    if container.status == 'running':
-                        # Additional check for service readiness
-                        logs = container.logs(tail=50).decode('utf-8')
-                        if 'ready started server' in logs or 'Listening on port 3001' in logs:
-                            break
-                    time.sleep(1)
+            # Get file structure if directory exists
+            try:
+                file_structure = get_container_file_structure(container)
+                logger.info(f"File structure retrieved: {len(file_structure)} items")
+            except Exception as e:
+                logger.warning(f"Error getting file structure: {str(e)}")
+                file_structure = []
 
-                container.reload()
-                if container.status != 'running':
-                    raise Exception(f"Container failed to start properly. Exit code: {container_info['exit_code']}")
+            # Get recent logs
+            logs = container.logs(tail=50).decode('utf-8')
+            log_lines = logs.split('\n')
 
-            except Exception as start_error:
-                error_logs = container.logs(tail=100).decode('utf-8')
-                logger.error(f"Container start failed: {str(start_error)}\nLogs:\n{error_logs}")
-                return JsonResponse({
-                    'status': 'error',
-                    'container_id': container.id,
-                    'message': f"Failed to start container: {str(start_error)}",
-                    'container_info': container_info,
-                    'logs': error_logs
+            # Parse for warnings and errors
+            warnings = [line for line in log_lines if 'warning' in line.lower()]
+            errors = [line for line in log_lines if 'error' in line.lower()]
+
+            response_data = {
+                'status': compilation_status,
+                'container_id': container.id,
+                'container_info': container_info,
+                'compilation_status': compilation_status,
+                'directory_status': dir_status,
+                'file_list': file_structure,
+                'detailed_logs': detailed_logger.get_logs(),
+                'recent_logs': log_lines[-10:],  # Last 10 lines
+                'warnings': warnings,
+                'errors': errors
+            }
+
+            # Add URL if port is mapped
+            if port_mapping:
+                host_port = port_mapping[0]['HostPort']
+                response_data.update({
+                    'url': f"https://{host_port}.{HOST_URL}",
+                    'port': host_port,
+                    'port_status': 'mapped'
                 })
 
-        # Verify port mapping
-        port_mapping = container.ports.get('3001/tcp')
-        if not port_mapping:
-            logs = container.logs(tail=50).decode('utf-8')
-            logger.warning(f"No port mapping. Container logs:\n{logs}")
+            # Add Next.js specific status
+            if compilation_status == ContainerStatus.READY:
+                response_data['message'] = "Container is running and Next.js server is ready"
+            elif compilation_status == ContainerStatus.WARNING:
+                response_data['message'] = "Container is running with warnings"
+            elif compilation_status == ContainerStatus.COMPILING:
+                response_data['message'] = "Next.js is still compiling"
+            elif compilation_status == ContainerStatus.ERROR:
+                response_data['message'] = "Container is running but Next.js encountered errors"
+
+                # Add network status for debugging
+                try:
+                    exec_result = container.exec_run(
+                        ["sh", "-c", "netstat -tlnp | grep 3001"]
+                    )
+                    response_data['network_status'] = exec_result.output.decode()
+                except Exception as e:
+                    response_data['network_status_error'] = str(e)
+
+            return JsonResponse(response_data)
+        else:
+            # Container exists but not running
             return JsonResponse({
-                'status': 'not_ready',
+                'status': ContainerStatus.ERROR,
                 'container_id': container.id,
-                'message': 'Container running but port not mapped',
                 'container_info': container_info,
-                'logs': logs
+                'message': f"Container is {container.status}",
+                'detailed_logs': detailed_logger.get_logs()
             })
 
-        # Verify Next.js setup
-        check_commands = [
-            "test -d /app/pages && echo 'pages exists' || echo 'pages missing'",
-            "test -d /app/components && echo 'components exists' || echo 'components missing'",
-            "test -f /app/next.config.js && echo 'config exists' || echo 'config missing'",
-            "test -d /app/node_modules && echo 'modules exist' || echo 'modules missing'"
-        ]
-
-        structure_status = {}
-        for cmd in check_commands:
-            result = container.exec_run(cmd, user='root')
-            structure_status[cmd.split()[3]] = result.output.decode().strip()
-
-        # Get complete status
-        compilation_status = get_compilation_status(container)
-        file_structure = get_container_file_structure(container)
-        recent_logs = container.logs(tail=100).decode('utf-8')
-
-        # Build response URL
-        host_port = port_mapping[0]['HostPort']
-        url = f"https://{host_port}.{HOST_URL}"
-
-        # Determine if container is truly ready
-        is_ready = all([
-            container.status == 'running',
-            compilation_status in [ContainerStatus.READY, ContainerStatus.WARNING],
-            bool(port_mapping),
-            all('exists' in status for status in structure_status.values())
-        ])
-
-        response_data = {
-            'status': 'ready' if is_ready else 'initializing',
-            'container_id': container.id,
-            'container_info': container_info,
-            'url': url,
-            'file_list': file_structure,
-            'compilation_status': compilation_status,
-            'structure_status': structure_status,
-            'detailed_logs': detailed_logger.get_logs(),
-            'recent_logs': recent_logs,
-            'port': host_port,
-            'next_js_status': {
-                'ready': 'ready started server' in recent_logs,
-                'port_bound': bool(port_mapping),
-                'structure_complete': all('exists' in status for status in structure_status.values())
-            },
-            'message': 'Container is ready' if is_ready else 'Container is initializing'
-        }
-
-        return JsonResponse(response_data)
-
     except docker.errors.NotFound:
-        logger.warning(f"Container {container_name} not found")
+        detailed_logger.log('warning', f"Container {container_name} not found")
         return JsonResponse({
-            'status': 'not_found',
+            'status': ContainerStatus.NOT_FOUND,
             'message': f"Container {container_name} not found"
         }, status=404)
 
     except Exception as e:
-        logger.error(f"Error checking container {container_name}: {str(e)}", exc_info=True)
+        detailed_logger.log('error', f"Error checking container {container_name}: {str(e)}", exc_info=True)
         return JsonResponse({
-            'status': 'error',
+            'status': ContainerStatus.ERROR,
             'message': str(e),
             'error_details': traceback.format_exc()
         }, status=500)
@@ -407,48 +390,74 @@ def get_compilation_status(container):
     """Get detailed Next.js compilation status with improved detection"""
     try:
         logs = container.logs(tail=100).decode('utf-8')
+        port_bound = bool(container.ports.get('3001/tcp'))
 
-        # Define status indicators
-        status_indicators = {
-            'ready': ('✓ Ready in', 'ready - started server on', 'Local:        http://localhost:3001'),
-            'compiling': ('- Compiling...', 'Creating an optimized production build'),
-            'warning': ('Disabled SWC', '`compiler` options', 'warning'),
-            'error': ('Failed to compile', 'Error:', 'error')
+        # Define Next.js specific status patterns
+        nextjs_indicators = {
+            'ready': [
+                ('✓ Ready in', 'Compiled successfully'),
+                ('ready - started server on', 'http://localhost:3001'),
+                ('webpack compiled successfully', port_bound)
+            ],
+            'compiling': [
+                ('Compiling...', None),
+                ('Creating an optimized production build', None),
+                ('webpack compiling...', None)
+            ],
+            'warning': [
+                ('compiled with warnings', None),
+                ('Disabled SWC as replacement for Babel', None)
+            ],
+            'error': [
+                ('Failed to compile', None),
+                ('Error: Cannot find module', None),
+                ('Module not found', None),
+                ('SyntaxError:', None)
+            ]
         }
 
-        # Check for successful compilation and running server
-        for indicator in status_indicators['ready']:
-            if indicator in logs:
-                # Only return READY if we see the port is actually bound
-                if container.ports.get('3001/tcp'):
-                    return ContainerStatus.READY
-                else:
-                    logger.warning("Next.js reports ready but port 3001 is not bound")
-                    return ContainerStatus.BUILDING
+        # Check container status first
+        if container.status != 'running':
+            return ContainerStatus.ERROR
 
-        # Check for compilation in progress
-        for indicator in status_indicators['compiling']:
-            if indicator in logs:
-                return ContainerStatus.COMPILING
-
-        # Check for warnings (but still running)
-        for indicator in status_indicators['warning']:
-            if indicator in logs:
-                # If we have warnings but server is running, return WARNING
-                if 'Ready in' in logs and container.ports.get('3001/tcp'):
-                    return ContainerStatus.WARNING
-                return ContainerStatus.COMPILING
-
-        # Check for errors
-        for indicator in status_indicators['error']:
-            if indicator in logs:
+        # Look for compilation errors first
+        for error_pattern, _ in nextjs_indicators['error']:
+            if error_pattern in logs:
+                logger.error(f"Compilation error detected: {error_pattern}")
                 return ContainerStatus.COMPILATION_FAILED
 
-        # If no specific status found but container is running, assume still compiling
+        # Check for ready state with all conditions
+        ready_conditions_met = True
+        has_warnings = False
+
+        for ready_pattern, required_condition in nextjs_indicators['ready']:
+            if ready_pattern in logs:
+                if required_condition is not None and not required_condition:
+                    ready_conditions_met = False
+                    break
+            else:
+                ready_conditions_met = False
+                break
+
+        # Check for warnings
+        for warning_pattern, _ in nextjs_indicators['warning']:
+            if warning_pattern in logs:
+                has_warnings = True
+                break
+
+        if ready_conditions_met:
+            return ContainerStatus.WARNING if has_warnings else ContainerStatus.READY
+
+        # Check for compilation in progress
+        for compiling_pattern, _ in nextjs_indicators['compiling']:
+            if compiling_pattern in logs:
+                return ContainerStatus.COMPILING
+
+        # Default to compiling if no other status matches
         return ContainerStatus.COMPILING
 
     except Exception as e:
-        logger.error(f"Error getting compilation status: {str(e)}")
+        logger.error(f"Error getting compilation status: {str(e)}", exc_info=True)
         return ContainerStatus.ERROR
 
 
@@ -471,95 +480,60 @@ def check_container_ready(request):
         container = client.containers.get(container_id)
         container.reload()
 
-        # Get all relevant logs
+        # Get compilation status
+        compilation_status = get_compilation_status(container)
+
+        # Get logs
         logs = container.logs(stdout=True, stderr=True).decode('utf-8').strip()
         recent_logs = logs.split('\n')[-50:] if logs else []
 
-        # Check if Next.js is actually ready
-        nextjs_ready = False
-        port_bound = False
-        has_warnings = False
-
-        # Parse logs for specific Next.js status
-        for log in recent_logs:
-            if '✓ Ready in' in log:
-                nextjs_ready = True
-            if 'http://localhost:3001' in log:
-                port_bound = True
-            if 'warning' in log.lower():
-                has_warnings = True
-
-        # Verify port binding
+        # Get port and URL info
         port_mapping = container.ports.get('3001/tcp')
-        if port_mapping:
-            host_port = port_mapping[0]['HostPort']
-            url = f"https://{host_port}.{HOST_URL}"
-        else:
-            url = None
+        url = f"https://{port_mapping[0]['HostPort']}.{HOST_URL}" if port_mapping else None
 
-        # Check container's network settings
-        network_settings = container.attrs.get('NetworkSettings', {})
-        port_bindings = network_settings.get('Ports', {}).get('3001/tcp', [])
-
-        # Build detailed status response
+        # Build status info
         status_info = {
             'container_running': container.status == 'running',
-            'nextjs_ready': nextjs_ready,
+            'compilation_status': compilation_status,
             'port_bound': bool(port_mapping),
-            'port_bindings': port_bindings,
-            'network_mode': network_settings.get('NetworkMode', 'unknown'),
-            'has_warnings': has_warnings,
             'url': url,
-            'host_port': host_port if port_mapping else None,
+            'has_errors': compilation_status in [ContainerStatus.ERROR, ContainerStatus.COMPILATION_FAILED],
+            'container_info': {
+                'id': container.id,
+                'name': container.name,
+                'status': container.status,
+                'created': container.attrs['Created']
+            }
         }
 
-        # Determine overall status
-        if not status_info['container_running']:
-            detailed_logger.log('warning', "Container is not running")
-            return JsonResponse({
-                'status': ContainerStatus.ERROR,
-                'message': 'Container is not running',
-                'status_info': status_info,
-                'logs': '\n'.join(recent_logs)
-            })
-
-        if nextjs_ready and port_bound:
-            status = ContainerStatus.READY if not has_warnings else ContainerStatus.WARNING
-            message = "Next.js server is ready"
-        else:
-            status = ContainerStatus.COMPILING
-            message = "Next.js server is starting"
-
-        # Network check command
-        try:
-            # Test network connectivity
-            exec_result = container.exec_run(
-                ["sh", "-c", "nc -zv localhost 3001 2>&1"]
-            )
-            network_test = exec_result.output.decode()
-            status_info['network_test'] = network_test
-        except Exception as e:
-            status_info['network_test_error'] = str(e)
+        # Get any relevant errors or warnings from logs
+        errors = []
+        warnings = []
+        for log in recent_logs:
+            if 'error' in log.lower():
+                errors.append(log)
+            elif 'warning' in log.lower():
+                warnings.append(log)
 
         response_data = {
-            'status': status,
-            'message': message,
+            'status': compilation_status,
+            'message': get_status_message(compilation_status),
             'url': url,
             'status_info': status_info,
-            'port': host_port if port_mapping else None,
-            'logs': '\n'.join(recent_logs),
-            'warnings': [log for log in recent_logs if 'warning' in log.lower()] if has_warnings else []
+            'logs': '\n'.join(recent_logs[-10:]),  # Last 10 lines
+            'errors': errors,
+            'warnings': warnings
         }
 
-        # Add detailed connection info if we have warnings
-        if has_warnings or not nextjs_ready:
+        # Add network status for debugging
+        if compilation_status in [ContainerStatus.ERROR, ContainerStatus.COMPILATION_FAILED]:
             try:
                 exec_result = container.exec_run(
                     ["sh", "-c", "netstat -tlnp | grep 3001"]
                 )
-                response_data['port_status'] = exec_result.output.decode()
+                response_data['network_status'] = exec_result.output.decode()
             except Exception as e:
-                response_data['port_status_error'] = str(e)
+                response_data['network_status_error'] = str(e)
 
         return JsonResponse(response_data)
 
@@ -577,6 +551,21 @@ def check_container_ready(request):
             'error': error_message,
             'logs': container.logs().decode() if 'container' in locals() else 'No logs available'
         }, status=500)
+
+
+def get_status_message(status):
+    """Get human-readable message for container status"""
+    messages = {
+        ContainerStatus.READY: "Next.js server is ready",
+        ContainerStatus.WARNING: "Next.js server is ready with warnings",
+        ContainerStatus.COMPILING: "Next.js is compiling",
+        ContainerStatus.BUILDING: "Next.js is building",
+        ContainerStatus.ERROR: "An error occurred",
+        ContainerStatus.COMPILATION_FAILED: "Compilation failed",
+        ContainerStatus.NOT_FOUND: "Container not found",
+        ContainerStatus.CREATING: "Container is being created"
+    }
+    return messages.get(status, "Unknown status")
 
 
 @api_view(['GET'])

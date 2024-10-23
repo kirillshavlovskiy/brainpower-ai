@@ -77,146 +77,58 @@ from docker.errors import NotFound, APIError
 
 @api_view(['GET'])
 def check_container(request):
-    """
-    Primary container status check - verifies container existence and basic health
-    """
     user_id = request.GET.get('user_id', '0')
     file_name = request.GET.get('file_name', 'test-component.js')
+
     container_name = f'react_renderer_{user_id}_{file_name}'
 
-    logger.info(f"Checking container status for {container_name}")
 
     try:
         container = client.containers.get(container_name)
-        container.reload()
+        # Get the container creation timestamp
 
-        # Get comprehensive container info
+        container.reload()
         container_info = {
             'container_name': container.name,
             'created_at': container.attrs['Created'],
             'status': container.status,
             'ports': container.ports,
             'image': container.image.tags[0] if container.image.tags else 'Unknown',
-            'id': container.id,
-            'health_status': container.attrs.get('State', {}).get('Health', {}).get('Status', 'unknown'),
-            'state_details': container.attrs.get('State', {}),
-            'exit_code': container.attrs.get('State', {}).get('ExitCode', None)
+            'id': container.id
         }
+        if container.status == 'running':
+            port_mapping = container.ports.get('3001/tcp')
+            file_structure = get_container_file_structure(container)
+            check_result = container.exec_run("test -d /app/src && echo 'exists' || echo 'not found'")
+            logger.info(f"Check /app/src directory result: {check_result.output.decode().strip()}")
 
-        # Extended container state check
-        if container.status != 'running':
-            try:
-                logger.info(f"Starting container {container_name}")
-                container.start()
 
-                # Wait for container to fully start
-                start_time = time.time()
-                max_wait = 30  # seconds
-                while time.time() - start_time < max_wait:
-                    container.reload()
-                    if container.status == 'running':
-                        # Additional check for service readiness
-                        logs = container.logs(tail=50).decode('utf-8')
-                        if 'ready started server' in logs or 'Listening on port 3001' in logs:
-                            break
-                    time.sleep(1)
 
-                container.reload()
-                if container.status != 'running':
-                    raise Exception(f"Container failed to start properly. Exit code: {container_info['exit_code']}")
+            if check_result:
+                file_structure = get_container_file_structure(container)
+                logger.info(f"Check /app/src directory result: {check_result.output.decode().strip()}")
+                logger.info(f"/app/src directory structure: {file_structure}")
 
-            except Exception as start_error:
-                error_logs = container.logs(tail=100).decode('utf-8')
-                logger.error(f"Container start failed: {str(start_error)}\nLogs:\n{error_logs}")
+            if port_mapping:
+                host_port = port_mapping[0]['HostPort']
+
                 return JsonResponse({
-                    'status': 'error',
+                    'status': 'ready',
                     'container_id': container.id,
-                    'message': f"Failed to start container: {str(start_error)}",
                     'container_info': container_info,
-                    'logs': error_logs
+                    'url': f"https://{host_port}.{HOST_URL}",
+                    'file_list': file_structure,
+                    'detailed_logs': detailed_logger.get_logs(),
+
                 })
-
-        # Verify port mapping
-        port_mapping = container.ports.get('3001/tcp')
-        if not port_mapping:
-            logs = container.logs(tail=50).decode('utf-8')
-            logger.warning(f"No port mapping. Container logs:\n{logs}")
-            return JsonResponse({
-                'status': 'not_ready',
-                'container_id': container.id,
-                'message': 'Container running but port not mapped',
-                'container_info': container_info,
-                'logs': logs
-            })
-
-        # Verify Next.js setup
-        check_commands = [
-            "test -d /app/pages && echo 'pages exists' || echo 'pages missing'",
-            "test -d /app/components && echo 'components exists' || echo 'components missing'",
-            "test -f /app/next.config.js && echo 'config exists' || echo 'config missing'",
-            "test -d /app/node_modules && echo 'modules exist' || echo 'modules missing'"
-        ]
-
-        structure_status = {}
-        for cmd in check_commands:
-            result = container.exec_run(cmd, user='root')
-            structure_status[cmd.split()[3]] = result.output.decode().strip()
-
-        # Get complete status
-        compilation_status = get_compilation_status(container)
-        file_structure = get_container_file_structure(container)
-        recent_logs = container.logs(tail=100).decode('utf-8')
-
-        # Build response URL
-        host_port = port_mapping[0]['HostPort']
-        url = f"https://{host_port}.{HOST_URL}"
-
-        # Determine if container is truly ready
-        is_ready = all([
-            container.status == 'running',
-            compilation_status in [ContainerStatus.READY, ContainerStatus.WARNING],
-            bool(port_mapping),
-            all('exists' in status for status in structure_status.values())
-        ])
-
-        response_data = {
-            'status': 'ready' if is_ready else 'initializing',
-            'container_id': container.id,
-            'container_info': container_info,
-            'url': url,
-            'file_list': file_structure,
-            'compilation_status': compilation_status,
-            'structure_status': structure_status,
-            'detailed_logs': detailed_logger.get_logs(),
-            'recent_logs': recent_logs,
-            'port': host_port,
-            'next_js_status': {
-                'ready': 'ready started server' in recent_logs,
-                'port_bound': bool(port_mapping),
-                'structure_complete': all('exists' in status for status in structure_status.values())
-            },
-            'message': 'Container is ready' if is_ready else 'Container is initializing'
-        }
-
-        return JsonResponse(response_data)
-
+            else:
+                return JsonResponse({'status': 'not_ready', 'container_id': container.id})
+        else:
+            return JsonResponse({'status': 'not_ready', 'container_id': container.id})
     except docker.errors.NotFound:
-        logger.warning(f"Container {container_name} not found")
-        return JsonResponse({
-            'status': 'not_found',
-            'message': f"Container {container_name} not found"
-        }, status=404)
-
+        return JsonResponse({'status': 'not_found'}, status=404)
     except Exception as e:
-        logger.error(f"Error checking container {container_name}: {str(e)}", exc_info=True)
-        return JsonResponse({
-            'status': 'error',
-            'message': str(e),
-            'error_details': traceback.format_exc()
-        }, status=500)
-
-
-
+        return JsonResponse({'error': str(e)}, status=500)
 
 
 def exec_command_with_retry(container, command, user='node', max_retries=3, delay=1):
@@ -408,12 +320,12 @@ export default function Home() {
 
 @api_view(['GET'])
 def check_container_ready(request):
-    """Detailed readiness check for Next.js container"""
+    """Check if container is ready for use with proper Next.js setup"""
     container_id = request.GET.get('container_id')
     user_id = request.GET.get('user_id', 'default')
     file_name = request.GET.get('file_name')
 
-    detailed_logger.log('info', f"Checking container ready: container_id={container_id}, user_id={user_id}")
+    detailed_logger.log('info', f"Checking container ready: container_id={container_id}, user_id={user_id}, file_name={file_name}")
 
     if not container_id:
         return JsonResponse({
@@ -422,10 +334,12 @@ def check_container_ready(request):
         }, status=400)
 
     try:
+        # Get container and refresh status
         container = client.containers.get(container_id)
         container.reload()
+        detailed_logger.log('info', f"Container status: {container.status}")
 
-        # Get complete logs for analysis
+        # Get logs
         try:
             all_logs = container.logs(stdout=True, stderr=True).decode('utf-8').strip()
             recent_logs = container.logs(stdout=True, stderr=True, tail=50).decode('utf-8').strip()
@@ -433,40 +347,17 @@ def check_container_ready(request):
         except Exception as log_error:
             detailed_logger.log('error', f"Error getting logs: {str(log_error)}")
             latest_log = "Error retrieving logs"
-            all_logs = container.attrs.get('State', {}).get('Error', 'No logs available')
+            all_logs = ""
 
-        # Do a thorough status check
-        status_checks = {
-            'container_running': container.status == 'running',
-            'port_mapped': bool(container.ports.get('3001/tcp')),
-            'next_ready': 'ready started server' in all_logs,
-            'has_errors': 'Failed to compile' in all_logs or 'Error:' in all_logs,
-            'has_warnings': 'Compiled with warnings' in all_logs,
-        }
-
-        # If container not running, check why
-        if not status_checks['container_running']:
-            state_info = container.attrs.get('State', {})
-            error_msg = state_info.get('Error', '')
-            exit_code = state_info.get('ExitCode', 0)
-
-            if exit_code != 0:
-                detailed_logger.log('error', f"Container exited with code {exit_code}: {error_msg}")
-                return JsonResponse({
-                    'status': ContainerStatus.ERROR,
-                    'log': latest_log,
-                    'error': error_msg,
-                    'exit_code': exit_code,
-                    'state_info': state_info
-                })
-
+        # Check container status
+        if container.status != 'running':
             return JsonResponse({
                 'status': ContainerStatus.CREATING,
                 'log': latest_log,
                 'message': 'Container is starting up'
             })
 
-        # Get compilation status and URL
+        # Check port mapping
         port_mapping = container.ports.get('3001/tcp')
         if not port_mapping:
             return JsonResponse({
@@ -475,38 +366,56 @@ def check_container_ready(request):
                 'message': 'Waiting for port mapping'
             })
 
+        # Get compilation status
         try:
             compilation_status = get_compilation_status(container)
+            detailed_logger.log('info', f"Compilation status: {compilation_status}")
         except Exception as comp_error:
             detailed_logger.log('error', f"Error getting compilation status: {str(comp_error)}")
             compilation_status = ContainerStatus.ERROR
 
+        # Build URL
         host_port = port_mapping[0]['HostPort']
         dynamic_url = f"https://{host_port}.{HOST_URL}"
 
-        # Build comprehensive response
+        # Prepare response
         response_data = {
             'status': compilation_status or ContainerStatus.COMPILING,
             'url': dynamic_url,
             'log': latest_log,
             'detailed_logs': all_logs,
             'container_status': container.status,
-            'port': host_port,
-            'status_checks': status_checks,
-            'next_js_ready': status_checks['next_ready']
+            'port': host_port
         }
 
+        # Check Next.js specific indicators in logs
+        if "ready started server on" in all_logs:
+            response_data['next_ready'] = True
+        else:
+            response_data['next_ready'] = False
+
         # Add warnings if present
-        if status_checks['has_warnings']:
+        if "Compiled with warnings" in all_logs or compilation_status == ContainerStatus.WARNING:
             warnings = re.findall(r"warning.*\n.*\n.*\n", all_logs, re.IGNORECASE)
-            response_data['warnings'] = warnings
-            response_data['status'] = ContainerStatus.WARNING
+            if warnings:
+                response_data['warnings'] = warnings
+                response_data['status'] = ContainerStatus.WARNING
 
         # Add errors if compilation failed
-        if status_checks['has_errors']:
+        if compilation_status == ContainerStatus.COMPILATION_FAILED or "Failed to compile" in all_logs:
             errors = re.findall(r"error.*\n.*\n.*\n", all_logs, re.IGNORECASE)
-            response_data['errors'] = errors
+            if errors:
+                response_data['errors'] = errors
             response_data['status'] = ContainerStatus.COMPILATION_FAILED
+
+        # Add container health info
+        try:
+            health_info = container.attrs.get('State', {}).get('Health', {})
+            if health_info:
+                response_data['health_status'] = health_info.get('Status')
+                response_data['health_log'] = health_info.get('Log', [])
+        except Exception as health_error:
+            detailed_logger.log('error', f"Error getting health info: {str(health_error)}")
 
         return JsonResponse(response_data)
 
@@ -515,17 +424,17 @@ def check_container_ready(request):
         return JsonResponse({
             'status': ContainerStatus.NOT_FOUND,
             'log': 'Container not found',
-            'message': 'Container does not exist'
+            'message': 'The specified container does not exist'
         }, status=404)
 
     except Exception as e:
         error_message = str(e)
-        detailed_logger.log('error', f"Status check error: {error_message}", exc_info=True)
+        detailed_logger.log('error', f"Error checking container status: {error_message}", exc_info=True)
         return JsonResponse({
             'status': ContainerStatus.ERROR,
             'error': error_message,
             'log': error_message,
-            'message': 'Status check failed'
+            'message': 'An error occurred while checking container status'
         }, status=500)
 
 
@@ -564,145 +473,98 @@ def check_or_create_container(request):
     file_name = data.get('file_name', 'component.js')
     main_file_path = data.get('main_file_path')
 
-    detailed_logger.log('info', f"Starting container setup for user {user_id}, file {file_name}")
+    detailed_logger.log('info', f"Received request to check or create container for user {user_id}, file {file_name}")
 
     if not all([code, language, file_name]):
         return JsonResponse({'error': 'Missing required fields'}, status=400)
     if language != 'react':
         return JsonResponse({'error': 'Unsupported language'}, status=400)
 
+    # Update path to match Next.js structure
     react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'
     container_name = f'react_renderer_{user_id}_{file_name}'
+    app_name = f"{user_id}_{file_name.replace('.', '-')}"
 
     try:
-        # Cleanup any existing container
-        try:
-            old_container = client.containers.get(container_name)
-            old_container.stop()
-            old_container.remove()
-            detailed_logger.log('info', f"Removed old container: {container_name}")
-        except docker.errors.NotFound:
-            pass
+        # Try to get existing container
+        container = client.containers.get(container_name)
+        detailed_logger.log('info', f"Found existing container: {container.id}")
 
-        # Create necessary directories in the host
-        os.makedirs(os.path.join(react_renderer_path, 'pages'), exist_ok=True)
-        os.makedirs(os.path.join(react_renderer_path, 'components'), exist_ok=True)
-        os.makedirs(os.path.join(react_renderer_path, 'public'), exist_ok=True)
-        os.makedirs(os.path.join(react_renderer_path, 'styles'), exist_ok=True)
+        if container.status != 'running':
+            detailed_logger.log('info', f"Starting container {container.id}")
+            container.start()
+            container.reload()
+            time.sleep(5)
 
-        # Set proper permissions
-        for dir_path in ['pages', 'components', 'public', 'styles']:
-            full_path = os.path.join(react_renderer_path, dir_path)
-            os.system(f"chmod -R 777 {full_path}")
-
+    except docker.errors.NotFound:
+        detailed_logger.log('info', f"Creating new container: {container_name}")
         host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
 
-        # Create container with proper setup
-        container = client.containers.run(
-            'react_renderer_prod',
-            command=[
-                "sh", "-c",
-                "cd /app && yarn install && yarn dev || (cat yarn-error.log && exit 1)"
-            ],
-            detach=True,
-            name=container_name,
-            user='root',  # Start as root to set up permissions
-            environment={
-                'USER_ID': user_id,
-                'NEXT_PUBLIC_USER_ID': user_id,
-                'FILE_NAME': file_name,
-                'PORT': '3001',
-                'HOST': '0.0.0.0',
-                'NODE_ENV': 'development',
-                'NODE_OPTIONS': '--max-old-space-size=8192'
-            },
-            volumes={
-                os.path.join(react_renderer_path, 'pages'): {'bind': '/app/pages', 'mode': 'rw'},
-                os.path.join(react_renderer_path, 'components'): {'bind': '/app/components', 'mode': 'rw'},
-                os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
-                os.path.join(react_renderer_path, 'styles'): {'bind': '/app/styles', 'mode': 'rw'},
-                os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
-                os.path.join(react_renderer_path, 'next.config.js'): {'bind': '/app/next.config.js', 'mode': 'ro'},
-            },
-            ports={'3001/tcp': host_port},
-            mem_limit='8g',
-            memswap_limit='16g',
-            cpu_quota=100000,
-            working_dir='/app',
-            restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
-        )
+        try:
+            # Updated volume mounts for Next.js structure
+            container = client.containers.run(
+                'react_renderer_prod',
+                command=["tail", "-f", "/dev/null"],  # Initial command to keep container running
+                detach=True,
+                name=container_name,
+                user='node',
+                environment={
+                    'USER_ID': user_id,
+                    'NEXT_PUBLIC_USER_ID': user_id,
+                    'FILE_NAME': file_name,
+                    'PORT': str(3001),
+                    'NODE_ENV': 'production',
+                    'NODE_OPTIONS': '--max-old-space-size=8192'
+                },
+                volumes={
+                    # Mount Next.js specific directories
+                    os.path.join(react_renderer_path, 'pages'): {'bind': '/app/pages', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'styles'): {'bind': '/app/styles', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'components'): {'bind': '/app/components', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
+                    os.path.join(react_renderer_path, 'next.config.js'): {'bind': '/app/next.config.js', 'mode': 'ro'},
+                },
+                ports={'3001/tcp': host_port},
+                mem_limit='8g',
+                memswap_limit='16g',
+                cpu_quota=100000,
+                restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
+            )
+            detailed_logger.log('info', f"Container created: {container.id}")
 
-        # Wait for container to be running
-        max_wait = 30
-        wait_count = 0
-        while wait_count < max_wait:
-            container.reload()
-            if container.status == 'running':
-                break
-            time.sleep(1)
-            wait_count += 1
+        except docker.errors.APIError as e:
+            detailed_logger.log('error', f"Container creation failed: {str(e)}")
+            return JsonResponse({'error': f'Failed to create container: {str(e)}'}, status=500)
 
-        if container.status != 'running':
-            logs = container.logs().decode('utf-8')
-            raise Exception(f"Container failed to start. Logs: {logs}")
+    try:
+        # Update code internal now targets Next.js structure
+        build_output, files_added, compilation_status = update_code_internal(container, code, user_id, file_name,
+                                                                             main_file_path)
 
-        # Set up proper permissions and directories inside container
-        setup_commands = [
-            "chown -R node:node /app",
-            "chmod -R 755 /app",
-            "mkdir -p /app/.next",
-            "chown -R node:node /app/.next",
-            "chmod -R 777 /app/.next",
-            "su node -c 'cd /app && node -v && npm -v && yarn -v'"
-        ]
-
-        for cmd in setup_commands:
-            exec_result = container.exec_run(cmd)
-            if exec_result.exit_code != 0:
-                detailed_logger.log('warning', f"Command failed: {cmd}: {exec_result.output.decode()}")
-
-        # Now update the code
-        build_output, files_added, compilation_status = update_code_internal(
-            container, code, user_id, file_name, main_file_path
-        )
-
-        # Check container health
+        # Get container status and URL
         container.reload()
-        if container.status != 'running':
-            raise Exception(f"Container stopped after code update. Status: {container.status}")
-
-        # Get URL and status
         port_mapping = container.ports.get('3001/tcp')
-        if port_mapping:
-            host_port = port_mapping[0]['HostPort']
-            dynamic_url = f"https://{host_port}.{HOST_URL}"
-            detailed_logger.log('info', f"Container setup complete. URL: {dynamic_url}")
+        if not port_mapping:
+            raise Exception('No port mapping found after container setup')
 
-            return JsonResponse({
-                'status': 'success',
-                'message': 'Container is running',
-                'container_id': container.id,
-                'url': dynamic_url,
-                'can_deploy': True,
-                'compilation_status': compilation_status,
-                'build_output': build_output
-            })
-        else:
-            raise Exception("No port mapping found after container setup")
+        host_port = port_mapping[0]['HostPort']
+        dynamic_url = f"https://{host_port}.{HOST_URL}"
+
+        return JsonResponse({
+            'status': 'success',
+            'message': 'Container is running',
+            'container_id': container.id,
+            'url': dynamic_url,
+            'can_deploy': True,
+            'compilation_status': compilation_status,
+            'build_output': build_output,
+            'files_added': files_added
+        })
 
     except Exception as e:
-        detailed_logger.log('error', f"Container setup failed: {str(e)}")
-        # Try to get container logs if available
-        try:
-            if 'container' in locals():
-                logs = container.logs().decode('utf-8')
-                detailed_logger.log('error', f"Container logs: {logs}")
-        except:
-            pass
-        return JsonResponse({
-            'error': str(e),
-            'logs': detailed_logger.get_logs()
-        }, status=500)
+        detailed_logger.log('error', f"Setup failed: {str(e)}")
+        return JsonResponse({'error': str(e)}, status=500)
 
 
 def get_compilation_status(container):
@@ -1180,6 +1042,7 @@ def get_container_file_structure(container):
     except Exception as e:
         logger.error(f"Error getting container file structure: {str(e)}", exc_info=True)
         return []
+
 
 
 @api_view(['POST'])

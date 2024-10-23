@@ -293,24 +293,28 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         # Determine target file path inside the container based on file type
         if file_name.endswith('.js') or file_name.endswith('.jsx'):
             target_file = '/app/components/DynamicComponent.js'
-
-            # Create necessary directories and files
-            exec_commands = [
-                f"echo {encoded_code} | base64 -d > {target_file}",
-            ]
-
-            for cmd in exec_commands:
-                exec_result = container.exec_run(["sh", "-c", cmd], user='node')
-                if exec_result.exit_code != 0:
-                    error_output = exec_result.output
-                    if isinstance(error_output, bytes):
-                        error_output = error_output.decode()
-                    raise Exception(f"Failed to execute command: {cmd}: {error_output}")
-
-            files_added.extend([target_file, '/app/pages/index.js'])
-
+        elif file_name.endswith('.tsx'):
+            target_file = '/app/components/DynamicComponent.tsx'
         else:
             raise Exception(f"Unsupported file type: {file_name}")
+
+        # Log the target file path
+        logger.info(f"Target file path: {target_file}")
+
+        # Create necessary directories and files
+        exec_commands = [
+            f"echo {encoded_code} | base64 -d > {target_file}",
+        ]
+        for cmd in exec_commands:
+            logger.info(f"Executing command: {cmd}")
+            exec_result = container.exec_run(["sh", "-c", cmd], user='node')
+            if exec_result.exit_code != 0:
+                error_output = exec_result.output
+                if isinstance(error_output, bytes):
+                    error_output = error_output.decode()
+                raise Exception(f"Failed to execute command: {cmd}: {error_output}")
+            files_added.append(target_file)
+
 
         # Process imports
         base_path = os.path.dirname(main_file_path)

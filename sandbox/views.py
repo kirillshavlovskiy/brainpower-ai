@@ -264,7 +264,6 @@ def verify_nextjs_setup(container):
     """Verify Next.js directory structure and server status"""
     # Check for required directories
     directories = ['pages', 'components', 'public']
-
     for dir_name in directories:
         result = container.exec_run(f"test -d /app/{dir_name}", user='root')
         if result.exit_code != 0:
@@ -273,22 +272,13 @@ def verify_nextjs_setup(container):
             container.exec_run(f"chown -R nextjs:nextjs /app/{dir_name}", user='root')
 
     # Check if Next.js server is running
-    ps_result = container.exec_run(
-        "ps aux | grep 'next dev' | grep -v grep",
-        user='root'
-    )
-
+    ps_result = container.exec_run("ps aux | grep 'next dev' | grep -v grep", user='root')
     server_running = ps_result.exit_code == 0
-
     if not server_running:
         logger.info("Starting Next.js development server")
-        container.exec_run(
-            "cd /app && yarn dev -p 3001",
-            user='nextjs',
-            detach=True
-        )
+        # Use sh -c to ensure the command is executed in a shell
+        container.exec_run("sh -c 'cd /app && yarn dev -p 3001'", user='nextjs', detach=True)
         time.sleep(5)  # Give server time to start
-
     return server_running
 
 
@@ -667,6 +657,8 @@ def check_or_create_container(request):
                     os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'styles'): {'bind': '/app/styles', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'components'): {'bind': '/app/components', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'DynamicComponent.js'): {
+                        'bind': '/app/components/DynamicComponent.js', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
                     os.path.join(react_renderer_path, 'next.config.js'): {'bind': '/app/next.config.js', 'mode': 'ro'},
                 },
@@ -684,6 +676,11 @@ def check_or_create_container(request):
     try:
         # Update code internal now targets Next.js structure
         build_output, files_added = update_code_internal(container, code, user_id, file_name, main_file_path)
+
+        # Check the contents of the /app/components directory
+        exec_result = container.exec_run("ls -la /app/components", user='node')
+        components_dir_contents = exec_result.output.decode()
+
         # Get container status and URL
         container.reload()
         port_mapping = container.ports.get('3001/tcp')
@@ -698,7 +695,8 @@ def check_or_create_container(request):
             'url': dynamic_url,
             'can_deploy': True,
             'build_output': build_output,
-            'files_added': files_added
+            'files_added': files_added,
+            'components_dir_contents': components_dir_contents
         })
     except Exception as e:
         detailed_logger.log('error', f"Setup failed: {str(e)}")
@@ -1003,6 +1001,9 @@ def get_container_file_structure(container):
     except Exception as e:
         logger.error(f"Error getting container file structure: {str(e)}", exc_info=True)
         return []
+
+
+
 
 
 

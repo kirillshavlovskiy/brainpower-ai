@@ -2,40 +2,38 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // Disable server-side rendering for dynamic components
-  experimental: {
-    // Enable if needed
-    // esmExternals: false,
-  },
-  // Configure webpack if needed
-  webpack: (config, { isServer }) => {
-    // Add any custom webpack config
+  swcMinify: true,
+
+  // Enable both JS and TS file handling
+  pageExtensions: ['js', 'jsx', 'ts', 'tsx'],
+
+  transpilePackages: [
+    "@mui/material",
+    "@mui/icons-material",
+    "@emotion/react",
+    "@emotion/styled",
+    "lucide-react"
+  ],
+
+  // Configure webpack for mixed JS/TS
+  webpack: (config, { buildId, dev, isServer, defaultLoaders }) => {
+    // Ensure both JS and TS files are handled
+    config.module.rules.push({
+      test: /\.(js|jsx|ts|tsx)$/,
+      use: [defaultLoaders.babel],
+      exclude: /node_modules/,
+    });
+
     return config;
   },
-  // Configure the dev server
+
+  // Development server configuration
   webpackDevMiddleware: config => {
-    // Solve potential hot reload issues
     config.watchOptions = {
       poll: 1000,
       aggregateTimeout: 300,
     }
     return config
-  },
-  // Enable proper port binding
-  experimental: {
-    allowMiddlewareResponseBody: true,
-  },
-  async headers() {
-    return [
-      {
-        source: '/:path*',
-        headers: [
-          { key: 'Access-Control-Allow-Origin', value: '*' },
-          { key: 'Access-Control-Allow-Methods', value: 'GET,OPTIONS,PATCH,DELETE,POST,PUT' },
-          { key: 'Access-Control-Allow-Headers', value: '*' },
-        ],
-      },
-    ]
   }
 }
 

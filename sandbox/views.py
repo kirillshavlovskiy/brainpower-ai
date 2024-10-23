@@ -322,107 +322,104 @@ def set_container_permissions(container):
 
 
 def update_code_internal(container, code, user, file_name, main_file_path):
-    """Track files and setup for mounted Next.js structure"""
     files_added = []
     build_output = []
     try:
-        # Determine the file extension for the dynamic component
-        is_typescript = file_name.endswith('.tsx') or file_name.endswith('.ts')
-        component_extension = 'tsx' if is_typescript else 'jsx'
-
-        # Update DynamicComponent file
+        # Encode the code to base64 to handle special characters
         encoded_code = base64.b64encode(code.encode()).decode()
-        max_attempts = 3
-        for attempt in range(max_attempts):
-            try:
-                exec_result = container.exec_run([
-                    "sh", "-c", f"echo {encoded_code} | base64 -d > /app/components/DynamicComponent.{component_extension}"
-                ])
+
+        # Determine target file path inside the container based on file type
+        if file_name.endswith('.js') or file_name.endswith('.jsx') or file_name.endswith('.tsx'):
+            # Components go in the components directory
+            component_extension = 'tsx' if file_name.endswith('.tsx') else 'js'
+            target_file = f'/app/components/DynamicComponent.{component_extension}'
+
+            # Create a pages/index.js that imports the component
+            index_content = """
+            import dynamic from 'next/dynamic'
+            const DynamicComponent = dynamic(() => import('../components/DynamicComponent'), { loading: () => <p>Loading...</p>, ssr: false })
+            export default function Home() { return <DynamicComponent /> }
+            """
+            encoded_index = base64.b64encode(index_content.encode()).decode()
+
+            # Create necessary directories and files
+            exec_commands = [
+                "mkdir -p /app/components",
+                "mkdir -p /app/pages",
+                f"echo {encoded_code} | base64 -d > {target_file}",
+                f"echo {encoded_index} | base64 -d > /app/pages/index.js"
+            ]
+            for cmd in exec_commands:
+                exec_result = container.exec_run(["sh", "-c", cmd], user='node')
                 if exec_result.exit_code != 0:
-                    raise Exception(f"Failed to update DynamicComponent.{component_extension} in container: {exec_result.output.decode()}")
-                files_added.append(f'/app/components/DynamicComponent.{component_extension}')
-                break
-            except docker.errors.APIError as e:
-                if attempt == max_attempts - 1:
-                    raise
-                logger.warning(f"API error on attempt {attempt + 1}, retrying: {str(e)}")
-                time.sleep(1)
+                    raise Exception(f"Failed to execute command: {cmd}: {exec_result.output.decode()}")
+            files_added.extend([target_file, '/app/pages/index.js'])
+        else:
+            raise Exception(f"Unsupported file type: {file_name}")
 
-        logger.info(f"Updated DynamicComponent.{component_extension} in container with content from {file_name} at path {main_file_path}")
-        logger.info(f"Processing for user: {user}")
-
-        # Get the directory of the main file
+        # Process imports
         base_path = os.path.dirname(main_file_path)
-        logger.info(f"Base path derived from main file: {base_path}")
-
-        # Handle all imports (CSS, JS, TS, JSON, etc.)
         import_pattern = r"import\s+(?:(?:{\s*[\w\s,]+\s*})|(?:[\w]+)|\*\s+as\s+[\w]+)\s+from\s+['\"](.+?)['\"]|import\s+['\"](.+?)['\"]"
         imports = re.findall(import_pattern, code)
         for import_match in imports:
-            import_path = import_match[0] or import_match[1]  # Get the non-empty group
+            import_path = import_match[0] or import_match[1]
             if import_path:
-                logger.info(f"Attempting to retrieve content for imported file: {import_path}")
                 file_content = FileStructureConsumer.get_file_content_for_container(user, import_path, base_path)
                 if file_content is not None:
-                    logger.info(f"Retrieved content for file: {import_path}")
+                    # Determine correct path based on import type
+                    if import_path.endswith('.css'):
+                        container_path = f"/app/styles/{os.path.basename(import_path)}"
+                    else:
+                        container_path = f"/app/components/{os.path.basename(import_path)}"
                     encoded_content = base64.b64encode(file_content.encode()).decode()
-                    container_path = f"/app/{import_path}"
                     exec_result = container.exec_run([
                         "sh", "-c", f"mkdir -p $(dirname {container_path}) && echo {encoded_content} | base64 -d > {container_path}"
-                    ])
+                    ], user='node')
                     if exec_result.exit_code != 0:
-                        raise Exception(f"Failed to update {import_path} in container: {exec_result.output.decode()}")
-                    logger.info(f"Updated {import_path} in container")
-                    files_added.append(container_path)
-                else:
-                    logger.warning(f"File {import_path} not found or empty. Creating empty file in container.")
-                    container_path = f"/app/{import_path}"
-                    exec_result = container.exec_run([
-                        "sh", "-c", f"mkdir -p $(dirname {container_path}) && touch {container_path}"
-                    ])
-                    if exec_result.exit_code != 0:
-                        logger.error(f"Failed to create empty file {import_path} in container: {exec_result.output.decode()}")
-                    else:
-                        logger.info(f"Created empty file {import_path} in container")
+                        raise Exception(f"Failed to update {import_path}: {exec_result.output.decode()}")
                     files_added.append(container_path)
 
-        # Check for non-standard imports and install packages if needed
-        installed_packages = []
+        # Check and install dependencies
         non_standard_imports = check_non_standard_imports(code)
         if non_standard_imports:
-            installed_packages = install_packages(container, non_standard_imports)
+            installed_packages, failed_packages = install_packages(container, non_standard_imports)
+            if failed_packages:
+                logger.warning(f"Failed to install packages: {', '.join(failed_packages)}")
 
-        # Build the project
-        exec_result = exec_command_with_retry(container, ["sh", "-c", "cd /app && yarn dev"])
-        logger.info(f"///Execution result: {exec_result}")
+        # Start Next.js development server
+        logger.info("Starting Next.js development server")
+        exec_result = container.exec_run(
+            ["sh", "-c", "cd /app && yarn dev"], user='node', detach=True
+        )
+        if exec_result.exit_code != 0:
+            raise Exception(f"Failed to start Next.js server: {exec_result.output.decode()}")
 
-        # Process the build output
-        output_lines = exec_result.output.decode().split('\n')
-        build_output = output_lines
+        # Wait for server startup
+        time.sleep(5)
+
+        # Process build output and status
+        build_output = container.logs(tail=100).decode('utf-8').split('\n')
         compilation_status = ContainerStatus.COMPILING
-        for line in output_lines:
-            if "Compiled successfully" in line:
+        for line in build_output:
+            if "compiled successfully" in line.lower():
                 compilation_status = ContainerStatus.READY
                 break
-            elif "Compiled with warnings" in line:
+            elif "compiled with warnings" in line.lower():
                 compilation_status = ContainerStatus.WARNING
                 break
-            elif "Failed to compile" in line:
+            elif "failed to compile" in line.lower():
                 compilation_status = ContainerStatus.COMPILATION_FAILED
                 break
 
-        # Save compilation status to a file in the container
-        exec_command_with_retry(container, ["sh", "-c", f"echo {compilation_status} > /app/compilation_status"])
+        # Save status
+        container.exec_run(
+            ["sh", "-c", f"echo {compilation_status} > /app/compilation_status"], user='node'
+        )
 
-        # Log container status and state
-        container.reload()
-        logger.info(f"Container status after yarn build: {container.status}")
-        logger.info(f"Container state: {container.attrs['State']}")
-
-        return "\n".join(build_output), files_added, compilation_status, installed_packages
+        return "\n".join(build_output), files_added, compilation_status
 
     except Exception as e:
-        logger.error(f">>>Error updating code in container: {str(e)}", exc_info=True)
+        logger.error(f"Error updating code: {str(e)}", exc_info=True)
         raise
 
 def analyze_build_output(output_lines):

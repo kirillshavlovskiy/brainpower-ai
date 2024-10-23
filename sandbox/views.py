@@ -352,7 +352,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
             for cmd in exec_commands:
                 exec_result = container.exec_run(["sh", "-c", cmd], user='node')
                 if exec_result.exit_code != 0:
-                    raise Exception(f"Failed to execute command: {cmd}: {exec_result.output.decode()}")
+                    raise Exception(f"Failed to execute command: {cmd}: {exec_result.output}")
             files_added.extend([target_file, '/app/pages/index.js'])
         else:
             raise Exception(f"Unsupported file type: {file_name}")
@@ -376,7 +376,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                         "sh", "-c", f"mkdir -p $(dirname {container_path}) && echo {encoded_content} | base64 -d > {container_path}"
                     ], user='node')
                     if exec_result.exit_code != 0:
-                        raise Exception(f"Failed to update {import_path}: {exec_result.output.decode()}")
+                        raise Exception(f"Failed to update {import_path}: {exec_result.output}")
                     files_added.append(container_path)
 
         # Check and install dependencies
@@ -392,7 +392,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
             ["sh", "-c", "cd /app && yarn dev"], user='node', detach=True
         )
         if exec_result.exit_code != 0:
-            raise Exception(f"Failed to start Next.js server: {exec_result.output.decode()}")
+            raise Exception(f"Failed to start Next.js server: {exec_result.output}")
 
         # Wait for server startup
         time.sleep(5)
@@ -421,6 +421,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
     except Exception as e:
         logger.error(f"Error updating code: {str(e)}", exc_info=True)
         raise
+
 
 def analyze_build_output(output_lines):
     """Analyze Next.js build output for compilation status"""

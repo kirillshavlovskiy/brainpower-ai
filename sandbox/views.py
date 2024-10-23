@@ -237,7 +237,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
             logger.info("No non-standard imports detected")
 
         # Start the development server
-        logger.info("Starting the development server with 'yarn start'")
+        logger.info("Starting the development server with 'yarn dev'")
         exec_result = exec_command_with_retry(container, ["sh", "-c", "cd /app && yarn dev"])
 
         # Process the output
@@ -266,7 +266,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
 
         # Log container status
         container.reload()
-        logger.info(f"Container status after yarn start: {container.status}")
+        logger.info(f"Container status after yarn dev: {container.status}")
         logger.info(f"Container state: {container.attrs['State']}")
 
         return "\n".join(build_output), files_added, compilation_status
@@ -495,7 +495,7 @@ def check_or_create_container(request):
         try:
             container = client.containers.run(
                 'react_renderer_prod',
-                command=["sh", "-c", "HOST=0.0.0.0 next start"],
+                command=["sh", "-c", "yarn dev"],
                 user='nextjs',
                 detach=True,
                 name=container_name,

@@ -44,7 +44,7 @@
   "scripts": {
     "dev": "next dev -p 3001",
     "build": "next build",
-    "start": "HOST=0.0.0.0 next start -p 3001",
+    "start": "next start -p 3001",
     "start:react": "HOST=0.0.0.0 react-scripts start",
     "build:react": "react-scripts build",
     "test": "react-scripts test",

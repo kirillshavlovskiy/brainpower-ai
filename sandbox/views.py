@@ -565,7 +565,6 @@ def check_or_create_container(request):
                     'REACT_APP_USER_ID': user_id,
                     'FILE_NAME': file_name,
                     'PORT': str(3001),
-                    'NODE_OPTIONS': '--max-old-space-size=8192'
                 },
                 volumes={
                     os.path.join(react_renderer_path, 'components'): {'bind': '/app/components', 'mode': 'rw'},

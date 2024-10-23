@@ -323,48 +323,102 @@ def set_container_permissions(container):
 
 def update_code_internal(container, code, user, file_name, main_file_path):
     """Track files and setup for mounted Next.js structure"""
+    files_added = []
+    build_output = []
     try:
-        # Check container and server status
-        try:
-            exec_command_with_retry(container, ["echo", "Container health check"])
-        except Exception as e:
-            logger.error(f"Container health check failed: {str(e)}")
-            container.restart()
-            time.sleep(10)
-            container.reload()
+        # Update DynamicComponent.js
+        encoded_code = base64.b64encode(code.encode()).decode()
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                exec_result = container.exec_run([
+                    "sh", "-c", f"echo {encoded_code} | base64 -d > /app/components/DynamicComponent.js"
+                ])
+                if exec_result.exit_code != 0:
+                    raise Exception(f"Failed to update DynamicComponent.js in container: {exec_result.output.decode()}")
+                files_added.append('/app/components/DynamicComponent.js')
+                break
+            except docker.errors.APIError as e:
+                if attempt == max_attempts - 1:
+                    raise
+                logger.warning(f"API error on attempt {attempt + 1}, retrying: {str(e)}")
+                time.sleep(1)
 
-        # Verify Next.js setup
-        verify_nextjs_setup(container)
+        logger.info(f"Updated DynamicComponent.js in container with content from {file_name} at path {main_file_path}")
+        logger.info(f"Processing for user: {user}")
 
-        # Track files in use
-        files_added = []
-        is_typescript = file_name.endswith('.tsx') or file_name.endswith('.ts')
-
-        # Track component file
-        component_path = f"/app/components/DynamicComponent.{'tsx' if is_typescript else 'jsx'}"
-        files_added.append(component_path)
-
-        # Track index file
-        files_added.append('/app/pages/index.js')
-
-        # Process imports for tracking
+        # Get the directory of the main file
         base_path = os.path.dirname(main_file_path)
+        logger.info(f"Base path derived from main file: {base_path}")
+
+        # Handle all imports (CSS, JS, TS, JSON, etc.)
         import_pattern = r"import\s+(?:(?:{\s*[\w\s,]+\s*})|(?:[\w]+)|\*\s+as\s+[\w]+)\s+from\s+['\"](.+?)['\"]|import\s+['\"](.+?)['\"]"
         imports = re.findall(import_pattern, code)
-
         for import_match in imports:
-            import_path = import_match[0] or import_match[1]
+            import_path = import_match[0] or import_match[1]  # Get the non-empty group
             if import_path:
-                container_path = f"/app/{import_path}"
-                files_added.append(container_path)
+                logger.info(f"Attempting to retrieve content for imported file: {import_path}")
+                file_content = FileStructureConsumer.get_file_content_for_container(user, import_path, base_path)
+                if file_content is not None:
+                    logger.info(f"Retrieved content for file: {import_path}")
+                    encoded_content = base64.b64encode(file_content.encode()).decode()
+                    container_path = f"/app/{import_path}"
+                    exec_result = container.exec_run([
+                        "sh", "-c", f"mkdir -p $(dirname {container_path}) && echo {encoded_content} | base64 -d > {container_path}"
+                    ])
+                    if exec_result.exit_code != 0:
+                        raise Exception(f"Failed to update {import_path} in container: {exec_result.output.decode()}")
+                    logger.info(f"Updated {import_path} in container")
+                    files_added.append(container_path)
+                else:
+                    logger.warning(f"File {import_path} not found or empty. Creating empty file in container.")
+                    container_path = f"/app/{import_path}"
+                    exec_result = container.exec_run([
+                        "sh", "-c", f"mkdir -p $(dirname {container_path}) && touch {container_path}"
+                    ])
+                    if exec_result.exit_code != 0:
+                        logger.error(f"Failed to create empty file {import_path} in container: {exec_result.output.decode()}")
+                    else:
+                        logger.info(f"Created empty file {import_path} in container")
+                    files_added.append(container_path)
 
-        # Get build output
-        logs = container.logs(tail=100).decode('utf-8').split('\n')
+        # Check for non-standard imports and install packages if needed
+        installed_packages = []
+        non_standard_imports = check_non_standard_imports(code)
+        if non_standard_imports:
+            installed_packages = install_packages(container, non_standard_imports)
 
-        return logs, files_added
+        # Build the project
+        exec_result = exec_command_with_retry(container, ["sh", "-c", "cd /app && yarn build"])
+        logger.info(f"///Execution result: {exec_result}")
+
+        # Process the build output
+        output_lines = exec_result.output.decode().split('\n')
+        build_output = output_lines
+        compilation_status = ContainerStatus.COMPILING
+        for line in output_lines:
+            if "Compiled successfully" in line:
+                compilation_status = ContainerStatus.READY
+                break
+            elif "Compiled with warnings" in line:
+                compilation_status = ContainerStatus.WARNING
+                break
+            elif "Failed to compile" in line:
+                compilation_status = ContainerStatus.COMPILATION_FAILED
+                break
+
+        # Save compilation status to a file in the container
+        exec_command_with_retry(container, ["sh", "-c", f"echo {compilation_status} > /app/compilation_status"])
+
+        # Log container status and state
+        container.reload()
+        logger.info(f"Container status after yarn build: {container.status}")
+        logger.info(f"Container state: {container.attrs['State']}")
+
+        return "\n".join(build_output), files_added, compilation_status
 
     except Exception as e:
-        logger.error(f"Error in update_code_internal: {str(e)}", exc_info=True)
+        logger.error(f">>>Error updating code in container: {str(e)}", exc_info=True)
         raise
 
 

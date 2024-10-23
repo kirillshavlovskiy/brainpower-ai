@@ -392,7 +392,9 @@ def update_code_internal(container, code, user, file_name, main_file_path):
             ["sh", "-c", "cd /app && yarn dev"], user='node', detach=True
         )
         if exec_result.exit_code != 0:
-            raise Exception(f"Failed to start Next.js server: {exec_result.output}")
+            # Capture logs for debugging
+            logs = container.logs(tail=100).decode('utf-8')
+            raise Exception(f"Failed to start Next.js server: {exec_result.output}\nLogs:\n{logs}")
 
         # Wait for server startup
         time.sleep(5)

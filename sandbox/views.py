@@ -216,9 +216,6 @@ def check_container(request):
         }, status=500)
 
 
-
-
-
 def exec_command_with_retry(container, command, user='node', max_retries=3, delay=1):
     for attempt in range(max_retries):
         try:

@@ -216,7 +216,7 @@ def check_container(request):
         }, status=500)
 
 
-def exec_command_with_retry(container, command, max_retries=3, delay=1):
+def exec_command_with_retry(container, command, user='nextjs', max_retries=3, delay=1):
     for attempt in range(max_retries):
         try:
             container.reload()
@@ -228,7 +228,7 @@ def exec_command_with_retry(container, command, max_retries=3, delay=1):
 
             exec_result = container.exec_run(
                 cmd=command,
-
+                user=user,
                 stdout=True,
                 stderr=True
             )

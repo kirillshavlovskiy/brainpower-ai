@@ -33,6 +33,12 @@ HOST_PORT_RANGE_START = 32768
 HOST_PORT_RANGE_END = 60999
 NGINX_SITES_DYNAMIC = '/etc/nginx/sites-dynamic'
 
+class CompilationMessages:
+    NEXT_READY = "Ready in"
+    NEXT_COMPILING = "Compiling"
+    NEXT_BUILDING = "Creating an optimized production build"
+    NEXT_ERROR = "Failed to compile"
+    NEXT_WARNING = "Compiled with warnings"
 
 class ContainerStatus:
     CREATING = 'creating'
@@ -318,63 +324,77 @@ def update_code_internal(container, code, user, file_name, main_file_path):
 
 def get_compilation_status(container):
     try:
-        # Try to read the compilation status file
-        status_result = exec_command_with_retry(container, ["cat", "/app/compilation_status"])
-        saved_status = status_result.decode().strip()
+        recent_logs = container.logs(tail=100).decode('utf-8')
 
-        if saved_status and saved_status in [ContainerStatus.READY, ContainerStatus.WARNING,
-                                             ContainerStatus.COMPILATION_FAILED]:
-            return saved_status
-
-        # If no valid status is saved, or if it's still COMPILING, we need to check the logs
-        logs = container.logs(tail=100).decode('utf-8')
-
-        if "Compiled successfully" in logs:
+        # Check for Next.js specific messages
+        if CompilationMessages.NEXT_READY in recent_logs:
             return ContainerStatus.READY
-        elif "Compiled with warnings" in logs:
+        elif CompilationMessages.NEXT_WARNING in recent_logs:
             return ContainerStatus.WARNING
-        elif "Failed to compile" in logs:
+        elif CompilationMessages.NEXT_ERROR in recent_logs:
             return ContainerStatus.COMPILATION_FAILED
-        else:
+        elif CompilationMessages.NEXT_COMPILING in recent_logs:
             return ContainerStatus.COMPILING
+        elif CompilationMessages.NEXT_BUILDING in recent_logs:
+            return ContainerStatus.BUILDING
+
+        # Check container health
+        container.reload()
+        if container.status != 'running':
+            return ContainerStatus.ERROR
+
+        # Default to compiling if no clear status is found
+        return ContainerStatus.COMPILING
+
     except Exception as e:
         logger.error(f"Error getting compilation status: {str(e)}")
         return ContainerStatus.ERROR
 
 
+def extract_build_info(logs):
+    """Extract build time and other Next.js specific information"""
+    build_info = {}
+
+    # Find the "Ready in XXms" message
+    ready_match = re.search(r"Ready in (\d+)(?:\.?\d*)(?:ms|s)", logs)
+    if ready_match:
+        build_info['build_time'] = ready_match.group(1)
+
+    # Extract any warnings
+    warnings = re.findall(r"(?:⚠|warning).*?\n(?:(?!\n).)*", logs, re.MULTILINE | re.DOTALL)
+    if warnings:
+        build_info['warnings'] = warnings
+
+    # Extract any errors
+    errors = re.findall(r"(?:error|×).*?\n(?:(?!\n).)*", logs, re.MULTILINE | re.DOTALL)
+    if errors:
+        build_info['errors'] = errors
+
+    return build_info
+
+
 @api_view(['GET'])
 def check_container_ready(request):
     container_id = request.GET.get('container_id')
-    user_id = request.GET.get('user_id', 'default')
-    file_name = request.GET.get('file_name')
-
-    logger.info(f"Checking container ready: container_id={container_id}, user_id={user_id}, file_name={file_name}")
 
     if not container_id:
-        logger.error("No container ID provided")
-        return JsonResponse({'status': ContainerStatus.ERROR, 'error': 'No container ID provided'}, status=400)
+        return JsonResponse({'error': 'No container ID provided'}, status=400)
 
     try:
         container = client.containers.get(container_id)
         container.reload()
-        logger.info(f"Container status: {container.status}")
 
+        recent_logs = container.logs(tail=100).decode('utf-8')
         compilation_status = get_compilation_status(container)
-        logger.info(f"Compilation status: {compilation_status}")
-
-        if not compilation_status:
-            compilation_status = ContainerStatus.COMPILING
-
-        all_logs = container.logs(stdout=True, stderr=True).decode('utf-8').strip()
-        recent_logs = container.logs(stdout=True, stderr=True, tail=50).decode('utf-8').strip()
-        latest_log = recent_logs.split('\n')[-1] if recent_logs else "No recent logs"
-
-        if container.status != 'running':
-            return JsonResponse({'status': ContainerStatus.CREATING, 'log': latest_log})
+        build_info = extract_build_info(recent_logs)
 
         port_mapping = container.ports.get('3001/tcp')
         if not port_mapping:
-            return JsonResponse({'status': ContainerStatus.BUILDING, 'log': latest_log})
+            return JsonResponse({
+                'status': ContainerStatus.BUILDING,
+                'message': 'Waiting for port mapping',
+                'logs': recent_logs
+            })
 
         host_port = port_mapping[0]['HostPort']
         dynamic_url = f"https://{host_port}.{HOST_URL}"
@@ -382,25 +402,27 @@ def check_container_ready(request):
         response_data = {
             'status': compilation_status,
             'url': dynamic_url,
-            'log': latest_log,
-            'detailed_logs': all_logs
+            'log': recent_logs.split('\n')[-1] if recent_logs else "No recent logs",
+            'detailed_logs': recent_logs
         }
 
-        if compilation_status == ContainerStatus.WARNING:
-            warnings = re.findall(r"warning.*\n.*\n.*\n", all_logs, re.IGNORECASE)
-            response_data['warnings'] = warnings
-
-        if compilation_status == ContainerStatus.COMPILATION_FAILED:
-            errors = re.findall(r"error.*\n.*\n.*\n", all_logs, re.IGNORECASE)
-            response_data['errors'] = errors
+        # Add build info to response
+        if build_info:
+            response_data.update(build_info)
 
         return JsonResponse(response_data)
 
     except docker.errors.NotFound:
-        return JsonResponse({'status': ContainerStatus.NOT_FOUND, 'log': 'Container not found'}, status=404)
+        return JsonResponse({
+            'status': ContainerStatus.NOT_FOUND,
+            'message': 'Container not found'
+        }, status=404)
     except Exception as e:
-        logger.error(f"Error checking container status: {str(e)}", exc_info=True)
-        return JsonResponse({'status': ContainerStatus.ERROR, 'error': str(e), 'log': str(e)}, status=500)
+        logger.error(f"Error checking container status: {str(e)}")
+        return JsonResponse({
+            'status': ContainerStatus.ERROR,
+            'message': str(e)
+        }, status=500)
 
 @api_view(['GET'])
 def get_container_logs(request):
@@ -416,7 +438,6 @@ def get_container_logs(request):
         return JsonResponse({'error': 'Container not found'}, status=404)
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
-
 
 
 def get_available_port(start, end):

@@ -353,19 +353,20 @@ def update_code_internal(container, code, user, file_name, main_file_path):
             if failed_packages:
                 logger.warning(f"Failed to install packages: {', '.join(failed_packages)}")
 
-        # Start Next.js development server
-        logger.info("Starting Next.js development server")
-        exec_result = container.exec_run(
-            ["sh", "-c", "cd /app && yarn dev"],
-            user='root',
-            detach=True
-        )
-
-        if exec_result.exit_code != 0:
-            error_output = exec_result.output
-            if isinstance(error_output, bytes):
-                error_output = error_output.decode()
-            raise Exception(f"Failed to start Next.js server: {error_output}")
+        # # Start Next.js development server
+        # logger.info("Starting Next.js development server")
+        # exec_result = container.exec_run(
+        #     ["sh", "-c", "cd /app && yarn dev"],
+        #     user='root',
+        #     detach=True
+        # )
+        # logger.info("Starting Next.js development server")
+        #
+        # if exec_result.exit_code != 0:
+        #     error_output = exec_result.output
+        #     if isinstance(error_output, bytes):
+        #         error_output = error_output.decode()
+        #     raise Exception(f"Failed to start Next.js server: {error_output}")
 
         # Wait for server startup
         time.sleep(5)
@@ -1193,6 +1194,7 @@ def get_container_file_structure(container):
                 "sh", "-c",
                 "find /app/components -printf '%P\t%s\t%T@\t%y\t%U:%G\t%m\n'"
             ],
+            user='root'
         )
 
         logger.info(f"Find command exit code: {exec_result.exit_code}")

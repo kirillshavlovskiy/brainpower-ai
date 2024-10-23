@@ -393,7 +393,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
             installed_packages = install_packages(container, non_standard_imports)
 
         # Build the project
-        exec_result = exec_command_with_retry(container, ["sh", "-c", "cd /app && yarn build"])
+        exec_result = exec_command_with_retry(container, ["sh", "-c", "cd /app && yarn dev"])
         logger.info(f"///Execution result: {exec_result}")
 
         # Process the build output

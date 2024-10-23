@@ -884,8 +884,8 @@ def check_container(request):
                 "test -d /app/components && echo 'exists' || echo 'not found'",
             )
 
-            if check_result.exit_code != 0 or 'not found' in check_result.output.decode():
-                logger.warning(f"{check_result.output.decode()}/app/components directory not found in container {container_name}")
+            # if check_result.exit_code != 0 or 'not found' in check_result.output.decode():
+            #     logger.warning(f"{check_result.output.decode()}/app/components directory not found in container {container_name}")
                 # Attempt to fix directory permissions
 
             # Get file structure

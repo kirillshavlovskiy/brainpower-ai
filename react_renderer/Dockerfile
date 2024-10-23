@@ -1,3 +1,4 @@
+# Use the official Node.js 18 LTS version
 FROM node:18.18.0-slim
 
 # Install necessary system dependencies
@@ -14,22 +15,23 @@ RUN apt-get update && apt-get install -y \
 # Set the working directory
 WORKDIR /app
 
- # Ensure all files and directories are owned by 'nextjs'
-RUN chown -R nextjs:nextjs /app
-
-# Copy package.json and yarn.lock
+# Copy package.json and yarn.lock before other files to leverage Docker layer caching
 COPY package.json yarn.lock ./
 
 # Install dependencies
-RUN yarn install
+RUN yarn install --frozen-lockfile
 
 # Copy Next.js configuration files
-COPY next.config.js .babelrc ./
+COPY next.config.js ./
+
+# Copy the rest of the application code
+COPY . ./
 
 # Create a non-root user and set permissions
 RUN useradd -m -s /bin/bash -u 1001 nextjs && \
     chown -R nextjs:nextjs /app
 
+# Switch to the non-root user
 USER nextjs
 
 # Expose port 3001
@@ -44,4 +46,4 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV WATCHPACK_POLLING=true
 
 # Start Next.js development server
-CMD ["yarn", "dev"]
+CMD ["yarn", "dev", "-p", "3001"]

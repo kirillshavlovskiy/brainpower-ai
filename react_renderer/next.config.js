@@ -3,8 +3,6 @@
 const nextConfig = {
   reactStrictMode: true,
   swcMinify: true,
-
-  // Enable both JS and TS file handling
   pageExtensions: ['js', 'jsx', 'ts', 'tsx'],
 
   transpilePackages: [
@@ -15,25 +13,28 @@ const nextConfig = {
     "lucide-react"
   ],
 
-  // Configure webpack for mixed JS/TS
   webpack: (config, { buildId, dev, isServer, defaultLoaders }) => {
-    // Ensure both JS and TS files are handled
+    // Handle both JS and TS files
     config.module.rules.push({
       test: /\.(js|jsx|ts|tsx)$/,
       use: [defaultLoaders.babel],
       exclude: /node_modules/,
     });
 
+    // Add watching options
+    if (dev) {
+      config.watchOptions = {
+        poll: 1000,
+        aggregateTimeout: 300,
+      };
+    }
+
     return config;
   },
 
-  // Development server configuration
-  webpackDevMiddleware: config => {
-    config.watchOptions = {
-      poll: 1000,
-      aggregateTimeout: 300,
-    }
-    return config
+  experimental: {
+    // Enable emotion
+    emotion: true
   }
 }
 

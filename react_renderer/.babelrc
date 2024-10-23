@@ -17,7 +17,9 @@
       {
         "root": ["./"],
         "alias": {
-          "@": "./"
+          "@": "./",
+          "@components": "./components",
+          "@styles": "./styles"
         }
       }
     ]

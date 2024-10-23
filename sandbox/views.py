@@ -326,17 +326,21 @@ def update_code_internal(container, code, user, file_name, main_file_path):
     files_added = []
     build_output = []
     try:
-        # Update DynamicComponent.js
+        # Determine the file extension for the dynamic component
+        is_typescript = file_name.endswith('.tsx') or file_name.endswith('.ts')
+        component_extension = 'tsx' if is_typescript else 'jsx'
+
+        # Update DynamicComponent file
         encoded_code = base64.b64encode(code.encode()).decode()
         max_attempts = 3
         for attempt in range(max_attempts):
             try:
                 exec_result = container.exec_run([
-                    "sh", "-c", f"echo {encoded_code} | base64 -d > /app/components/DynamicComponent.js"
+                    "sh", "-c", f"echo {encoded_code} | base64 -d > /app/components/DynamicComponent.{component_extension}"
                 ])
                 if exec_result.exit_code != 0:
-                    raise Exception(f"Failed to update DynamicComponent.js in container: {exec_result.output.decode()}")
-                files_added.append('/app/components/DynamicComponent.js')
+                    raise Exception(f"Failed to update DynamicComponent.{component_extension} in container: {exec_result.output.decode()}")
+                files_added.append(f'/app/components/DynamicComponent.{component_extension}')
                 break
             except docker.errors.APIError as e:
                 if attempt == max_attempts - 1:
@@ -344,7 +348,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                 logger.warning(f"API error on attempt {attempt + 1}, retrying: {str(e)}")
                 time.sleep(1)
 
-        logger.info(f"Updated DynamicComponent.js in container with content from {file_name} at path {main_file_path}")
+        logger.info(f"Updated DynamicComponent.{component_extension} in container with content from {file_name} at path {main_file_path}")
         logger.info(f"Processing for user: {user}")
 
         # Get the directory of the main file
@@ -420,7 +424,6 @@ def update_code_internal(container, code, user, file_name, main_file_path):
     except Exception as e:
         logger.error(f">>>Error updating code in container: {str(e)}", exc_info=True)
         raise
-
 
 def analyze_build_output(output_lines):
     """Analyze Next.js build output for compilation status"""
@@ -729,7 +732,8 @@ def check_or_create_container(request):
 
     try:
         # Update code internal now targets Next.js structure
-        build_output, files_added = update_code_internal(container, code, user_id, file_name, main_file_path)
+        build_output, files_added, compilation_status = update_code_internal(container, code, user_id, file_name,
+                                                                             main_file_path)
 
         # Check the contents of the /app/components directory
         exec_result = container.exec_run("ls -la /app/components", user='node')

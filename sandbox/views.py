@@ -888,7 +888,6 @@ def check_container(request):
             if check_result.exit_code != 0 or 'not found' in check_result.output.decode():
                 logger.warning(f"/app/components directory not found in container {container_name}")
                 # Attempt to fix directory permissions
-                set_container_permissions(container)
 
             # Get file structure
             file_structure = get_container_file_structure(container)
@@ -971,8 +970,7 @@ def install_packages(container, packages):
 
     try:
         # First ensure proper permissions
-        if not set_container_permissions(container):
-            raise Exception("Failed to set container permissions for package installation")
+
 
         for package in packages:
             try:

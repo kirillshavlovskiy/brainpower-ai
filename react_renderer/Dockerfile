@@ -1,4 +1,3 @@
-# Use Node.js 18.18.0 as the base image
 FROM node:18.18.0-slim
 
 # Install necessary system dependencies
@@ -15,25 +14,29 @@ RUN apt-get update && apt-get install -y \
 # Set the working directory
 WORKDIR /app
 
-# Add Next.js specific directories
+# Create Next.js directory structure
 RUN mkdir -p /app/pages /app/components /app/public /app/styles
 
-# Install global Next.js CLI
-RUN npm install -g next@latest
-
-# Create a non-root user for better security
+# Create a non-root user
 RUN useradd -m -s /bin/bash -u 1001 nextjs && \
     chown -R nextjs:nextjs /app
 
-# Copy configuration files first
+# Copy configuration files
 COPY package.json yarn.lock ./
-COPY tailwind.config.js postcss.config.js ./
-COPY styles/globals.css ./styles/
+COPY next.config.js .babelrc ./
 
 # Install dependencies
 RUN yarn install
 
-# Switch to non-root user
+# Set permissions
+RUN chown -R nextjs:nextjs /app && \
+    chmod -R 755 /app
+
+# Create necessary Next.js directories with correct permissions
+RUN mkdir -p /app/.next && \
+    chown -R nextjs:nextjs /app/.next && \
+    chmod -R 755 /app/.next
+
 USER nextjs
 
 # Expose port 3001
@@ -51,5 +54,5 @@ ENV WATCHPACK_POLLING=true
 HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=3 \
     CMD nc -z localhost 3001 || exit 1
 
-# Start the Next.js development server
+# Start Next.js development server
 CMD ["yarn", "dev"]

@@ -513,7 +513,6 @@ def check_or_create_container(request):
                     os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
                     os.path.join(react_renderer_path, 'next.config.js'): {'bind': '/app/next.config.js', 'mode': 'ro'},
-                    os.path.join(react_renderer_path, '.babelrc'): {'bind': '/app/build', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
 
                 },

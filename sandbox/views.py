@@ -606,33 +606,10 @@ def check_or_create_container(request):
             detailed_logger.log('info', f"Creating new container: {container_name}")
             host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
 
-            # Ensure clean state in react_renderer directory
-            components_dir = os.path.join(react_renderer_path, 'components')
-            os.makedirs(components_dir, exist_ok=True)
-
-            # Startup script to ensure Next.js is installed and running correctly
-            startup_script = """
-            cd /app && 
-            if [ ! -f "package.json" ]; then
-                echo "Initializing Next.js project..."
-                yarn init -y
-                yarn add next@latest react@latest react-dom@latest
-                mkdir -p pages components
-            fi
-
-            # Ensure Next.js script is in package.json
-            if ! grep -q '"dev":' package.json; then
-                sed -i 's/"scripts": {/"scripts": {\n    "dev": "next dev",/' package.json
-            fi
-
-            # Start Next.js development server
-            npx next dev -p 3001
-            """
-
             # Create new container
             container = client.containers.run(
                 'react_renderer_prod',
-                command=["sh", "-c", startup_script],
+                command=["yarn", "dev"],  # Use the same command as Dockerfile
                 detach=True,
                 name=container_name,
                 environment={
@@ -640,7 +617,8 @@ def check_or_create_container(request):
                     'HOST': '0.0.0.0',
                     'NODE_ENV': 'development',
                     'NODE_OPTIONS': '--max-old-space-size=8192',
-                    'NEXT_TELEMETRY_DISABLED': '1'
+                    'NEXT_TELEMETRY_DISABLED': '1',
+                    'WATCHPACK_POLLING': 'true'
                 },
                 volumes={
                     react_renderer_path: {
@@ -653,13 +631,13 @@ def check_or_create_container(request):
                 memswap_limit='16g',
                 cpu_quota=100000,
                 working_dir='/app',
-                user='root'
+                user='nextjs'  # Use the same user as Dockerfile
             )
 
             detailed_logger.log('info', f"New container created: {container_name}")
             container_info['build_status'] = 'created'
 
-            # Wait for Next.js to be ready
+            # Wait for container to be ready
             max_wait = 30
             wait_count = 0
             while wait_count < max_wait:
@@ -675,7 +653,7 @@ def check_or_create_container(request):
                 wait_count += 1
                 time.sleep(1)
 
-        # Now that container is running, update code
+        # Update code in container
         try:
             build_output, files_added, compilation_status, installed_packages = update_code_internal(
                 container, code, user_id, file_name, main_file_path
@@ -683,7 +661,7 @@ def check_or_create_container(request):
             container_info['build_status'] = 'updated'
             container_info['files_added'] = files_added
 
-            # Get container status and port information
+            # Get container status
             container.reload()
             port_mapping = container.ports.get('3001/tcp')
 
@@ -715,7 +693,11 @@ def check_or_create_container(request):
 
         except Exception as update_error:
             detailed_logger.log('error', f"Failed to update code: {str(update_error)}")
-            container_logs = container.logs().decode('utf-8') if container else "No container logs available"
+            try:
+                container_logs = container.logs().decode('utf-8') if container else "No container logs available"
+            except Exception:
+                container_logs = "Failed to get container logs"
+
             return JsonResponse({
                 'status': 'error',
                 'message': str(update_error),

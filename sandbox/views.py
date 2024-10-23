@@ -291,161 +291,6 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         encoded_code = base64.b64encode(code.encode()).decode()
 
         # Determine target file path inside the container based on file type
-        if file_name.endswith('.js') or file_name.endswith('.jsx'):
-            # Components go in the components directory
-            target_file = '/app/components/DynamicComponent.js'
-            # Create a pages/index.js that imports the component
-
-
-            # Create necessary directories and files
-            exec_commands = [
-
-                f"echo {encoded_code} | base64 -d > {target_file}",
-            ]
-
-            for cmd in exec_commands:
-                exec_result = container.exec_run(["sh", "-c", cmd], user='node')
-                if exec_result.exit_code != 0:
-                    raise Exception(f"Failed to execute command: {cmd}: {exec_result.output.decode()}")
-
-            files_added.extend([target_file, '/app/pages/index.js'])
-
-        else:
-            raise Exception(f"Unsupported file type: {file_name}")
-
-        # Process imports
-        base_path = os.path.dirname(main_file_path)
-        import_pattern = r"import\s+(?:(?:{\s*[\w\s,]+\s*})|(?:[\w]+)|\*\s+as\s+[\w]+)\s+from\s+['\"](.+?)['\"]|import\s+['\"](.+?)['\"]"
-        imports = re.findall(import_pattern, code)
-
-        for import_match in imports:
-            import_path = import_match[0] or import_match[1]
-            if import_path:
-                file_content = FileStructureConsumer.get_file_content_for_container(user, import_path, base_path)
-                if file_content is not None:
-                    # Determine correct path based on import type
-                    if import_path.endswith('.css'):
-                        container_path = f"/app/styles/{os.path.basename(import_path)}"
-                    else:
-                        container_path = f"/app/components/{os.path.basename(import_path)}"
-
-                    encoded_content = base64.b64encode(file_content.encode()).decode()
-                    exec_result = container.exec_run([
-                        "sh", "-c",
-                        f"mkdir -p $(dirname {container_path}) && echo {encoded_content} | base64 -d > {container_path}"
-                    ], user='node')
-
-                    if exec_result.exit_code != 0:
-                        raise Exception(f"Failed to update {import_path}: {exec_result.output.decode()}")
-
-                    files_added.append(container_path)
-
-        # Check and install dependencies
-        non_standard_imports = check_non_standard_imports(code)
-        if non_standard_imports:
-            installed_packages, failed_packages = install_packages(container, non_standard_imports)
-            if failed_packages:
-                logger.warning(f"Failed to install packages: {', '.join(failed_packages)}")
-
-        # Start Next.js development server
-        logger.info("Starting Next.js development server")
-        exec_result = container.exec_run(
-            ["sh", "-c", "cd /app && yarn dev"],
-            user='node',
-            detach=True
-        )
-
-        if exec_result.exit_code != 0:
-            raise Exception(f"Failed to start Next.js server: {exec_result.output.decode()}")
-
-        # Wait for server startup
-        time.sleep(5)
-
-        # Process build output and status
-        build_output = container.logs(tail=100).decode('utf-8').split('\n')
-        compilation_status = ContainerStatus.COMPILING
-
-        for line in build_output:
-            if "compiled successfully" in line.lower():
-                compilation_status = ContainerStatus.READY
-                break
-            elif "compiled with warnings" in line.lower():
-                compilation_status = ContainerStatus.WARNING
-                break
-            elif "failed to compile" in line.lower():
-                compilation_status = ContainerStatus.COMPILATION_FAILED
-                break
-
-        # Save status
-        container.exec_run(
-            ["sh", "-c", f"echo {compilation_status} > /app/compilation_status"],
-            user='node'
-        )
-
-        return "\n".join(build_output), files_added, compilation_status, installed_packages
-
-    except Exception as e:
-        logger.error(f"Error updating code: {str(e)}", exc_info=True)
-        raise
-
-
-def get_compilation_status(container):
-    """Get detailed Next.js compilation status with improved detection"""
-    try:
-        logs = container.logs(tail=100).decode('utf-8')
-
-        # Define status indicators
-        status_indicators = {
-            'ready': ('✓ Ready in', 'ready - started server on', 'Local:        http://localhost:3001'),
-            'compiling': ('- Compiling...', 'Creating an optimized production build'),
-            'warning': ('Disabled SWC', '`compiler` options', 'warning'),
-            'error': ('Failed to compile', 'Error:', 'error')
-        }
-
-        # Check for successful compilation and running server
-        for indicator in status_indicators['ready']:
-            if indicator in logs:
-                # Only return READY if we see the port is actually bound
-                if container.ports.get('3001/tcp'):
-                    return ContainerStatus.READY
-                else:
-                    logger.warning("Next.js reports ready but port 3001 is not bound")
-                    return ContainerStatus.BUILDING
-
-        # Check for compilation in progress
-        for indicator in status_indicators['compiling']:
-            if indicator in logs:
-                return ContainerStatus.COMPILING
-
-        # Check for warnings (but still running)
-        for indicator in status_indicators['warning']:
-            if indicator in logs:
-                # If we have warnings but server is running, return WARNING
-                if 'Ready in' in logs and container.ports.get('3001/tcp'):
-                    return ContainerStatus.WARNING
-                return ContainerStatus.COMPILING
-
-        # Check for errors
-        for indicator in status_indicators['error']:
-            if indicator in logs:
-                return ContainerStatus.COMPILATION_FAILED
-
-        # If no specific status found but container is running, assume still compiling
-        return ContainerStatus.COMPILING
-
-    except Exception as e:
-        logger.error(f"Error getting compilation status: {str(e)}")
-        return ContainerStatus.ERROR
-
-
-def update_code_internal(container, code, user, file_name, main_file_path):
-    files_added = []
-    build_output = []
-    try:
-        # Encode the code to base64 to handle special characters
-        encoded_code = base64.b64encode(code.encode()).decode()
-
-        # Determine target file path inside the container based on file type
         if file_name.endswith(('.js', '.jsx', '.ts', '.tsx')):
             # Set appropriate file extension for the dynamic component
             is_typescript = file_name.endswith(('.ts', '.tsx'))
@@ -564,6 +409,182 @@ def update_code_internal(container, code, user, file_name, main_file_path):
     except Exception as e:
         logger.error(f"Error updating code: {str(e)}", exc_info=True)
         raise
+
+
+def get_compilation_status(container):
+    """Get detailed Next.js compilation status with improved detection"""
+    try:
+        logs = container.logs(tail=100).decode('utf-8')
+
+        # Define status indicators
+        status_indicators = {
+            'ready': ('✓ Ready in', 'ready - started server on', 'Local:        http://localhost:3001'),
+            'compiling': ('- Compiling...', 'Creating an optimized production build'),
+            'warning': ('Disabled SWC', '`compiler` options', 'warning'),
+            'error': ('Failed to compile', 'Error:', 'error')
+        }
+
+        # Check for successful compilation and running server
+        for indicator in status_indicators['ready']:
+            if indicator in logs:
+                # Only return READY if we see the port is actually bound
+                if container.ports.get('3001/tcp'):
+                    return ContainerStatus.READY
+                else:
+                    logger.warning("Next.js reports ready but port 3001 is not bound")
+                    return ContainerStatus.BUILDING
+
+        # Check for compilation in progress
+        for indicator in status_indicators['compiling']:
+            if indicator in logs:
+                return ContainerStatus.COMPILING
+
+        # Check for warnings (but still running)
+        for indicator in status_indicators['warning']:
+            if indicator in logs:
+                # If we have warnings but server is running, return WARNING
+                if 'Ready in' in logs and container.ports.get('3001/tcp'):
+                    return ContainerStatus.WARNING
+                return ContainerStatus.COMPILING
+
+        # Check for errors
+        for indicator in status_indicators['error']:
+            if indicator in logs:
+                return ContainerStatus.COMPILATION_FAILED
+
+        # If no specific status found but container is running, assume still compiling
+        return ContainerStatus.COMPILING
+
+    except Exception as e:
+        logger.error(f"Error getting compilation status: {str(e)}")
+        return ContainerStatus.ERROR
+
+
+@api_view(['GET'])
+def check_container_ready(request):
+    """Enhanced container readiness check for Next.js"""
+    container_id = request.GET.get('container_id')
+    user_id = request.GET.get('user_id', 'default')
+    file_name = request.GET.get('file_name')
+
+    detailed_logger.log('info', f"Checking container ready: container_id={container_id}, user_id={user_id}")
+
+    if not container_id:
+        return JsonResponse({
+            'status': ContainerStatus.ERROR,
+            'error': 'No container ID provided'
+        }, status=400)
+
+    try:
+        container = client.containers.get(container_id)
+        container.reload()
+
+        # Get all relevant logs
+        logs = container.logs(stdout=True, stderr=True).decode('utf-8').strip()
+        recent_logs = logs.split('\n')[-50:] if logs else []
+
+        # Check if Next.js is actually ready
+        nextjs_ready = False
+        port_bound = False
+        has_warnings = False
+
+        # Parse logs for specific Next.js status
+        for log in recent_logs:
+            if '✓ Ready in' in log:
+                nextjs_ready = True
+            if 'http://localhost:3001' in log:
+                port_bound = True
+            if 'warning' in log.lower():
+                has_warnings = True
+
+        # Verify port binding
+        port_mapping = container.ports.get('3001/tcp')
+        if port_mapping:
+            host_port = port_mapping[0]['HostPort']
+            url = f"https://{host_port}.{HOST_URL}"
+        else:
+            url = None
+
+        # Check container's network settings
+        network_settings = container.attrs.get('NetworkSettings', {})
+        port_bindings = network_settings.get('Ports', {}).get('3001/tcp', [])
+
+        # Build detailed status response
+        status_info = {
+            'container_running': container.status == 'running',
+            'nextjs_ready': nextjs_ready,
+            'port_bound': bool(port_mapping),
+            'port_bindings': port_bindings,
+            'network_mode': network_settings.get('NetworkMode', 'unknown'),
+            'has_warnings': has_warnings,
+            'url': url,
+            'host_port': host_port if port_mapping else None,
+        }
+
+        # Determine overall status
+        if not status_info['container_running']:
+            detailed_logger.log('warning', "Container is not running")
+            return JsonResponse({
+                'status': ContainerStatus.ERROR,
+                'message': 'Container is not running',
+                'status_info': status_info,
+                'logs': '\n'.join(recent_logs)
+            })
+
+        if nextjs_ready and port_bound:
+            status = ContainerStatus.READY if not has_warnings else ContainerStatus.WARNING
+            message = "Next.js server is ready"
+        else:
+            status = ContainerStatus.COMPILING
+            message = "Next.js server is starting"
+
+        # Network check command
+        try:
+            # Test network connectivity
+            exec_result = container.exec_run(
+                ["sh", "-c", "nc -zv localhost 3001 2>&1"]
+            )
+            network_test = exec_result.output.decode()
+            status_info['network_test'] = network_test
+        except Exception as e:
+            status_info['network_test_error'] = str(e)
+
+        response_data = {
+            'status': status,
+            'message': message,
+            'url': url,
+            'status_info': status_info,
+            'port': host_port if port_mapping else None,
+            'logs': '\n'.join(recent_logs),
+            'warnings': [log for log in recent_logs if 'warning' in log.lower()] if has_warnings else []
+        }
+
+        # Add detailed connection info if we have warnings
+        if has_warnings or not nextjs_ready:
+            try:
+                exec_result = container.exec_run(
+                    ["sh", "-c", "netstat -tlnp | grep 3001"]
+                )
+                response_data['port_status'] = exec_result.output.decode()
+            except Exception as e:
+                response_data['port_status_error'] = str(e)
+
+        return JsonResponse(response_data)
+
+    except docker.errors.NotFound:
+        return JsonResponse({
+            'status': ContainerStatus.NOT_FOUND,
+            'message': 'Container not found'
+        }, status=404)
+
+    except Exception as e:
+        error_message = str(e)
+        detailed_logger.log('error', f"Error checking container status: {error_message}", exc_info=True)
+        return JsonResponse({
+            'status': ContainerStatus.ERROR,
+            'error': error_message,
+            'logs': container.logs().decode() if 'container' in locals() else 'No logs available'
+        }, status=500)
 
 
 @api_view(['GET'])

@@ -1,7 +1,7 @@
 import dynamic from 'next/dynamic'
 import { Suspense } from 'react'
+import React from 'react'
 
-// Import the dynamic component with SSR disabled
 const DynamicComponent = dynamic(
   () => import('../components/DynamicComponent'),
   {
@@ -10,7 +10,6 @@ const DynamicComponent = dynamic(
   }
 )
 
-// Error Boundary Component
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);

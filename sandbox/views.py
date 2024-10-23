@@ -755,60 +755,6 @@ def check_or_create_container(request):
         }, status=500)
 
 
-# def get_compilation_status(container):
-#     """Get compilation status with error recovery"""
-#     try:
-#         # Try to read the compilation status file
-#         status_result = container.exec_run(
-#             [
-#                 "sh", "-c",
-#                 "cat /app/compilation_status 2>/dev/null || echo 'COMPILING'"
-#             ],
-#             user='root'
-#         )
-#         saved_status = status_result.output.decode().strip()
-#
-#         if saved_status and saved_status in [
-#             ContainerStatus.READY,
-#             ContainerStatus.WARNING,
-#             ContainerStatus.COMPILATION_FAILED
-#         ]:
-#             return saved_status
-#
-#         # Create status file if it doesn't exist
-#         container.exec_run(
-#             [
-#                 "sh", "-c",
-#                 "touch /app/compilation_status && chown node:node /app/compilation_status && chmod 644 /app/compilation_status"
-#             ],
-#             user='root'
-#         )
-#
-#         # Check logs for status
-#         logs = container.logs(tail=100).decode('utf-8')
-#
-#         if "Compiled successfully" in logs:
-#             new_status = ContainerStatus.READY
-#         elif "Compiled with warnings" in logs:
-#             new_status = ContainerStatus.WARNING
-#         elif "Failed to compile" in logs:
-#             new_status = ContainerStatus.COMPILATION_FAILED
-#         else:
-#             new_status = ContainerStatus.COMPILING
-#
-#         # Save the new status
-#         container.exec_run(
-#             ["sh", "-c", f"echo {new_status} > /app/compilation_status"],
-#             user='root'
-#         )
-#
-#         return new_status
-#
-#     except Exception as e:
-#         logger.error(f"Error getting compilation status: {str(e)}")
-#         return ContainerStatus.ERROR
-
-
 @api_view(['GET'])
 def check_container(request):
     """

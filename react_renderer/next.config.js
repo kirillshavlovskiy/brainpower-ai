@@ -1,15 +1,42 @@
+// next.config.js
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  compiler: {
-    // Enable styled-components
-    styledComponents: true,
+  // Disable server-side rendering for dynamic components
+  experimental: {
+    // Enable if needed
+    // esmExternals: false,
   },
-  // Enable hot reloading for dynamic imports
+  // Configure webpack if needed
   webpack: (config, { isServer }) => {
-    // Custom webpack config if needed
+    // Add any custom webpack config
     return config;
   },
+  // Configure the dev server
+  webpackDevMiddleware: config => {
+    // Solve potential hot reload issues
+    config.watchOptions = {
+      poll: 1000,
+      aggregateTimeout: 300,
+    }
+    return config
+  },
+  // Enable proper port binding
+  experimental: {
+    allowMiddlewareResponseBody: true,
+  },
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          { key: 'Access-Control-Allow-Origin', value: '*' },
+          { key: 'Access-Control-Allow-Methods', value: 'GET,OPTIONS,PATCH,DELETE,POST,PUT' },
+          { key: 'Access-Control-Allow-Headers', value: '*' },
+        ],
+      },
+    ]
+  }
 }
 
-module.exports = nextConfig;
+module.exports = nextConfig

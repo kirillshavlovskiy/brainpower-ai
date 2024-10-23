@@ -291,29 +291,23 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         encoded_code = base64.b64encode(code.encode()).decode()
 
         # Determine target file path inside the container based on file type
-        if file_name.endswith(('.js', '.jsx', '.ts', '.tsx')):
-            # Set appropriate file extension for the dynamic component
-            is_typescript = file_name.endswith(('.ts', '.tsx'))
-            target_file = '/app/components/DynamicComponent.' + ('tsx' if is_typescript else 'js')
+        if file_name.endswith('.js') or file_name.endswith('.jsx'):
+            target_file = '/app/components/DynamicComponent.js'
 
-            # Ensure components directory exists with correct permissions
+            # Create necessary directories and files
             exec_commands = [
-                "mkdir -p /app/components",
-                "chown -R node:node /app/components",
-                "chmod -R 755 /app/components",
                 f"echo {encoded_code} | base64 -d > {target_file}",
-                "chmod 644 " + target_file
             ]
 
             for cmd in exec_commands:
-                exec_result = container.exec_run(["sh", "-c", cmd], user='root')
+                exec_result = container.exec_run(["sh", "-c", cmd], user='node')
                 if exec_result.exit_code != 0:
-                    raise Exception(f"Failed to execute command: {cmd}: {exec_result.output.decode()}")
+                    error_output = exec_result.output
+                    if isinstance(error_output, bytes):
+                        error_output = error_output.decode()
+                    raise Exception(f"Failed to execute command: {cmd}: {error_output}")
 
             files_added.extend([target_file, '/app/pages/index.js'])
-
-            # Don't modify index.js as it's already in the mounted volume
-            logger.info(f"Component file created: {target_file}")
 
         else:
             raise Exception(f"Unsupported file type: {file_name}")
@@ -335,24 +329,18 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                         container_path = f"/app/components/{os.path.basename(import_path)}"
 
                     encoded_content = base64.b64encode(file_content.encode()).decode()
+                    exec_result = container.exec_run([
+                        "sh", "-c",
+                        f"mkdir -p $(dirname {container_path}) && echo {encoded_content} | base64 -d > {container_path}"
+                    ], user='node')
 
-                    # Create directory and set permissions before writing file
-                    exec_commands = [
-                        f"mkdir -p $(dirname {container_path})",
-                        f"chown -R node:node $(dirname {container_path})",
-                        f"chmod -R 755 $(dirname {container_path})",
-                        f"echo {encoded_content} | base64 -d > {container_path}",
-                        f"chmod 644 {container_path}",
-                        f"chown node:node {container_path}"
-                    ]
-
-                    for cmd in exec_commands:
-                        exec_result = container.exec_run(["sh", "-c", cmd], user='root')
-                        if exec_result.exit_code != 0:
-                            raise Exception(f"Failed to execute command: {cmd}: {exec_result.output.decode()}")
+                    if exec_result.exit_code != 0:
+                        error_output = exec_result.output
+                        if isinstance(error_output, bytes):
+                            error_output = error_output.decode()
+                        raise Exception(f"Failed to update {import_path}: {error_output}")
 
                     files_added.append(container_path)
-                    logger.info(f"Added imported file: {container_path}")
 
         # Check and install dependencies
         non_standard_imports = check_non_standard_imports(code)
@@ -361,30 +349,28 @@ def update_code_internal(container, code, user, file_name, main_file_path):
             if failed_packages:
                 logger.warning(f"Failed to install packages: {', '.join(failed_packages)}")
 
-        # Ensure all project directories have correct permissions
-        exec_result = container.exec_run(
-            ["sh", "-c", "chown -R node:node /app && chmod -R 755 /app"],
-            user='root'
-        )
-        if exec_result.exit_code != 0:
-            logger.warning(f"Failed to set project permissions: {exec_result.output.decode()}")
-
         # Start Next.js development server
         logger.info("Starting Next.js development server")
         exec_result = container.exec_run(
-            ["sh", "-c", "cd /app && yarn dev -p 3001"],
+            ["sh", "-c", "cd /app && yarn dev"],
             user='node',
             detach=True
         )
 
         if exec_result.exit_code != 0:
-            raise Exception(f"Failed to start Next.js server: {exec_result.output.decode()}")
+            error_output = exec_result.output
+            if isinstance(error_output, bytes):
+                error_output = error_output.decode()
+            raise Exception(f"Failed to start Next.js server: {error_output}")
 
-        # Wait for server startup and monitor logs
+        # Wait for server startup
         time.sleep(5)
 
         # Process build output and status
-        build_output = container.logs(tail=100).decode('utf-8').split('\n')
+        container_logs = container.logs()
+        if isinstance(container_logs, bytes):
+            container_logs = container_logs.decode()
+        build_output = container_logs.split('\n')[-100:]
         compilation_status = ContainerStatus.COMPILING
 
         for line in build_output:

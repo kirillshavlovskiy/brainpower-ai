@@ -159,7 +159,7 @@ def check_container(request):
 
         structure_status = {}
         for cmd in check_commands:
-            result = container.exec_run(cmd, user='root')
+            result = container.exec_run(cmd)
             structure_status[cmd.split()[3]] = result.output.decode().strip()
 
         # Get complete status
@@ -216,7 +216,7 @@ def check_container(request):
         }, status=500)
 
 
-def exec_command_with_retry(container, command, user='node', max_retries=3, delay=1):
+def exec_command_with_retry(container, command, max_retries=3, delay=1):
     for attempt in range(max_retries):
         try:
             container.reload()
@@ -228,7 +228,6 @@ def exec_command_with_retry(container, command, user='node', max_retries=3, dela
 
             exec_result = container.exec_run(
                 cmd=command,
-                user=user,
                 stdout=True,
                 stderr=True
             )
@@ -244,43 +243,42 @@ def exec_command_with_retry(container, command, user='node', max_retries=3, dela
             time.sleep(delay)
 
 
-def set_container_permissions(container):
-    """Set proper permissions for container directories with read-only handling"""
-    try:
-        # Check if src directory exists
-        check_result = container.exec_run(
-            "test -d /app/src || mkdir -p /app/src",
-            user='root'
-        )
-
-        # Only try to set permissions for writable directories
-        commands = [
-            "chown -R node:node /app/src",
-            "chmod -R 755 /app/src",
-            "chmod -R g+w /app/src",
-            "touch /app/compilation_status",
-            "chown node:node /app/compilation_status",
-            "chmod 644 /app/compilation_status"
-        ]
-
-        for cmd in commands:
-            try:
-                exec_result = container.exec_run(
-                    ["sh", "-c", cmd],
-                    user='root'
-                )
-                if exec_result.exit_code != 0:
-                    logger.warning(f"Command {cmd} failed with: {exec_result.output.decode()}")
-            except Exception as cmd_error:
-                logger.warning(f"Error executing {cmd}: {str(cmd_error)}")
-                continue
-
-        logger.info("Container permissions set successfully for writable directories")
-        return True
-
-    except Exception as e:
-        logger.error(f"Error setting container permissions: {str(e)}")
-        return False
+# def set_container_permissions(container):
+#     """Set proper permissions for container directories with read-only handling"""
+#     try:
+#         # Check if src directory exists
+#         check_result = container.exec_run(
+#             "test -d /app/components || mkdir -p /app/components",
+#         )
+#
+#         # Only try to set permissions for writable directories
+#         commands = [
+#             "chown -R node:node /app/components",
+#             "chmod -R 755 /app/components",
+#             "chmod -R g+w /app/components",
+#             "touch /app/compilation_status",
+#             "chown node:node /app/compilation_status",
+#             "chmod 644 /app/compilation_status"
+#         ]
+#
+#         for cmd in commands:
+#             try:
+#                 exec_result = container.exec_run(
+#                     ["sh", "-c", cmd],
+#                     user='root'
+#                 )
+#                 if exec_result.exit_code != 0:
+#                     logger.warning(f"Command {cmd} failed with: {exec_result.output.decode()}")
+#             except Exception as cmd_error:
+#                 logger.warning(f"Error executing {cmd}: {str(cmd_error)}")
+#                 continue
+#
+#         logger.info("Container permissions set successfully for writable directories")
+#         return True
+#
+#     except Exception as e:
+#         logger.error(f"Error setting container permissions: {str(e)}")
+#         return False
 
 
 def update_code_internal(container, code, user, file_name, main_file_path):
@@ -307,7 +305,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         ]
         for cmd in exec_commands:
             logger.info(f"Executing command: {cmd}")
-            exec_result = container.exec_run(["sh", "-c", cmd], user='nextjs')
+            exec_result = container.exec_run(["sh", "-c", cmd])
             if exec_result.exit_code != 0:
                 error_output = exec_result.output
                 if isinstance(error_output, bytes):
@@ -336,7 +334,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                     exec_result = container.exec_run([
                         "sh", "-c",
                         f"mkdir -p $(dirname {container_path}) && echo {encoded_content} | base64 -d > {container_path}"
-                    ], user='node')
+                    ])
 
                     if exec_result.exit_code != 0:
                         error_output = exec_result.output
@@ -883,12 +881,12 @@ def check_container(request):
         try:
             # Run directory check as root to avoid permission issues
             check_result = container.exec_run(
-                "test -d /app/src && echo 'exists' || echo 'not found'",
-                user='root'
+                "test -d /app/components && echo 'exists' || echo 'not found'",
+                user='nextjs'
             )
 
             if check_result.exit_code != 0 or 'not found' in check_result.output.decode():
-                logger.warning(f"/app/src directory not found in container {container_name}")
+                logger.warning(f"/app/components directory not found in container {container_name}")
                 # Attempt to fix directory permissions
                 set_container_permissions(container)
 
@@ -1150,8 +1148,8 @@ def check_local_imports(container, code):
         # Create check script with proper permissions
         check_script = """
             for file in "$@"; do
-                if [ -f "/app/src/${file}.js" ] || [ -f "/app/src/${file}.jsx" ] || \
-                   [ -f "/app/src/${file}.ts" ] || [ -f "/app/src/${file}.tsx" ]; then
+                if [ -f "/app/components/${file}.js" ] || [ -f "/app/components/${file}.jsx" ] || \
+                   [ -f "/app/components/${file}.ts" ] || [ -f "/app/components/${file}.tsx" ]; then
                     echo "${file}:exists"
                 else
                     echo "${file}:missing"
@@ -1191,9 +1189,8 @@ def get_container_file_structure(container):
         exec_result = container.exec_run(
             [
                 "sh", "-c",
-                "find /app/src -printf '%P\t%s\t%T@\t%y\t%U:%G\t%m\n'"
+                "find /app/components -printf '%P\t%s\t%T@\t%y\t%U:%G\t%m\n'"
             ],
-            user='root'
         )
 
         logger.info(f"Find command exit code: {exec_result.exit_code}")
@@ -1203,7 +1200,7 @@ def get_container_file_structure(container):
             output = exec_result.output.decode().strip()
 
             if not output:  # Empty directory
-                logger.warning("No files found in /app/src")
+                logger.warning("No files found in /app/components")
                 return []
 
             for line in output.split('\n'):
@@ -1231,16 +1228,6 @@ def get_container_file_structure(container):
             logger.error(f"Error output: {error_output}")
 
             # Try to create src directory if it doesn't exist
-            if "No such file or directory" in error_output:
-                logger.info("Attempting to create /app/src directory")
-                create_result = container.exec_run(
-                    ["sh", "-c", "mkdir -p /app/src && chown -R node:node /app/src && chmod -R 755 /app/src"],
-                    user='root'
-                )
-                if create_result.exit_code == 0:
-                    return []  # Return empty list for newly created directory
-                else:
-                    raise Exception(f"Failed to create /app/src directory: {create_result.output.decode()}")
 
             return []
 

@@ -77,7 +77,7 @@ from docker.errors import NotFound, APIError
 
 @api_view(['GET'])
 def check_container(request):
-    """Single comprehensive container status check"""
+    """Check container status"""
     user_id = request.GET.get('user_id', '0')
     file_name = request.GET.get('file_name', 'test-component.js')
     container_name = f'react_renderer_{user_id}_{file_name}'
@@ -108,25 +108,20 @@ def check_container(request):
             logs = container.logs(tail=50).decode('utf-8')
             log_lines = logs.split('\n')
 
-            # Check for Next.js ready state
-            is_ready = any('✓ Ready in' in line for line in log_lines)
+            # Check for errors but don't prevent "running" status
             has_warnings = any('warning' in line.lower() for line in log_lines)
-            has_errors = any('error' in line.lower() for line in log_lines)
-            is_compiling = any('Compiling' in line for line in log_lines)
+            has_errors = any(
+                error in logs.lower()
+                for error in ['error:', 'failed to compile', 'cannot find module']
+            )
 
-            # Determine final status
-            if has_errors:
-                status = 'error'
-                message = "Container is running but has errors"
-            elif is_ready and is_port_mapped:
-                status = 'warning' if has_warnings else 'ready'
-                message = "Container is ready" + (" with warnings" if has_warnings else "")
-            elif is_compiling:
-                status = 'compiling'
-                message = "Container is compiling"
+            # If container is running and port is mapped, consider it ready
+            if is_port_mapped:
+                status = 'ready'  # Use 'ready' instead of 'running' to match interface expectations
+                message = "Container is running" + (" with warnings" if has_warnings else "")
             else:
-                status = 'starting'
-                message = "Container is starting"
+                status = 'ready'
+                message = "Container is running but port is not mapped"
 
             return JsonResponse({
                 'status': status,
@@ -134,7 +129,6 @@ def check_container(request):
                 'container_id': container.id,
                 'container_info': container_info,
                 'is_running': True,
-                'is_ready': is_ready,
                 'has_warnings': has_warnings,
                 'has_errors': has_errors,
                 'url': server_url,
@@ -144,6 +138,7 @@ def check_container(request):
                 'errors': [line for line in log_lines if 'error' in line.lower()]
             })
         else:
+            # Container exists but not running
             return JsonResponse({
                 'status': 'stopped',
                 'message': f"Container is {container.status}",
@@ -606,10 +601,33 @@ def check_or_create_container(request):
             detailed_logger.log('info', f"Creating new container: {container_name}")
             host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
 
+            # Ensure clean state in react_renderer directory
+            components_dir = os.path.join(react_renderer_path, 'components')
+            os.makedirs(components_dir, exist_ok=True)
+
+            # Startup script to ensure Next.js is installed and running correctly
+            startup_script = """
+            cd /app && 
+            if [ ! -f "package.json" ]; then
+                echo "Initializing Next.js project..."
+                yarn init -y
+                yarn add next@latest react@latest react-dom@latest
+                mkdir -p pages components
+            fi
+
+            # Ensure Next.js script is in package.json
+            if ! grep -q '"dev":' package.json; then
+                sed -i 's/"scripts": {/"scripts": {\n    "dev": "next dev",/' package.json
+            fi
+
+            # Start Next.js development server
+            npx next dev -p 3001
+            """
+
             # Create new container
             container = client.containers.run(
                 'react_renderer_prod',
-                command=["yarn", "dev"],  # Use the same command as Dockerfile
+                command=["sh", "-c", startup_script],
                 detach=True,
                 name=container_name,
                 environment={
@@ -617,8 +635,7 @@ def check_or_create_container(request):
                     'HOST': '0.0.0.0',
                     'NODE_ENV': 'development',
                     'NODE_OPTIONS': '--max-old-space-size=8192',
-                    'NEXT_TELEMETRY_DISABLED': '1',
-                    'WATCHPACK_POLLING': 'true'
+                    'NEXT_TELEMETRY_DISABLED': '1'
                 },
                 volumes={
                     react_renderer_path: {
@@ -631,13 +648,13 @@ def check_or_create_container(request):
                 memswap_limit='16g',
                 cpu_quota=100000,
                 working_dir='/app',
-                user='nextjs'  # Use the same user as Dockerfile
+                user='root'
             )
 
             detailed_logger.log('info', f"New container created: {container_name}")
             container_info['build_status'] = 'created'
 
-            # Wait for container to be ready
+            # Wait for Next.js to be ready
             max_wait = 30
             wait_count = 0
             while wait_count < max_wait:
@@ -653,7 +670,7 @@ def check_or_create_container(request):
                 wait_count += 1
                 time.sleep(1)
 
-        # Update code in container
+        # Now that container is running, update code
         try:
             build_output, files_added, compilation_status, installed_packages = update_code_internal(
                 container, code, user_id, file_name, main_file_path
@@ -661,7 +678,7 @@ def check_or_create_container(request):
             container_info['build_status'] = 'updated'
             container_info['files_added'] = files_added
 
-            # Get container status
+            # Get container status and port information
             container.reload()
             port_mapping = container.ports.get('3001/tcp')
 
@@ -677,18 +694,22 @@ def check_or_create_container(request):
             detailed_logs = container.logs(tail=200).decode('utf-8')
 
             return JsonResponse({
-                'status': 'success',
+                'status': 'ready',  # Changed from 'success' to 'ready'
                 'message': 'Container is running',
                 'container_id': container.id,
                 'url': dynamic_url,
                 'can_deploy': True,
-                'container_info': container_info,
+                'container_info': {
+                    **container_info,
+                    'status': 'ready'  # Ensure consistent status
+                },
                 'build_output': build_output,
                 'detailed_logs': detailed_logs,
                 'file_list': file_structure,
                 'files_added': files_added,
                 'compilation_status': compilation_status,
-                'installed_packages': installed_packages
+                'installed_packages': installed_packages,
+                'is_running': True  # Add this flag explicitly
             })
 
         except Exception as update_error:

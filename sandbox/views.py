@@ -124,15 +124,15 @@ def check_container(request):
         if container.status == 'running':
             port_mapping = container.ports.get('3001/tcp')
             file_structure = get_container_file_structure(container)
-            check_result = container.exec_run("test -d /app/src && echo 'exists' || echo 'not found'")
-            logger.info(f"Check /app/src directory result: {check_result.output.decode().strip()}")
+            check_result = container.exec_run("test -d /app/components && echo 'exists' || echo 'not found'")
+            logger.info(f"Check /app/components directory result: {check_result.output.decode().strip()}")
 
 
 
             if check_result:
                 file_structure = get_container_file_structure(container)
-                logger.info(f"Check /app/src directory result: {check_result.output.decode().strip()}")
-                logger.info(f"/app/src directory structure: {file_structure}")
+                logger.info(f"Check /app/components directory result: {check_result.output.decode().strip()}")
+                logger.info(f"/app/components directory structure: {file_structure}")
 
             if port_mapping:
                 host_port = port_mapping[0]['HostPort']
@@ -167,11 +167,12 @@ def update_code_internal(container, code, user, file_name, main_file_path):
             try:
                 exec_result = container.exec_run([
                     "sh", "-c",
-                    f"echo {encoded_code} | base64 -d > /app/src/component.js"
-                ])
+                    f"echo {encoded_code} | base64 -d > /app/component/DynamicComponent.js"
+                ], 
+                    user='nextjs')
                 if exec_result.exit_code != 0:
-                    raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
-                files_added.append('/app/src/component.js')
+                    raise Exception(f"Failed to update DynamicComponent.js in container: {exec_result.output.decode()}")
+                files_added.append('/app/component/DynamicComponent.js')
                 break
             except docker.errors.APIError as e:
                 if attempt == max_attempts - 1:
@@ -198,7 +199,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                 if file_content is not None:
                     logger.info(f"Retrieved content for file: {import_path}")
                     encoded_content = base64.b64encode(file_content.encode()).decode()
-                    container_path = f"/app/src/{import_path}"
+                    container_path = f"/app/component/{import_path}"
                     exec_result = container.exec_run([
                         "sh", "-c",
                         f"mkdir -p $(dirname {container_path}) && echo {encoded_content} | base64 -d > {container_path}"
@@ -209,7 +210,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                     files_added.append(container_path)
                 else:
                     logger.warning(f"File {import_path} not found or empty. Creating empty file in container.")
-                    container_path = f"/app/src/{import_path}"
+                    container_path = f"/app/component/{import_path}"
                     exec_result = container.exec_run([
                         "sh", "-c",
                         f"mkdir -p $(dirname {container_path}) && touch {container_path}"
@@ -237,7 +238,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
 
         # Start the development server
         logger.info("Starting the development server with 'yarn start'")
-        exec_result = exec_command_with_retry(container, ["sh", "-c", "cd /app && yarn start"])
+        exec_result = exec_command_with_retry(container, ["sh", "-c", "cd /app && yarn dev"])
 
         # Process the output
         output_lines = exec_result.decode().split('\n')
@@ -395,7 +396,7 @@ def check_or_create_container(request):
     code = data.get('main_code')
     language = data.get('language')
     user_id = data.get('user_id', '0')
-    file_name = data.get('file_name', 'component.js')
+    file_name = data.get('file_name', 'test_component.js')
     main_file_path = data.get('main_file_path')
 
     detailed_logger.log('info', f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
@@ -494,7 +495,7 @@ def check_or_create_container(request):
         try:
             container = client.containers.run(
                 'react_renderer_prod',
-                command=["sh", "-c", "yarn dev"],
+                command=["sh", "-c", "HOST=0.0.0.0 next start"],
                 user='nextjs',
                 detach=True,
                 name=container_name,
@@ -507,10 +508,12 @@ def check_or_create_container(request):
                     'NODE_OPTIONS': '--max-old-space-size=8192'
                 },
                 volumes={
-                    os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'components'): {'bind': '/app/components', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'components'): {'bind': '/app/components', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'pages'): {'bind': '/app/pages', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
-                    os.path.join(react_renderer_path, 'package-lock.json'): {'bind': '/app/package-lock.json', 'mode': 'ro'},
+                    os.path.join(react_renderer_path, 'next.config.js'): {'bind': '/app/next.config.js', 'mode': 'ro'},
                     os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
                 },
                 ports={'3001/tcp': host_port},
@@ -659,7 +662,7 @@ def check_local_imports(container, code):
 
     for imp in local_imports:
         check_file = container.exec_run(
-            f"[ -f /app/src/{imp}.js ] || [ -f /app/src/{imp}.ts ] && echo 'exists' || echo 'not found'")
+            f"[ -f /app/components/{imp}.js ] || [ -f /app/components/{imp}.ts ] && echo 'exists' || echo 'not found'")
         if check_file.output.decode().strip() == 'not found':
             missing_imports.append(imp)
 
@@ -667,7 +670,7 @@ def check_local_imports(container, code):
 
 
 def get_container_file_structure(container):
-    exec_result = container.exec_run("find /app/src -printf '%P\\t%s\\t%T@\\t%y\\n'")
+    exec_result = container.exec_run("find /app/components -printf '%P\\t%s\\t%T@\\t%y\\n'")
     logger.info(f"Find command exit code: {exec_result.exit_code}")
     logger.info(f"Find command output: {exec_result.output.decode()}")
     if exec_result.exit_code == 0:
@@ -786,8 +789,8 @@ def update_index_html(file_path):
     with open(file_path, 'r') as file:
         content = file.read()
 
-    # Update script src and link href to use relative paths
-    content = re.sub(r'(src|href)="/static/', r'\1="./static/', content)
+    # Update script components and link href to use relative paths
+    content = re.sub(r'(components|href)="/static/', r'\1="./static/', content)
 
     with open(file_path, 'w') as file:
         file.write(content)

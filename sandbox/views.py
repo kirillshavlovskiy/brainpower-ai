@@ -631,7 +631,6 @@ def check_or_create_container(request):
 
     react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'
     container_name = f'react_renderer_{user_id}_{file_name}'
-    app_name = f"{user_id}_{file_name.replace('.', '-')}"
 
     container_info = {
         'container_name': container_name,
@@ -641,64 +640,88 @@ def check_or_create_container(request):
     }
 
     try:
-        # Try to get existing container
-        container = client.containers.get(container_name)
-        detailed_logger.log('info', f"Found existing container: {container.id}")
+        # Check for existing container
+        try:
+            container = client.containers.get(container_name)
+            detailed_logger.log('info', f"Found existing container: {container.id}")
 
-        # Check container status and start if needed
-        if container.status != 'running':
-            detailed_logger.log('info', f"Starting existing container: {container.id}")
+            # If container exists but is not running, remove it and create new
+            if container.status != 'running':
+                detailed_logger.log('info', f"Removing non-running container: {container.id}")
+                container.remove(force=True)
+                raise docker.errors.NotFound("Forcing container recreation")
 
-            # Ensure proper permissions on mounted volume before starting
-            container.exec_run(
-                ["sh", "-c", "chown -R node:node /app && chmod -R 755 /app"],
-                user='root'
-            )
+        except docker.errors.NotFound:
+            detailed_logger.log('info', f"Creating new container: {container_name}")
+            host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
 
-            container.start()
-            container.reload()
-            time.sleep(5)  # Wait for container to initialize
+            # Ensure clean state in react_renderer directory
+            components_dir = os.path.join(react_renderer_path, 'components')
+            os.makedirs(components_dir, exist_ok=True)
 
-            # Start Next.js development server
-            exec_result = container.exec_run(
-                ["sh", "-c", "cd /app && NODE_ENV=development yarn dev -p 3001"],
+            # Create new container
+            container = client.containers.run(
+                'react_renderer_prod',
+                command=["sh", "-c", "cd /app && yarn dev -p 3001"],
                 detach=True,
+                name=container_name,
+                environment={
+                    'PORT': '3001',
+                    'HOST': '0.0.0.0',
+                    'NODE_ENV': 'development',
+                    'NODE_OPTIONS': '--max-old-space-size=8192',
+                    'NEXT_TELEMETRY_DISABLED': '1'
+                },
+                volumes={
+                    react_renderer_path: {
+                        'bind': '/app',
+                        'mode': 'rw'
+                    }
+                },
+                ports={'3001/tcp': host_port},
+                mem_limit='8g',
+                memswap_limit='16g',
+                cpu_quota=100000,
+                working_dir='/app',
                 user='node'
             )
 
-        # Get container status and port information
-        container.reload()
-        container_info.update({
-            'status': container.status,
-            'ports': container.ports,
-            'image': container.image.tags[0] if container.image.tags else 'Unknown',
-            'id': container.id
-        })
+            detailed_logger.log('info', f"New container created: {container_name}")
+            container_info['build_status'] = 'created'
 
-        # Get port mapping
-        port_mapping = container.ports.get('3001/tcp')
-        if not port_mapping:
-            detailed_logger.log('warning', "No port mapping found. Checking container logs...")
-            logs = container.logs().decode('utf-8')
-            return JsonResponse({
-                'status': 'error',
-                'message': 'No port mapping found',
-                'container_info': container_info,
-                'logs': logs
-            }, status=500)
+        # Wait for container to be fully running
+        max_wait = 30
+        wait_count = 0
+        while wait_count < max_wait:
+            container.reload()
+            if container.status == 'running':
+                time.sleep(2)  # Give the process a moment to stabilize
+                break
+            if wait_count == max_wait - 1:
+                raise Exception("Container failed to start within timeout period")
+            wait_count += 1
+            time.sleep(1)
 
-        host_port = port_mapping[0]['HostPort']
-        dynamic_url = f"https://{host_port}.{HOST_URL}"
-
+        # Now that container is running, try to update code
         try:
-            # Update component code
-            build_output, files_added, compilation_status, installed_packages = update_code_internal(container, code,
-                                                                                                     user_id, file_name,
-                                                                                                     main_file_path)
+            build_output, files_added, compilation_status, installed_packages = update_code_internal(
+                container, code, user_id, file_name, main_file_path
+            )
             container_info['build_status'] = 'updated'
             container_info['files_added'] = files_added
 
-            # Get file structure and logs
+            # Get container status and port information
+            container.reload()
+            port_mapping = container.ports.get('3001/tcp')
+
+            if not port_mapping:
+                detailed_logger.log('error', "No port mapping found after code update")
+                raise Exception("No port mapping found after container setup")
+
+            host_port = port_mapping[0]['HostPort']
+            dynamic_url = f"https://{host_port}.{HOST_URL}"
+
+            # Get final container state
             file_structure = get_container_file_structure(container)
             detailed_logs = container.logs(tail=200).decode('utf-8')
 
@@ -722,108 +745,17 @@ def check_or_create_container(request):
             return JsonResponse({
                 'status': 'error',
                 'message': str(update_error),
-                'build_output': getattr(update_error, 'build_output', None),
-                'detailed_logs': detailed_logger.get_logs(),
-                'file_list': file_structure,
-            }, status=500)
-
-    except docker.errors.NotFound:
-        detailed_logger.log('info', f"Creating new container: {container_name}")
-        host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
-
-        try:
-            # Create new container with Next.js setup
-            container = client.containers.run(
-                'react_renderer_prod',
-                command=["sh", "-c", "cd /app && yarn dev -p 3001"],
-                detach=True,
-                name=container_name,
-                environment={
-                    'PORT': '3001',
-                    'HOST': '0.0.0.0',
-                    'NODE_ENV': 'development',
-                    'NODE_OPTIONS': '--max-old-space-size=8192',
-                    'NEXT_TELEMETRY_DISABLED': '1',
-                    'WATCHPACK_POLLING': 'true'  # Enable polling for file changes
-                },
-                volumes={
-                    # Mount entire app directory
-                    react_renderer_path: {
-                        'bind': '/app',
-                        'mode': 'rw'
-                    }
-                },
-                ports={'3001/tcp': host_port},
-                mem_limit='8g',
-                memswap_limit='16g',
-                cpu_quota=100000,
-                working_dir='/app',
-                user='node'  # Start with node user
-            )
-
-            detailed_logger.log('info', f"New container created: {container_name}")
-            container_info['build_status'] = 'created'
-
-            # Set proper permissions for mounted volume
-            container.exec_run(
-                ["sh", "-c", "chown -R node:node /app && chmod -R 755 /app"],
-                user='root'
-            )
-
-            # Wait for container readiness
-            max_wait = 30
-            wait_count = 0
-            while wait_count < max_wait:
-                container.reload()
-                logs = container.logs().decode('utf-8')
-                if ('Ready' in logs or 'Compiled successfully' in logs) and container.status == 'running':
-                    break
-                if container.status == 'exited':
-                    raise Exception(f"Container exited. Logs:\n{logs}")
-                time.sleep(1)
-                wait_count += 1
-
-            # Update component code
-            build_output, files_added, compilation_status, installed_packages = update_code_internal(container, code,
-                                                                                                     user_id, file_name,
-                                                                                                     main_file_path)
-            container_info['build_status'] = 'updated'
-
-            # Get final status
-            file_structure = get_container_file_structure(container)
-            detailed_logs = container.logs(tail=200).decode('utf-8')
-
-            container.reload()
-            port_mapping = container.ports.get('3001/tcp')
-
-            if port_mapping:
-                dynamic_url = f"https://{host_port}.{HOST_URL}"
-                detailed_logger.log('info', f"Container ready: {dynamic_url}")
-                return JsonResponse({
-                    'status': 'success',
-                    'message': 'Container is running',
-                    'container_id': container.id,
-                    'url': dynamic_url,
-                    'can_deploy': True,
-                    'container_info': container_info,
-                    'build_output': build_output,
-                    'detailed_logs': detailed_logs,
-                    'file_list': file_structure,
-                    'files_added': files_added,
-                    'compilation_status': compilation_status,
-                    'installed_packages': installed_packages
-                })
-            else:
-                raise Exception("No port mapping found after container setup")
-
-        except Exception as e:
-            detailed_logger.log('error', f"Container setup failed: {str(e)}")
-            return JsonResponse({
-                'error': str(e),
                 'container_info': container_info,
-                'detailed_logs': detailed_logger.get_logs(),
-                'file_list': locals().get('file_structure', [])
+                'detailed_logs': detailed_logger.get_logs()
             }, status=500)
+
+    except Exception as e:
+        detailed_logger.log('error', f"Container setup failed: {str(e)}")
+        return JsonResponse({
+            'error': str(e),
+            'container_info': container_info,
+            'detailed_logs': detailed_logger.get_logs()
+        }, status=500)
 
 
 # def get_compilation_status(container):

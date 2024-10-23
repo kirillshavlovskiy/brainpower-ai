@@ -1,10 +1,7 @@
-// next.config.js
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  swcMinify: true,
   pageExtensions: ['js', 'jsx', 'ts', 'tsx'],
-
   transpilePackages: [
     "@mui/material",
     "@mui/icons-material",
@@ -12,7 +9,6 @@ const nextConfig = {
     "@emotion/styled",
     "lucide-react"
   ],
-
   webpack: (config, { buildId, dev, isServer, defaultLoaders }) => {
     // Handle both JS and TS files
     config.module.rules.push({
@@ -31,8 +27,7 @@ const nextConfig = {
 
     return config;
   },
-
-  experimental: {
+  compiler: {
     // Enable emotion
     emotion: true
   }

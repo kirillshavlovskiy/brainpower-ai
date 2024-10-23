@@ -1091,7 +1091,6 @@ def get_container_file_structure(container):
         return []
 
 
-
 @api_view(['POST'])
 def stop_container(request):
     container_id = request.data.get('container_id')

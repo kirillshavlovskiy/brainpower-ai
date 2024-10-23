@@ -14,6 +14,9 @@ RUN apt-get update && apt-get install -y \
 # Set the working directory
 WORKDIR /app
 
+ # Ensure all files and directories are owned by 'nextjs'
+RUN chown -R nextjs:nextjs /app
+
 # Copy package.json and yarn.lock
 COPY package.json yarn.lock ./
 

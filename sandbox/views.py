@@ -504,17 +504,18 @@ def check_or_create_container(request):
                     'REACT_APP_USER_ID': user_id,
                     'FILE_NAME': file_name,
                     'PORT': str(3001),
-                    'NODE_ENV': 'production',
                     'NODE_OPTIONS': '--max-old-space-size=8192'
                 },
                 volumes={
                     os.path.join(react_renderer_path, 'components'): {'bind': '/app/components', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'components'): {'bind': '/app/components', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'styles'): {'bind': '/app/styles', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'pages'): {'bind': '/app/pages', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
                     os.path.join(react_renderer_path, 'next.config.js'): {'bind': '/app/next.config.js', 'mode': 'ro'},
+                    os.path.join(react_renderer_path, '.babelrc'): {'bind': '/app/build', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
+
                 },
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',

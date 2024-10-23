@@ -228,6 +228,7 @@ def exec_command_with_retry(container, command, max_retries=3, delay=1):
 
             exec_result = container.exec_run(
                 cmd=command,
+
                 stdout=True,
                 stderr=True
             )
@@ -249,6 +250,7 @@ def set_container_permissions(container):
         # Check if src directory exists
         check_result = container.exec_run(
             "test -d /app/components || mkdir -p /app/components",
+            user='root'
         )
 
         # Only try to set permissions for writable directories

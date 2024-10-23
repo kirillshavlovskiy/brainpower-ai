@@ -419,7 +419,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         logger.info(f"Container status after yarn build: {container.status}")
         logger.info(f"Container state: {container.attrs['State']}")
 
-        return "\n".join(build_output), files_added, compilation_status
+        return "\n".join(build_output), files_added, compilation_status, installed_packages
 
     except Exception as e:
         logger.error(f">>>Error updating code in container: {str(e)}", exc_info=True)
@@ -732,7 +732,7 @@ def check_or_create_container(request):
 
     try:
         # Update code internal now targets Next.js structure
-        build_output, files_added, compilation_status, install_packages = update_code_internal(container, code, user_id, file_name,
+        build_output, files_added, compilation_status, installed_packages = update_code_internal(container, code, user_id, file_name,
                                                                              main_file_path)
 
         # Check the contents of the /app/components directory

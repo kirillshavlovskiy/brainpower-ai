@@ -25,9 +25,10 @@ RUN npm install -g next@latest
 RUN useradd -m -s /bin/bash -u 1001 nextjs && \
     chown -R nextjs:nextjs /app
 
-# Copy package.json and yarn.lock (will be mounted in dev)
-COPY package.json .
-COPY yarn.lock .
+# Copy configuration files first
+COPY package.json yarn.lock ./
+COPY tailwind.config.js postcss.config.js ./
+COPY styles/globals.css ./styles/
 
 # Install dependencies
 RUN yarn install

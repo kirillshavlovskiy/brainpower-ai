@@ -1,6 +1,7 @@
 // pages/_app.js
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import { useEffect, useState } from 'react';
+import '../styles/globals.css'
 
 // Create theme outside component to prevent recreation on each render
 const theme = createTheme();

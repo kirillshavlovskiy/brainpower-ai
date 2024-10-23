@@ -159,7 +159,7 @@ def check_container(request):
 
         structure_status = {}
         for cmd in check_commands:
-            result = container.exec_run(cmd)
+            result = container.exec_run(cmd, user='root')
             structure_status[cmd.split()[3]] = result.output.decode().strip()
 
         # Get complete status
@@ -216,7 +216,7 @@ def check_container(request):
         }, status=500)
 
 
-def exec_command_with_retry(container, command, user='nextjs', max_retries=3, delay=1):
+def exec_command_with_retry(container, command, user='root', max_retries=3, delay=1):
     for attempt in range(max_retries):
         try:
             container.reload()
@@ -307,7 +307,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         ]
         for cmd in exec_commands:
             logger.info(f"Executing command: {cmd}")
-            exec_result = container.exec_run(["sh", "-c", cmd], user='nextjs')
+            exec_result = container.exec_run(["sh", "-c", cmd], user='root')
             if exec_result.exit_code != 0:
                 error_output = exec_result.output
                 if isinstance(error_output, bytes):
@@ -336,7 +336,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                     exec_result = container.exec_run([
                         "sh", "-c",
                         f"mkdir -p $(dirname {container_path}) && echo {encoded_content} | base64 -d > {container_path}"
-                    ], user='node')
+                    ], user='root')
 
                     if exec_result.exit_code != 0:
                         error_output = exec_result.output
@@ -357,7 +357,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         logger.info("Starting Next.js development server")
         exec_result = container.exec_run(
             ["sh", "-c", "cd /app && yarn dev"],
-            user='node',
+            user='root',
             detach=True
         )
 
@@ -391,7 +391,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         # Save status
         container.exec_run(
             ["sh", "-c", f"echo {compilation_status} > /app/compilation_status"],
-            user='node'
+            user='root'
         )
 
         return "\n".join(build_output), files_added, compilation_status, installed_packages
@@ -692,7 +692,7 @@ def check_or_create_container(request):
                 memswap_limit='16g',
                 cpu_quota=100000,
                 working_dir='/app',
-                user='nextjs'
+                user='root'
             )
 
             detailed_logger.log('info', f"New container created: {container_name}")
@@ -884,7 +884,7 @@ def check_container(request):
             # Run directory check as root to avoid permission issues
             check_result = container.exec_run(
                 "test -d /app/components && echo 'exists' || echo 'not found'",
-                user='nextjs'
+                user='root'
             )
 
             if check_result.exit_code != 0 or 'not found' in check_result.output.decode():
@@ -982,7 +982,7 @@ def install_packages(container, packages):
                 # Run yarn commands as node user but with proper permissions
                 result = container.exec_run(
                     ["sh", "-c", f"cd /app && yarn add {package}"],
-                    user='node',  # Use node user for yarn commands
+                    user='root',  # Use node user for yarn commands
                     environment={
                         'NODE_OPTIONS': '--max-old-space-size=8192'
                     }

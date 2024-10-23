@@ -307,7 +307,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         ]
         for cmd in exec_commands:
             logger.info(f"Executing command: {cmd}")
-            exec_result = container.exec_run(["sh", "-c", cmd], user='node')
+            exec_result = container.exec_run(["sh", "-c", cmd], user='nextjs')
             if exec_result.exit_code != 0:
                 error_output = exec_result.output
                 if isinstance(error_output, bytes):
@@ -692,7 +692,7 @@ def check_or_create_container(request):
                 memswap_limit='16g',
                 cpu_quota=100000,
                 working_dir='/app',
-                user='node'
+                user='nextjs'
             )
 
             detailed_logger.log('info', f"New container created: {container_name}")

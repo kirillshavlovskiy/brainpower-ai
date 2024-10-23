@@ -15,27 +15,30 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Create Next.js directory structure
-RUN mkdir -p /app/pages /app/components /app/public /app/styles
+RUN mkdir -p /app/pages /app/components /app/public /app/styles /app/.next
 
-# Create a non-root user
-RUN useradd -m -s /bin/bash -u 1001 nextjs && \
-    chown -R nextjs:nextjs /app
+# Install base Next.js dependencies
+RUN yarn init -y && \
+    yarn add next@latest react@latest react-dom@latest && \
+    yarn add --dev babel-plugin-module-resolver @babel/core @babel/preset-react
 
 # Copy configuration files
+COPY next.config.js ./
+COPY .babelrc ./
 COPY package.json yarn.lock ./
-COPY next.config.js .babelrc ./
 
-# Install dependencies
+# Update package.json scripts
+RUN node -e "const pkg=require('./package.json'); \
+    pkg.scripts=Object.assign(pkg.scripts||{}, {dev:'next dev -p 3001'}); \
+    require('fs').writeFileSync('./package.json', JSON.stringify(pkg, null, 2))"
+
+# Install remaining dependencies
 RUN yarn install
 
-# Set permissions
-RUN chown -R nextjs:nextjs /app && \
+# Create a non-root user and set permissions
+RUN useradd -m -s /bin/bash -u 1001 nextjs && \
+    chown -R nextjs:nextjs /app && \
     chmod -R 755 /app
-
-# Create necessary Next.js directories with correct permissions
-RUN mkdir -p /app/.next && \
-    chown -R nextjs:nextjs /app/.next && \
-    chmod -R 755 /app/.next
 
 USER nextjs
 

@@ -586,12 +586,31 @@ def check_or_create_container(request):
     }
 
     try:
-        # Check for existing container
+        # Initialize Next.js related files
+        pages_dir = os.path.join(react_renderer_path, 'pages')
+        components_dir = os.path.join(react_renderer_path, 'components')
+
+        os.makedirs(pages_dir, exist_ok=True)
+        os.makedirs(components_dir, exist_ok=True)
+
+        # Create basic Next.js pages if they don't exist
+        index_page = os.path.join(pages_dir, 'index.js')
+        if not os.path.exists(index_page):
+            with open(index_page, 'w') as f:
+                f.write('''
+                    import dynamic from 'next/dynamic';
+                    const DynamicComponent = dynamic(() => import('../components/DynamicComponent'), {
+                        ssr: false
+                    });
+                    export default function Home() {
+                        return <DynamicComponent />;
+                    }
+                '''.strip())
+
         try:
             container = client.containers.get(container_name)
             detailed_logger.log('info', f"Found existing container: {container.id}")
 
-            # If container exists but is not running, remove it
             if container.status != 'running':
                 detailed_logger.log('info', f"Removing non-running container: {container.id}")
                 container.remove(force=True)
@@ -601,33 +620,31 @@ def check_or_create_container(request):
             detailed_logger.log('info', f"Creating new container: {container_name}")
             host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
 
-            # Ensure clean state in react_renderer directory
-            components_dir = os.path.join(react_renderer_path, 'components')
-            os.makedirs(components_dir, exist_ok=True)
+            # Create initialization script
+            init_script = '''
+                cd /app && \
+                echo "Checking Next.js installation..." && \
+                if [ ! -f "package.json" ]; then
+                    echo "Initializing Next.js project..."
+                    yarn init -y
+                    yarn add next@latest react@latest react-dom@latest
+                    yarn add --dev babel-plugin-module-resolver @babel/core @babel/preset-react
+                fi && \
 
-            # Startup script to ensure Next.js is installed and running correctly
-            startup_script = """
-            cd /app && 
-            if [ ! -f "package.json" ]; then
-                echo "Initializing Next.js project..."
-                yarn init -y
-                yarn add next@latest react@latest react-dom@latest
-                mkdir -p pages components
-            fi
+                # Ensure directories exist
+                mkdir -p pages components public styles .next && \
 
-            # Ensure Next.js script is in package.json
-            if ! grep -q '"dev":' package.json; then
-                sed -i 's/"scripts": {/"scripts": {\n    "dev": "next dev",/' package.json
-            fi
+                # Set correct permissions
+                chown -R nextjs:nextjs /app && \
+                chmod -R 755 /app && \
 
-            # Start Next.js development server
-            npx next dev -p 3001
-            """
+                # Start Next.js
+                yarn dev -p 3001
+            '''
 
-            # Create new container
             container = client.containers.run(
                 'react_renderer_prod',
-                command=["sh", "-c", startup_script],
+                command=["sh", "-c", init_script],
                 detach=True,
                 name=container_name,
                 environment={
@@ -638,100 +655,82 @@ def check_or_create_container(request):
                     'NEXT_TELEMETRY_DISABLED': '1'
                 },
                 volumes={
-                    react_renderer_path: {
-                        'bind': '/app',
-                        'mode': 'rw'
-                    }
+                    react_renderer_path: {'bind': '/app', 'mode': 'rw'}
                 },
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',
                 memswap_limit='16g',
                 cpu_quota=100000,
-                working_dir='/app',
-                user='root'
+                working_dir='/app'
             )
 
-            detailed_logger.log('info', f"New container created: {container_name}")
-            container_info['build_status'] = 'created'
-
-            # Wait for Next.js to be ready
-            max_wait = 30
-            wait_count = 0
-            while wait_count < max_wait:
-                container.reload()
-                logs = container.logs().decode('utf-8')
-                if container.status == 'running' and (
-                        'ready started server on' in logs or 'Listening on port 3001' in logs):
-                    detailed_logger.log('info', "Next.js server is ready")
-                    break
-                if 'error' in logs.lower() or container.status == 'exited':
+            # Wait for container startup
+            max_retries = 30
+            retry_count = 0
+            while retry_count < max_retries:
+                try:
+                    container.reload()
                     logs = container.logs().decode('utf-8')
-                    raise Exception(f"Container failed to start properly. Logs:\n{logs}")
-                wait_count += 1
-                time.sleep(1)
+                    if 'ready - started server on' in logs or 'Listening on port 3001' in logs:
+                        detailed_logger.log('info', "Next.js server is ready")
+                        break
+                    if 'Error:' in logs:
+                        raise Exception(f"Server startup error: {logs}")
+                    time.sleep(1)
+                    retry_count += 1
+                except Exception as e:
+                    if retry_count == max_retries - 1:
+                        raise Exception(f"Container startup timeout: {str(e)}")
+                    time.sleep(1)
+                    retry_count += 1
 
-        # Now that container is running, update code
+        # Update code in container
         try:
             build_output, files_added, compilation_status, installed_packages = update_code_internal(
                 container, code, user_id, file_name, main_file_path
             )
-            container_info['build_status'] = 'updated'
-            container_info['files_added'] = files_added
 
-            # Get container status and port information
-            container.reload()
-            port_mapping = container.ports.get('3001/tcp')
-
-            if not port_mapping:
-                detailed_logger.log('error', "No port mapping found after code update")
-                raise Exception("No port mapping found after container setup")
-
-            host_port = port_mapping[0]['HostPort']
-            dynamic_url = f"https://{host_port}.{HOST_URL}"
-
-            # Get final container state
-            file_structure = get_container_file_structure(container)
-            detailed_logs = container.logs(tail=200).decode('utf-8')
-
-            return JsonResponse({
-                'status': 'ready',  # Changed from 'success' to 'ready'
-                'message': 'Container is running',
-                'container_id': container.id,
-                'url': dynamic_url,
-                'can_deploy': True,
-                'container_info': {
-                    **container_info,
-                    'status': 'ready'  # Ensure consistent status
-                },
-                'build_output': build_output,
-                'detailed_logs': detailed_logs,
-                'file_list': file_structure,
+            container_info.update({
+                'build_status': 'updated',
                 'files_added': files_added,
-                'compilation_status': compilation_status,
-                'installed_packages': installed_packages,
-                'is_running': True  # Add this flag explicitly
+                'compilation_status': compilation_status
             })
 
-        except Exception as update_error:
-            detailed_logger.log('error', f"Failed to update code: {str(update_error)}")
-            try:
-                container_logs = container.logs().decode('utf-8') if container else "No container logs available"
-            except Exception:
-                container_logs = "Failed to get container logs"
+            # Verify container state
+            container.reload()
+            port_mapping = container.ports.get('3001/tcp')
+            if not port_mapping:
+                raise Exception("Port mapping lost after code update")
+
+            host_port = port_mapping[0]['HostPort']
+            url = f"https://{host_port}.{HOST_URL}"
 
             return JsonResponse({
-                'status': 'error',
-                'message': str(update_error),
+                'status': 'ready',
+                'container_id': container.id,
+                'url': url,
                 'container_info': container_info,
-                'detailed_logs': detailed_logger.get_logs(),
-                'container_logs': container_logs
+                'build_output': build_output,
+                'detailed_logs': container.logs().decode('utf-8'),
+                'files_added': files_added,
+                'installed_packages': installed_packages
+            })
+
+        except Exception as code_error:
+            detailed_logger.log('error', f"Code update failed: {str(code_error)}")
+            container_logs = container.logs().decode('utf-8') if container else "No logs available"
+            return JsonResponse({
+                'status': 'error',
+                'message': str(code_error),
+                'container_logs': container_logs,
+                'detailed_logs': detailed_logger.get_logs()
             }, status=500)
 
     except Exception as e:
         detailed_logger.log('error', f"Container setup failed: {str(e)}")
         return JsonResponse({
-            'error': str(e),
-            'container_info': container_info,
+            'status': 'error',
+            'message': str(e),
             'detailed_logs': detailed_logger.get_logs()
         }, status=500)
 

@@ -732,7 +732,7 @@ def check_or_create_container(request):
 
     try:
         # Update code internal now targets Next.js structure
-        build_output, files_added, compilation_status = update_code_internal(container, code, user_id, file_name,
+        build_output, files_added, compilation_status, install_packages = update_code_internal(container, code, user_id, file_name,
                                                                              main_file_path)
 
         # Check the contents of the /app/components directory
@@ -754,7 +754,8 @@ def check_or_create_container(request):
             'can_deploy': True,
             'build_output': build_output,
             'files_added': files_added,
-            'components_dir_contents': components_dir_contents
+            'components_dir_contents': components_dir_contents,
+            'installed_packages': install_packages
         })
     except Exception as e:
         detailed_logger.log('error', f"Setup failed: {str(e)}")

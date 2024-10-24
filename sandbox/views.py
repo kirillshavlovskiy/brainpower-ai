@@ -162,7 +162,7 @@ def set_container_permissions(container):
         # Check if src directory exists
         check_result = container.exec_run(
             "test -d /app/src || mkdir -p /app/src",
-            user='node'
+            user='root'
         )
 
         # Only try to set permissions for writable directories
@@ -179,7 +179,7 @@ def set_container_permissions(container):
             try:
                 exec_result = container.exec_run(
                     ["sh", "-c", cmd],
-                    user='node'
+                    user='root'
                 )
                 if exec_result.exit_code != 0:
                     logger.warning(f"Command {cmd} failed with: {exec_result.output.decode()}")
@@ -208,7 +208,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                 exec_result = container.exec_run([
                     "sh", "-c",
                     f"echo {encoded_code} | base64 -d > /app/src/component.js"
-                ], user='node')
+                ])
                 if exec_result.exit_code != 0:
                     raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
                 files_added.append('/app/src/component.js')
@@ -554,7 +554,6 @@ def check_or_create_container(request):
                     os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
                 },
                 ports={'3001/tcp': host_port},
-                user='node',
                 mem_limit='8g',
                 memswap_limit='16g',
                 cpu_quota=100000,

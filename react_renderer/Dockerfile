@@ -38,17 +38,17 @@ RUN yarn config set network-timeout 300000 && \
     yarn install
 
 # Create necessary directories with correct permissions
-RUN mkdir -p /app/components && \
+RUN mkdir -p /app/src && \
     mkdir -p /app/styles && \
-    mkdir -p /app/pages && \
     mkdir -p /app/public && \
+    mkdir -p /app/build && \
     chown -R node:node /app
 
 # Add node_modules/.bin to PATH
 ENV PATH=/app/node_modules/.bin:$PATH
 
-# Switch to non-root user
-USER node
+# Copy the entire project
+COPY . .
 
 # Expose port
 EXPOSE 3001

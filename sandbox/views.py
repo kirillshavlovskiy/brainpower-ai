@@ -197,7 +197,8 @@ def set_container_permissions(container):
 
 def update_code_internal(container, code, user, file_name, main_file_path):
     files_added = []
-    build_output= []
+    build_output = []
+    installed_packages = []
     try:
         # Update component.js
         set_container_permissions(container)

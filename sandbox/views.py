@@ -162,7 +162,7 @@ def set_container_permissions(container):
         # Check if src directory exists
         check_result = container.exec_run(
             "test -d /app/components || mkdir -p /app/components",
-            user='root'
+            user='node'
         )
 
         # Only try to set permissions for writable directories

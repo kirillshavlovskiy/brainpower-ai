@@ -112,7 +112,7 @@ def exec_command_with_retry(container, command, max_retries=3, delay=1):
 def check_container(request):
     user_id = request.GET.get('user_id', '0')
     file_name = request.GET.get('file_name', 'test-component.js')
-    container_name = f'react_renderer_{user_id}_{file_name}'
+    container_name = f'react_renderer_next_{user_id}_{file_name}'
 
     try:
         container = client.containers.get(container_name)
@@ -487,8 +487,8 @@ def check_or_create_container(request):
     if language != 'react':
         return JsonResponse({'error': 'Unsupported language'}, status=400)
 
-    react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'
-    container_name = f'react_renderer_{user_id}_{file_name}'
+    react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer_next'
+    container_name = f'react_renderer_next_{user_id}_{file_name}'
     app_name = f"{user_id}_{file_name.replace('.', '-')}"
 
     container_info = {

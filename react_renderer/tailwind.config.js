@@ -4,12 +4,10 @@ module.exports = {
     "./src/**/*.{js,jsx,ts,tsx}",
     "./public/index.html"
   ],
-  darkMode: 'class',
+  darkMode: "class",
   theme: {
     extend: {
-      colors: {
-        // Add your custom colors here
-      },
+      // Add your custom theme extensions here
     },
   },
   plugins: [

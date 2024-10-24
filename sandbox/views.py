@@ -220,55 +220,40 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                     else:
                         logger.info(f"Created empty file {import_path} in container")
                         files_added.append(container_path)
+                # Install required packages
+            non_standard_imports = check_non_standard_imports(code)
+            if non_standard_imports:
+                install_packages(container, non_standard_imports)
 
-        # Check for non-standard imports
-        non_standard_imports = check_non_standard_imports(code)
-        if non_standard_imports:
-            logger.info(f"Detected non-standard imports: {', '.join(non_standard_imports)}")
-            installed_packages, failed_packages = install_packages(container, non_standard_imports)
+            # Start the development server
+            exec_result = exec_command_with_retry(container, ["sh", "-c", "cd /app && yarn start"])
+            logger.info(f"Execution result: {exec_result}")
 
-            if failed_packages:
-                logger.warning(f"Some packages failed to install: {', '.join(failed_packages)}")
+            # Process the output
+            output_lines = exec_result.decode().split('\n')
+            build_output = output_lines
+            compilation_status = ContainerStatus.COMPILING
+            for line in output_lines:
+                if "Compiled successfully" in line:
+                    compilation_status = ContainerStatus.READY
+                    break
+                elif "Compiled with warnings" in line:
+                    compilation_status = ContainerStatus.WARNING
+                    break
+                elif "Failed to compile" in line:
+                    compilation_status = ContainerStatus.COMPILATION_FAILED
+                    break
 
-            # You might want to decide here if you want to continue or raise an exception if some packages failed to install
+            # Save compilation status
+            exec_command_with_retry(container, ["sh", "-c", f"echo {compilation_status} > /app/compilation_status"])
+            logger.info(f"Saved compilation status: {compilation_status}")
 
-        else:
-            logger.info("No non-standard imports detected")
+            # Log container status
+            container.reload()
+            logger.info(f"Container status after yarn start: {container.status}")
+            logger.info(f"Container state: {container.attrs['State']}")
 
-        # Start the development server
-        logger.info("Starting the development server with 'yarn start'")
-        exec_result = exec_command_with_retry(container, ["sh", "-c", "cd /app && yarn start"])
-
-        # Process the output
-        output_lines = exec_result.decode().split('\n')
-        build_output = output_lines
-        compilation_status = ContainerStatus.COMPILING
-
-        logger.info("Analyzing build output...")
-        for line in output_lines:
-            if "Compiled successfully" in line:
-                compilation_status = ContainerStatus.READY
-                logger.info("Compilation successful")
-                break
-            elif "Compiled with warnings" in line:
-                compilation_status = ContainerStatus.WARNING
-                logger.warning("Compilation completed with warnings")
-                break
-            elif "Failed to compile" in line:
-                compilation_status = ContainerStatus.COMPILATION_FAILED
-                logger.error("Compilation failed")
-                break
-
-        # Save compilation status
-        exec_command_with_retry(container, ["sh", "-c", f"echo {compilation_status} > /app/compilation_status"])
-        logger.info(f"Saved compilation status: {compilation_status}")
-
-        # Log container status
-        container.reload()
-        logger.info(f"Container status after yarn start: {container.status}")
-        logger.info(f"Container state: {container.attrs['State']}")
-
-        return "\n".join(build_output), files_added, compilation_status
+            return "\n".join(build_output), files_added, compilation_status
 
     except Exception as e:
         logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
@@ -493,7 +478,7 @@ def check_or_create_container(request):
         detailed_logger.log('info', f"Selected port {host_port} for new container")
         try:
             container = client.containers.run(
-                'react_renderer_cra',
+                'react_renderer_prod',
                 command=["sh", "-c", "yarn start"],
                 detach=True,
                 name=container_name,
@@ -597,40 +582,20 @@ def check_or_create_container(request):
             'file_list': detailed_logger.get_file_list(),
         }, status=500)
 
-
 def install_packages(container, packages):
     installed_packages = []
-    failed_packages = []
-
-    logger.info(f"Attempting to install packages: {', '.join(packages)}")
-
     for package in packages:
         try:
-            logger.info(f"Installing package: {package}")
             result = exec_command_with_retry(container, ["yarn", "add", package])
-
             if result.exit_code == 0:
                 installed_packages.append(package)
-                logger.info(f"Successfully installed package: {package}")
+                logger.info(f"Installed package: {package}")
             else:
-                error_output = result.output.decode() if hasattr(result, 'output') else "No error output available"
-                logger.error(
-                    f"Failed to install package {package}. Exit code: {result.exit_code}. Error: {error_output}")
-                failed_packages.append(package)
-
-        except APIError as e:
-            logger.error(f"Docker API error while installing {package}: {str(e)}")
-            failed_packages.append(package)
+                logger.error(f"Failed to install package {package}: {result.output.decode()}")
         except Exception as e:
-            logger.error(f"Unexpected error while installing {package}: {str(e)}", exc_info=True)
-            failed_packages.append(package)
+            logger.error(f"Error installing package {package}: {str(e)}")
+    return installed_packages
 
-    if installed_packages:
-        logger.info(f"Successfully installed packages: {', '.join(installed_packages)}")
-    if failed_packages:
-        logger.warning(f"Failed to install packages: {', '.join(failed_packages)}")
-
-    return installed_packages, failed_packages
 
 def check_non_standard_imports(code):
     import_pattern = r'import\s+(?:{\s*[\w\s,]+\s*}|[\w]+|\*\s+as\s+[\w]+)\s+from\s+[\'"](.+?)[\'"]|require\([\'"](.+?)[\'"]\)'
@@ -639,7 +604,7 @@ def check_non_standard_imports(code):
     standard_packages = {
         'react', 'react-dom', 'prop-types', 'react-router', 'react-router-dom',
         'redux', 'react-redux', 'axios', 'lodash', 'moment', 'styled-components',
-      # Add moment-timezone to the list of standard packages
+        'moment-timezone'  # Add moment-timezone to the list of standard packages
     }
 
     non_standard_imports = []

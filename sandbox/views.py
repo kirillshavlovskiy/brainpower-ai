@@ -494,7 +494,7 @@ def check_or_create_container(request):
         detailed_logger.log('info', f"Selected port {host_port} for new container")
         try:
             container = client.containers.run(
-                'react_renderer_prod',
+                'react_renderer_cra',
                 command=["sh", "-c", "yarn start"],
                 detach=True,
                 name=container_name,

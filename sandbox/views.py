@@ -168,7 +168,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                 exec_result = container.exec_run([
                     "sh", "-c",
                     f"echo {encoded_code} | base64 -d > /app/src/component.js"
-                ])
+                ], user='node')
                 if exec_result.exit_code != 0:
                     raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
                 files_added.append('/app/src/component.js')
@@ -268,7 +268,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         logger.info(f"Container status after yarn start: {container.status}")
         logger.info(f"Container state: {container.attrs['State']}")
 
-        return "\n".join(build_output), files_added, compilation_status
+        return "\n".join(build_output), files_added, installed_packages, compilation_status
 
     except Exception as e:
         logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
@@ -457,7 +457,7 @@ def check_or_create_container(request):
             # Check for local imports
             missing_local_imports = check_local_imports(container, code)
 
-            build_output, files_added, compilation_status = update_code_internal(container, code, user_id, file_name,
+            build_output, files_added, failed_packages, compilation_status = update_code_internal(container, code, user_id, file_name,
                                                                                  main_file_path)
 
             datailed_logs = container.logs(tail=200).decode('utf-8')  # Get last 200 lines of logs
@@ -474,6 +474,7 @@ def check_or_create_container(request):
                 'detailed_logs': detailed_logger.get_logs(),
                 'file_list': file_structure,
                 'installed_packages': installed_packages,
+                'failed_packages': failed_packages,  # New field
                 'files_added': files_added,
                 'compilation_status': compilation_status,  # New field
             })
@@ -509,10 +510,7 @@ def check_or_create_container(request):
                     os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
-                    os.path.join(react_renderer_path, 'tailwind.config.js'): {'bind': '/app/tailwind.config.js', 'mode': 'ro'},
-                    os.path.join(react_renderer_path, 'tsconfig.js'): {'bind': '/app/tsconfig.js', 'mode': 'ro'},
                     os.path.join(react_renderer_path, 'package-lock.json'): {'bind': '/app/package-lock.json', 'mode': 'ro'},
-                    os.path.join(react_renderer_path, 'postcss.config.js'): {'bind': '/app/postcss.config.js', 'mode': 'ro'},
                     os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
                 },
                 ports={'3001/tcp': host_port},
@@ -543,7 +541,7 @@ def check_or_create_container(request):
             # Check for local imports
             missing_local_imports = check_local_imports(container, code)
 
-            build_output, files_added, compilation_status = update_code_internal(container, code, user_id, file_name,
+            build_output, files_added, installed_packages, compilation_status = update_code_internal(container, code, user_id, file_name,
                                                                                  main_file_path)
             container_info['build_status'] = 'updated'
 
@@ -729,7 +727,7 @@ def update_code(request):
         container = client.containers.get(container_id)
 
         # Check if the container is running
-        container.reload()
+        # container.reload()
         if container.status != 'running':
             logger.info(f"Container {container_id} is not running. Attempting to start it.")
             container.start()

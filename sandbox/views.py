@@ -156,11 +156,51 @@ def check_container(request):
         return JsonResponse({'error': str(e)}, status=500)
 
 
+def set_container_permissions(container):
+    """Set proper permissions for container directories with read-only handling"""
+    try:
+        # Check if src directory exists
+        check_result = container.exec_run(
+            "test -d /app/components || mkdir -p /app/components",
+            user='root'
+        )
+
+        # Only try to set permissions for writable directories
+        commands = [
+            "chown -R node:node /app/components",
+            "chmod -R 755 /app/components",
+            "chmod -R g+w /app/components",
+            "touch /app/compilation_status",
+            "chown node:node /app/compilation_status",
+            "chmod 644 /app/compilation_status"
+        ]
+
+        for cmd in commands:
+            try:
+                exec_result = container.exec_run(
+                    ["sh", "-c", cmd],
+                    user='root'
+                )
+                if exec_result.exit_code != 0:
+                    logger.warning(f"Command {cmd} failed with: {exec_result.output.decode()}")
+            except Exception as cmd_error:
+                logger.warning(f"Error executing {cmd}: {str(cmd_error)}")
+                continue
+
+        logger.info("Container permissions set successfully for writable directories")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error setting container permissions: {str(e)}")
+        return False
+
+
 def update_code_internal(container, code, user, file_name, main_file_path):
     files_added = []
     build_output= []
     try:
         # Update component.js
+        set_container_permissions(container)
         encoded_code = base64.b64encode(code.encode()).decode()
         max_attempts = 3
         for attempt in range(max_attempts):

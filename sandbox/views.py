@@ -576,7 +576,7 @@ def check_or_create_container(request):
         try:
             container = client.containers.run(
                 'react_renderer_prod',
-                command=["sh", "-c", "yarn dev"],
+                command=["sh", "-c", "yarn start"],
                 user='root',
                 detach=True,
                 name=container_name,

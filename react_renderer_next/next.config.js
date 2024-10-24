@@ -27,6 +27,23 @@ const nextConfig = {
 
     return config;
   },
+  assetPrefix: process.env.NODE_ENV === 'production'
+    ? `https://${process.env.PORT}.brainpower-ai.net`
+    : '',
+
+  // Public runtime configuration
+  publicRuntimeConfig: {
+    basePath: process.env.NODE_ENV === 'production'
+      ? `https://${process.env.PORT}.brainpower-ai.net`
+      : '',
+  },
+
+  // Static file serving
+  images: {
+    domains: ['brainpower-ai.net'],
+    loader: 'default',
+    path: `https://${process.env.PORT}.brainpower-ai.net/_next/image`
+  },
   compiler: {
     // Enable emotion
     emotion: true

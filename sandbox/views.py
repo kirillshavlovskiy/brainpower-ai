@@ -106,60 +106,80 @@ def exec_command_with_retry(container, command, max_retries=3, delay=1):
             time.sleep(delay)
 
 
+# In views.py - Update container info handling
+
 @api_view(['GET'])
 def check_container(request):
     user_id = request.GET.get('user_id', '0')
     file_name = request.GET.get('file_name', 'test-component.js')
-
     container_name = f'react_renderer_{user_id}_{file_name}'
-
 
     try:
         container = client.containers.get(container_name)
-        # Get the container creation timestamp
-
         container.reload()
+
+        # Basic container info that's always available
         container_info = {
             'container_name': container.name,
-            'created_at': container.attrs['Created'],
+            'created_at': container.attrs.get('Created', 'N/A'),
             'status': container.status,
-            'ports': container.ports,
-            'image': container.image.tags[0] if container.image.tags else 'Unknown',
             'id': container.id
         }
+
+        # Optional container info
+        try:
+            container_info.update({
+                'ports': container.ports or {},
+                'image': container.image.tags[0] if container.image.tags else 'Unknown'
+            })
+        except Exception as e:
+            logger.warning(f"Non-critical container info error: {str(e)}")
+
         if container.status == 'running':
             port_mapping = container.ports.get('3001/tcp')
             file_structure = get_container_file_structure(container)
-            check_result = container.exec_run("test -d /app/components && echo 'exists' || echo 'not found'")
-            logger.info(f"Check /app/components directory result: {check_result.output.decode().strip()}")
-
-
-
-            if check_result:
-                file_structure = get_container_file_structure(container)
-                logger.info(f"Check /app/components directory result: {check_result.output.decode().strip()}")
-                logger.info(f"/app/components directory structure: {file_structure}")
 
             if port_mapping:
                 host_port = port_mapping[0]['HostPort']
-
                 return JsonResponse({
                     'status': 'ready',
                     'container_id': container.id,
                     'container_info': container_info,
                     'url': f"https://{host_port}.{HOST_URL}",
-                    'file_list': file_structure,
-                    'detailed_logs': detailed_logger.get_logs(),
-
+                    'file_list': file_structure or [],
+                    'detailed_logs': container.logs(tail=50).decode('utf-8')
                 })
             else:
-                return JsonResponse({'status': 'not_ready', 'container_id': container.id})
+                return JsonResponse({
+                    'status': 'not_ready',
+                    'container_id': container.id,
+                    'container_info': container_info
+                })
         else:
-            return JsonResponse({'status': 'not_ready', 'container_id': container.id})
+            return JsonResponse({
+                'status': 'not_ready',
+                'container_id': container.id,
+                'container_info': container_info
+            })
+
     except docker.errors.NotFound:
-        return JsonResponse({'status': 'not_found'}, status=404)
+        return JsonResponse({
+            'status': 'not_found',
+            'container_info': {
+                'container_name': container_name,
+                'status': 'not_found'
+            }
+        })
     except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+        logger.error(f"Error checking container: {str(e)}")
+        return JsonResponse({
+            'status': 'error',
+            'error': str(e),
+            'container_info': {
+                'container_name': container_name,
+                'status': 'error'
+            }
+        }, status=500)
 
 
 def set_container_permissions(container):

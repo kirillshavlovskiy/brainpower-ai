@@ -161,15 +161,15 @@ def set_container_permissions(container):
     try:
         # Check if src directory exists
         check_result = container.exec_run(
-            "test -d /app/components || mkdir -p /app/components",
+            "test -d /app/src || mkdir -p /app/src",
             user='node'
         )
 
         # Only try to set permissions for writable directories
         commands = [
-            "chown -R node:node /app/components",
-            "chmod -R 755 /app/components",
-            "chmod -R g+w /app/components",
+            "chown -R node:node /app/src",
+            "chmod -R 755 /app/src",
+            "chmod -R g+w /app/src",
             "touch /app/compilation_status",
             "chown node:node /app/compilation_status",
             "chmod 644 /app/compilation_status"
@@ -179,7 +179,7 @@ def set_container_permissions(container):
             try:
                 exec_result = container.exec_run(
                     ["sh", "-c", cmd],
-                    user='root'
+                    user='node'
                 )
                 if exec_result.exit_code != 0:
                     logger.warning(f"Command {cmd} failed with: {exec_result.output.decode()}")
@@ -554,6 +554,7 @@ def check_or_create_container(request):
                     os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
                 },
                 ports={'3001/tcp': host_port},
+                user='node',
                 mem_limit='8g',
                 memswap_limit='16g',
                 cpu_quota=100000,

@@ -474,7 +474,6 @@ def check_or_create_container(request):
                 'detailed_logs': detailed_logger.get_logs(),
                 'file_list': file_structure,
                 'installed_packages': installed_packages,
-                'failed_packages': failed_packages,  # New field
                 'files_added': files_added,
                 'compilation_status': compilation_status,  # New field
             })
@@ -510,7 +509,10 @@ def check_or_create_container(request):
                     os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
+                    os.path.join(react_renderer_path, 'tailwind.config.js'): {'bind': '/app/tailwind.config.js', 'mode': 'ro'},
+                    os.path.join(react_renderer_path, 'tsconfig.js'): {'bind': '/app/tsconfig.js', 'mode': 'ro'},
                     os.path.join(react_renderer_path, 'package-lock.json'): {'bind': '/app/package-lock.json', 'mode': 'ro'},
+                    os.path.join(react_renderer_path, 'postcss.config.js'): {'bind': '/app/postcss.config.js', 'mode': 'ro'},
                     os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
                 },
                 ports={'3001/tcp': host_port},

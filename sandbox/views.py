@@ -425,34 +425,62 @@ def get_compilation_status(container):
 @api_view(['GET'])
 def check_container_ready(request):
     container_id = request.GET.get('container_id')
+    user_id = request.GET.get('user_id', 'default')
+    file_name = request.GET.get('file_name')
+
+    logger.info(f"Checking container ready: container_id={container_id}, user_id={user_id}, file_name={file_name}")
+
     if not container_id:
-        return JsonResponse({
-            'status': 'error',
-            'message': 'No container ID provided',
-            'progress': 0
-        }, status=400)
+        logger.error("No container ID provided")
+        return JsonResponse({'status': ContainerStatus.ERROR, 'error': 'No container ID provided'}, status=400)
 
     try:
         container = client.containers.get(container_id)
         container.reload()
+        logger.info(f"Container status: {container.status}")
 
-        logs = container.logs(tail=50).decode('utf-8').strip()
-        status = get_build_status(logs)
-        progress = calculate_build_progress(status, logs)
+        compilation_status = get_compilation_status(container)
+        logger.info(f"!!!!!!!!!!!!Compilation status: {compilation_status}")
 
-        return JsonResponse({
-            'status': status,
-            'log': get_latest_log_message(logs),
-            'progress': progress,
-            'detailed_logs': logs.split('\n')
-        })
+        if not compilation_status:
+            compilation_status = ContainerStatus.COMPILING
 
+        all_logs = container.logs(stdout=True, stderr=True).decode('utf-8').strip()
+        recent_logs = container.logs(stdout=True, stderr=True, tail=50).decode('utf-8').strip()
+        latest_log = recent_logs.split('\n')[-1] if recent_logs else "No recent logs"
+
+        if container.status != 'running':
+            return JsonResponse({'status': ContainerStatus.CREATING, 'log': latest_log})
+
+        port_mapping = container.ports.get('3001/tcp')
+        if not port_mapping:
+            return JsonResponse({'status': ContainerStatus.BUILDING, 'log': latest_log})
+
+        host_port = port_mapping[0]['HostPort']
+        dynamic_url = f"https://{host_port}.{HOST_URL}"
+
+        response_data = {
+            'status': compilation_status,
+            'url': dynamic_url,
+            'log': latest_log,
+            'detailed_logs': all_logs
+        }
+
+        if compilation_status == ContainerStatus.WARNING:
+            warnings = re.findall(r"warning.*\n.*\n.*\n", all_logs, re.IGNORECASE)
+            response_data['warnings'] = warnings
+
+        if compilation_status == ContainerStatus.COMPILATION_FAILED:
+            errors = re.findall(r"error.*\n.*\n.*\n", all_logs, re.IGNORECASE)
+            response_data['errors'] = errors
+
+        return JsonResponse(response_data)
+
+    except docker.errors.NotFound:
+        return JsonResponse({'status': ContainerStatus.NOT_FOUND, 'log': 'Container not found'}, status=404)
     except Exception as e:
-        return JsonResponse({
-            'status': 'error',
-            'message': str(e),
-            'progress': 0
-        }, status=500)
+        logger.error(f"Error checking container status: {str(e)}", exc_info=True)
+        return JsonResponse({'status': ContainerStatus.ERROR, 'error': str(e), 'log': str(e)}, status=500)
 
 @api_view(['GET'])
 def get_container_logs(request):
@@ -594,7 +622,7 @@ def check_or_create_container(request):
         try:
             container = client.containers.run(
                 'react_renderer_cra',
-                command=["sh", "-c", "yarn start"],
+                command=["sh", "-c", "rm -f /app/package-lock.json && yarn start"],
                 detach=True,
                 name=container_name,
                 environment={
@@ -608,7 +636,9 @@ def check_or_create_container(request):
                 volumes={
                     os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
+                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'yarn.lock'): {'bind': '/app/yarn.lock', 'mode': 'rw'},
+
                     os.path.join(react_renderer_path, 'tailwind.config.js'): {'bind': '/app/tailwind.config.js', 'mode': 'ro'},
                     os.path.join(react_renderer_path, 'tsconfig.js'): {'bind': '/app/tsconfig.js', 'mode': 'ro'},
                     os.path.join(react_renderer_path, 'postcss.config.js'): {'bind': '/app/postcss.config.js', 'mode': 'ro'},
@@ -630,6 +660,9 @@ def check_or_create_container(request):
                 'detailed_logs': detailed_logger.get_logs(),
                 'file_list': detailed_logger.get_file_list(),
             }, status=500)
+
+            # Prepare container environment
+        prepare_container_environment(container)
 
         try:
 
@@ -700,45 +733,97 @@ def check_or_create_container(request):
         }, status=500)
 
 
-def install_packages(container, packages):
-    installed_packages = []
-    failed_packages = []
-
+def prepare_container_environment(container):
+    """Prepare container environment before running packages installation"""
     try:
-        # First, clean yarn cache
-        clean_cache = container.exec_run("yarn cache clean")
-        if clean_cache.exit_code != 0:
-            logger.warning(f"Failed to clean yarn cache: {clean_cache.output.decode()}")
+        # Change ownership of app directory
+        container.exec_run("chown -R node:node /app")
 
         # Remove package-lock.json to avoid conflicts
-        remove_lock = container.exec_run("rm -f package-lock.json")
-        if remove_lock.exit_code != 0:
-            logger.warning(f"Failed to remove package-lock.json: {remove_lock.output.decode()}")
+        container.exec_run("rm -f /app/package-lock.json")
+
+        # Ensure node_modules has correct permissions
+        container.exec_run([
+            "sh", "-c",
+            "mkdir -p /app/node_modules && chown -R node:node /app/node_modules"
+        ])
+
+        # Clear yarn cache
+        container.exec_run("yarn cache clean")
+
+        return True
+    except Exception as e:
+        logger.error(f"Error preparing container environment: {e}")
+        return False
+
+
+def install_peer_dependencies(container):
+    """Install common peer dependencies"""
+    peer_deps = [
+        "react-refresh@^0.14.0",
+        "eslint@^8.0.0",
+        "@babel/plugin-syntax-flow@^7.14.5",
+        "@babel/plugin-transform-react-jsx@^7.14.9"
+    ]
+
+    for dep in peer_deps:
+        try:
+            result = container.exec_run(
+                [
+                    "sh", "-c",
+                    f"cd /app && yarn add {dep} --dev --ignore-engines"
+                ],
+                user="node"
+            )
+            if result.exit_code != 0:
+                logger.warning(f"Failed to install peer dependency {dep}")
+        except Exception as e:
+            logger.error(f"Error installing peer dependency {dep}: {str(e)}")
+
+
+def install_packages(container, packages):
+    """Install packages in container with proper error handling"""
+    try:
+        # Prepare environment first
+        if not prepare_container_environment(container):
+            raise Exception("Failed to prepare container environment")
+
+        installed = []
+        failed = []
 
         for package in packages:
-            logger.info(f"Installing package: {package}")
             try:
-                # Add force flag to bypass cache issues
-                result = exec_command_with_retry(container, ["yarn", "add", package, "--force"])
+                # Install package as node user with proper permissions
+                result = container.exec_run(
+                    [
+                        "sh", "-c",
+                        f"cd /app && yarn add {package} --ignore-engines --network-timeout 100000"
+                    ],
+                    user="node"
+                )
 
                 if result.exit_code == 0:
-                    installed_packages.append(package)
-                    logger.info(f"Successfully installed package: {package}")
+                    logger.info(f"Successfully installed {package}")
+                    installed.append(package)
                 else:
-                    error_output = result.output.decode() if hasattr(result, 'output') else "No error output available"
-                    logger.error(
-                        f"Failed to install package {package}. Exit code: {result.exit_code}. Error: {error_output}")
-                    failed_packages.append(package)
+                    error_msg = result.output.decode()
+                    logger.error(f"Failed to install {package}: {error_msg}")
+                    failed.append(package)
 
             except Exception as e:
-                logger.error(f"Error installing package {package}: {str(e)}")
-                failed_packages.append(package)
+                logger.error(f"Error installing {package}: {str(e)}")
+                failed.append(package)
 
-        return installed_packages, failed_packages
+        # Install peer dependencies if needed
+        install_peer_dependencies(container)
+
+        return installed, failed
 
     except Exception as e:
-        logger.error(f"Error in package installation: {str(e)}")
-        return installed_packages, failed_packages
+        logger.error(f"Package installation failed: {str(e)}")
+        return [], [str(p) for p in packages]
+
+
 
 def check_non_standard_imports(code):
     import_pattern = r'import\s+(?:{\s*[\w\s,]+\s*}|[\w]+|\*\s+as\s+[\w]+)\s+from\s+[\'"](.+?)[\'"]|require\([\'"](.+?)[\'"]\)'

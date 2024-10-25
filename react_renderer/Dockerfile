@@ -47,9 +47,6 @@ COPY src/ ./src/
 COPY public/ ./public/
 COPY build/ ./build/
 
-# Copy any additional configuration files needed for build
-COPY config/ ./config/
-
 # Create build directory with correct permissions
 RUN mkdir -p /app/build && \
     chown -R node:node /app && \

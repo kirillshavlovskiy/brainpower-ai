@@ -525,6 +525,12 @@ def check_or_create_container(request):
         return JsonResponse({'error': 'Missing required fields'}, status=400)
     if language != 'react':
         return JsonResponse({'error': 'Unsupported language'}, status=400)
+        # Add validation
+    if not file_name or not isinstance(file_name, str):
+        return JsonResponse({
+            'error': 'Invalid or missing file name',
+            'details': f'Received file_name: {file_name}'
+        }, status=400)
 
     react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'
     container_name = f'react_renderer_{user_id}_{file_name}'

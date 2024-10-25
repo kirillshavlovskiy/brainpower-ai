@@ -102,17 +102,26 @@ def exec_command_with_retry(container, command, max_retries=3, delay=1):
 
 @api_view(['GET'])
 def check_container(request):
+    # Log incoming request details
+    logger.info("=== Container Check Request Received ===")
     user_id = request.GET.get('user_id', '0')
     file_name = request.GET.get('file_name', 'test-component.js')
+    logger.info(f"Request parameters - user_id: {user_id}, file_name: {file_name}")
 
     container_name = f'react_renderer_{user_id}_{file_name}'
-
+    logger.info(f"Looking for container: {container_name}")
 
     try:
+        # Log container lookup attempt
+        logger.info(f"Attempting to get container with name: {container_name}")
         container = client.containers.get(container_name)
-        # Get the container creation timestamp
+        logger.info(f"Container found with ID: {container.id}")
 
+        # Log container reload attempt
+        logger.info("Reloading container information...")
         container.reload()
+
+        # Collect and log container information
         container_info = {
             'container_name': container.name,
             'created_at': container.attrs['Created'],
@@ -121,39 +130,110 @@ def check_container(request):
             'image': container.image.tags[0] if container.image.tags else 'Unknown',
             'id': container.id
         }
+        logger.info(f"Container info collected: {json.dumps(container_info, indent=2)}")
+
         if container.status == 'running':
+            logger.info("Container is running, checking port mapping...")
             port_mapping = container.ports.get('3001/tcp')
-            file_structure = get_container_file_structure(container)
+            logger.info(f"Port mapping found: {port_mapping}")
+
+            # Check /app/src directory
+            logger.info("Checking /app/src directory...")
             check_result = container.exec_run("test -d /app/src && echo 'exists' || echo 'not found'")
-            logger.info(f"Check /app/src directory result: {check_result.output.decode().strip()}")
+            check_output = check_result.output.decode().strip()
+            logger.info(f"Directory check result: {check_output}")
 
-
-
-            if check_result:
-                file_structure = get_container_file_structure(container)
-                logger.info(f"Check /app/src directory result: {check_result.output.decode().strip()}")
-                logger.info(f"/app/src directory structure: {file_structure}")
+            # Get file structure
+            logger.info("Getting container file structure...")
+            file_structure = get_container_file_structure(container)
+            logger.info(
+                f"File structure retrieved: {json.dumps(file_structure, indent=2) if file_structure else 'None'}")
 
             if port_mapping:
                 host_port = port_mapping[0]['HostPort']
+                logger.info(f"Host port found: {host_port}")
 
-                return JsonResponse({
+                response_data = {
                     'status': 'ready',
                     'container_id': container.id,
                     'container_info': container_info,
                     'url': f"https://{host_port}.{HOST_URL}",
                     'file_list': file_structure,
                     'detailed_logs': detailed_logger.get_logs(),
-
-                })
+                }
+                logger.info("Returning success response with container information")
+                logger.info(f"Response URL: {response_data['url']}")
+                return JsonResponse(response_data)
             else:
-                return JsonResponse({'status': 'not_ready', 'container_id': container.id})
+                logger.warning("Container running but no port mapping found")
+                return JsonResponse({
+                    'status': 'not_ready',
+                    'container_id': container.id,
+                    'reason': 'No port mapping found'
+                })
         else:
-            return JsonResponse({'status': 'not_ready', 'container_id': container.id})
+            logger.warning(f"Container found but not running. Status: {container.status}")
+            return JsonResponse({
+                'status': 'not_ready',
+                'container_id': container.id,
+                'reason': f'Container status is {container.status}'
+            })
+
     except docker.errors.NotFound:
-        return JsonResponse({'status': 'not_found'}, status=404)
+        logger.warning(f"Container not found: {container_name}")
+        return JsonResponse({
+            'status': 'not_found',
+            'message': f'No container found with name: {container_name}'
+        }, status=404)
     except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+        logger.error(f"Unexpected error checking container: {str(e)}")
+        logger.error(traceback.format_exc())  # Log full traceback
+        return JsonResponse({
+            'error': str(e),
+            'details': traceback.format_exc()
+        }, status=500)
+    finally:
+        logger.info("=== Container Check Request Completed ===\n")
+
+
+# Helper function to get file structure with logging
+def get_container_file_structure(container):
+    logger.info("Starting file structure retrieval...")
+    try:
+        exec_result = container.exec_run("find /app/src -printf '%P\\t%s\\t%T@\\t%y\\n'")
+        logger.info(f"Find command exit code: {exec_result.exit_code}")
+
+        if exec_result.exit_code == 0:
+            output = exec_result.output.decode()
+            logger.info(f"Raw find command output: {output}")
+
+            files = []
+            for line in output.strip().split('\n'):
+                if line.strip():  # Skip empty lines
+                    try:
+                        parts = line.split(maxsplit=3)
+                        if len(parts) == 4:
+                            path, size, timestamp, type = parts
+                            files.append({
+                                'path': path,
+                                'size': int(size),
+                                'created_at': datetime.fromtimestamp(float(timestamp)).isoformat(),
+                                'type': 'file' if type == 'f' else 'folder'
+                            })
+                    except Exception as e:
+                        logger.error(f"Error processing line '{line}': {str(e)}")
+
+            logger.info(f"Processed {len(files)} files/directories")
+            return files
+        else:
+            logger.error(f"Find command failed with exit code: {exec_result.exit_code}")
+            logger.error(f"Error output: {exec_result.output.decode()}")
+            return []
+
+    except Exception as e:
+        logger.error(f"Error in get_container_file_structure: {str(e)}")
+        logger.error(traceback.format_exc())
+        return []
 
 
 def set_container_permissions(container):

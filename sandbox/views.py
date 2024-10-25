@@ -75,29 +75,74 @@ import time
 from docker.errors import NotFound, APIError
 
 
-def exec_command_with_retry(container, command, max_retries=3, delay=1):
+def exec_command_with_retry(container, command, max_retries=3):
+    """Execute command with retry logic and container state check"""
     for attempt in range(max_retries):
         try:
-            container.reload()  # Refresh container status
+            # Reload container status
+            container.reload()
+
+            # Check if container is running
             if container.status != 'running':
-                logger.info(f"Container {container.id} is not running. Attempting to start it.")
+                logger.info(f"Container {container.id} is not running, attempting to start...")
                 container.start()
                 container.reload()
-                time.sleep(5)  # Wait for container to fully start
+                # Wait for container to be fully started
+                time.sleep(5)
 
-            exec_id = container.client.api.exec_create(container.id, command)
-            output = container.client.api.exec_start(exec_id)
-            exec_info = container.client.api.exec_inspect(exec_id)
+            # Check again if container is running after potential start
+            if container.status != 'running':
+                raise Exception(f"Container failed to start, status: {container.status}")
 
-            if exec_info['ExitCode'] != 0:
-                raise Exception(f"Command failed with exit code {exec_info['ExitCode']}: {output.decode()}")
+            # Execute command
+            result = container.exec_run(command)
+            return result
 
-            return output  # This is already bytes
+        except docker.errors.APIError as e:
+            if "is not running" in str(e) and attempt < max_retries - 1:
+                logger.warning(f"Container not running on attempt {attempt + 1}, retrying...")
+                time.sleep(2)
+                continue
+            raise
         except Exception as e:
-            if attempt == max_retries - 1:
-                raise
-            logger.warning(f"Attempt {attempt + 1} failed: {str(e)}. Retrying in {delay} seconds...")
-            time.sleep(delay)
+            if attempt < max_retries - 1:
+                logger.warning(f"Command failed on attempt {attempt + 1}: {str(e)}, retrying...")
+                time.sleep(2)
+                continue
+            raise
+
+
+def update_code_internal(container, code, user, file_name, main_file_path):
+    try:
+        # First ensure container is running
+        container.reload()
+        if container.status != 'running':
+            logger.info(f"Container {container.id} not running, attempting to start...")
+            container.start()
+            time.sleep(5)  # Wait for container to fully start
+
+        encoded_code = base64.b64encode(code.encode()).decode()
+
+
+
+        if exec_result.exit_code != 0:
+            raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
+
+        logger.info(f"Updated component.js in container with content from {file_name}")
+
+        # Execute the build with retry
+        build_result = exec_command_with_retry(container, [
+            "sh", "-c", "cd /app && yarn start"
+        ])
+
+        if build_result.exit_code != 0:
+            raise Exception(f"Failed to build project: {build_result.output.decode()}")
+
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to update code: {str(e)}")
+        raise
 
 
 @api_view(['GET'])
@@ -280,16 +325,27 @@ def update_code_internal(container, code, user, file_name, main_file_path):
     build_output = []
     installed_packages = []
     try:
-        # Update component.js
+
+
         set_container_permissions(container)
+
+        container.reload()
+        if container.status != 'running':
+            logger.info(f"Container {container.id} not running, attempting to start...")
+            container.start()
+            time.sleep(5)  # Wait for container to fully start
+
+        # Update component.js
         encoded_code = base64.b64encode(code.encode()).decode()
         max_attempts = 3
         for attempt in range(max_attempts):
             try:
-                exec_result = container.exec_run([
+                # Use the retry function for execution
+                exec_result = exec_command_with_retry(container, [
                     "sh", "-c",
                     f"echo {encoded_code} | base64 -d > /app/src/component.js"
                 ])
+
                 if exec_result.exit_code != 0:
                     raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
                 files_added.append('/app/src/component.js')
@@ -358,7 +414,9 @@ def update_code_internal(container, code, user, file_name, main_file_path):
 
         # Start the development server
         logger.info("Starting the development server with 'yarn start'")
-        exec_result = exec_command_with_retry(container, ["sh", "-c", "cd /app && yarn start"])
+        exec_result = exec_command_with_retry(container, [
+            "sh", "-c", "cd /app && yarn start"
+        ])
 
         # Process the output
         output_lines = exec_result.decode().split('\n')

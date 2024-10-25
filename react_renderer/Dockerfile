@@ -45,13 +45,15 @@ RUN yarn config set network-timeout 300000 && \
 # Copy source files and public assets
 COPY src/ ./src/
 COPY public/ ./public/
+COPY build/ ./build/
 
 # Copy any additional configuration files needed for build
-COPY config/ ./config/  # if you have a config directory
+COPY config/ ./config/
 
 # Create build directory with correct permissions
 RUN mkdir -p /app/build && \
-    chown -R node:node /app
+    chown -R node:node /app && \
+    chmod -R 755 /app/node_modules
 
 # Add node_modules/.bin to PATH
 ENV PATH=/app/node_modules/.bin:$PATH

@@ -425,62 +425,34 @@ def get_compilation_status(container):
 @api_view(['GET'])
 def check_container_ready(request):
     container_id = request.GET.get('container_id')
-    user_id = request.GET.get('user_id', 'default')
-    file_name = request.GET.get('file_name')
-
-    logger.info(f"Checking container ready: container_id={container_id}, user_id={user_id}, file_name={file_name}")
-
     if not container_id:
-        logger.error("No container ID provided")
-        return JsonResponse({'status': ContainerStatus.ERROR, 'error': 'No container ID provided'}, status=400)
+        return JsonResponse({
+            'status': 'error',
+            'message': 'No container ID provided',
+            'progress': 0
+        }, status=400)
 
     try:
         container = client.containers.get(container_id)
         container.reload()
-        logger.info(f"Container status: {container.status}")
 
-        compilation_status = get_compilation_status(container)
-        logger.info(f"Compilation status: {compilation_status}")
+        logs = container.logs(tail=50).decode('utf-8').strip()
+        status = get_build_status(logs)
+        progress = calculate_build_progress(status, logs)
 
-        if not compilation_status:
-            compilation_status = ContainerStatus.COMPILING
+        return JsonResponse({
+            'status': status,
+            'log': get_latest_log_message(logs),
+            'progress': progress,
+            'detailed_logs': logs.split('\n')
+        })
 
-        all_logs = container.logs(stdout=True, stderr=True).decode('utf-8').strip()
-        recent_logs = container.logs(stdout=True, stderr=True, tail=50).decode('utf-8').strip()
-        latest_log = recent_logs.split('\n')[-1] if recent_logs else "No recent logs"
-
-        if container.status != 'running':
-            return JsonResponse({'status': ContainerStatus.CREATING, 'log': latest_log})
-
-        port_mapping = container.ports.get('3001/tcp')
-        if not port_mapping:
-            return JsonResponse({'status': ContainerStatus.BUILDING, 'log': latest_log})
-
-        host_port = port_mapping[0]['HostPort']
-        dynamic_url = f"https://{host_port}.{HOST_URL}"
-
-        response_data = {
-            'status': compilation_status,
-            'url': dynamic_url,
-            'log': latest_log,
-            'detailed_logs': all_logs
-        }
-
-        if compilation_status == ContainerStatus.WARNING:
-            warnings = re.findall(r"warning.*\n.*\n.*\n", all_logs, re.IGNORECASE)
-            response_data['warnings'] = warnings
-
-        if compilation_status == ContainerStatus.COMPILATION_FAILED:
-            errors = re.findall(r"error.*\n.*\n.*\n", all_logs, re.IGNORECASE)
-            response_data['errors'] = errors
-
-        return JsonResponse(response_data)
-
-    except docker.errors.NotFound:
-        return JsonResponse({'status': ContainerStatus.NOT_FOUND, 'log': 'Container not found'}, status=404)
     except Exception as e:
-        logger.error(f"Error checking container status: {str(e)}", exc_info=True)
-        return JsonResponse({'status': ContainerStatus.ERROR, 'error': str(e), 'log': str(e)}, status=500)
+        return JsonResponse({
+            'status': 'error',
+            'message': str(e),
+            'progress': 0
+        }, status=500)
 
 @api_view(['GET'])
 def get_container_logs(request):

@@ -732,35 +732,41 @@ def install_packages(container, packages):
     installed_packages = []
     failed_packages = []
 
-    logger.info(f"Attempting to install packages: {', '.join(packages)}")
+    try:
+        # First, clean yarn cache
+        clean_cache = container.exec_run("yarn cache clean")
+        if clean_cache.exit_code != 0:
+            logger.warning(f"Failed to clean yarn cache: {clean_cache.output.decode()}")
 
-    for package in packages:
-        try:
+        # Remove package-lock.json to avoid conflicts
+        remove_lock = container.exec_run("rm -f package-lock.json")
+        if remove_lock.exit_code != 0:
+            logger.warning(f"Failed to remove package-lock.json: {remove_lock.output.decode()}")
+
+        for package in packages:
             logger.info(f"Installing package: {package}")
-            result = exec_command_with_retry(container, ["yarn", "add", package])
+            try:
+                # Add force flag to bypass cache issues
+                result = exec_command_with_retry(container, ["yarn", "add", package, "--force"])
 
-            if result.exit_code == 0:
-                installed_packages.append(package)
-                logger.info(f"Successfully installed package: {package}")
-            else:
-                error_output = result.output.decode() if hasattr(result, 'output') else "No error output available"
-                logger.error(
-                    f"Failed to install package {package}. Exit code: {result.exit_code}. Error: {error_output}")
+                if result.exit_code == 0:
+                    installed_packages.append(package)
+                    logger.info(f"Successfully installed package: {package}")
+                else:
+                    error_output = result.output.decode() if hasattr(result, 'output') else "No error output available"
+                    logger.error(
+                        f"Failed to install package {package}. Exit code: {result.exit_code}. Error: {error_output}")
+                    failed_packages.append(package)
+
+            except Exception as e:
+                logger.error(f"Error installing package {package}: {str(e)}")
                 failed_packages.append(package)
 
-        except APIError as e:
-            logger.error(f"Docker API error while installing {package}: {str(e)}")
-            failed_packages.append(package)
-        except Exception as e:
-            logger.error(f"Unexpected error while installing {package}: {str(e)}", exc_info=True)
-            failed_packages.append(package)
+        return installed_packages, failed_packages
 
-    if installed_packages:
-        logger.info(f"Successfully installed packages: {', '.join(installed_packages)}")
-    if failed_packages:
-        logger.warning(f"Failed to install packages: {', '.join(failed_packages)}")
-
-    return installed_packages, failed_packages
+    except Exception as e:
+        logger.error(f"Error in package installation: {str(e)}")
+        return installed_packages, failed_packages
 
 def check_non_standard_imports(code):
     import_pattern = r'import\s+(?:{\s*[\w\s,]+\s*}|[\w]+|\*\s+as\s+[\w]+)\s+from\s+[\'"](.+?)[\'"]|require\([\'"](.+?)[\'"]\)'

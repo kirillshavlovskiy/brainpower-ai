@@ -35,7 +35,7 @@ COPY tsconfig.json ./
 COPY tailwind.config.js ./
 COPY postcss.config.js ./
 COPY .babelrc ./
-COPY webpack.config.js ./  # if you have one
+COPY webpack.config.js ./
 
 # Configure yarn and install dependencies
 RUN yarn config set network-timeout 300000 && \

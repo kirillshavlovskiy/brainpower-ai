@@ -622,7 +622,7 @@ def check_or_create_container(request):
         try:
             container = client.containers.run(
                 'react_renderer_cra',
-                command=["sh", "-c", "rm -f /app/package-lock.json && yarn start"],
+                command=["sh", "-c", "yarn start"],
                 detach=True,
                 name=container_name,
                 environment={

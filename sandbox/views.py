@@ -694,12 +694,6 @@ def check_or_create_container(request):
                 volumes={
                     os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'yarn.lock'): {'bind': '/app/yarn.lock', 'mode': 'rw'},
-
-                    os.path.join(react_renderer_path, 'tailwind.config.js'): {'bind': '/app/tailwind.config.js', 'mode': 'ro'},
-                    os.path.join(react_renderer_path, 'tsconfig.js'): {'bind': '/app/tsconfig.js', 'mode': 'ro'},
-                    os.path.join(react_renderer_path, 'postcss.config.js'): {'bind': '/app/postcss.config.js', 'mode': 'ro'},
                     os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
                 },
                 ports={'3001/tcp': host_port},

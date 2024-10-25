@@ -45,7 +45,7 @@ RUN yarn config set network-timeout 300000 && \
 # Copy source files and public assets
 COPY src/ ./src/
 COPY public/ ./public/
-COPY build/ ./build/
+
 
 # Create build directory with correct permissions
 RUN mkdir -p /app/build && \

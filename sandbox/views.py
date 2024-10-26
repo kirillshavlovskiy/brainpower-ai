@@ -521,91 +521,95 @@ def get_compilation_status(container):
 @api_view(['GET'])
 def check_container_ready(request):
     container_id = request.GET.get('container_id')
-    user_id = request.GET.get('user_id', 'default')
-    file_name = request.GET.get('file_name')
-
-    def get_container_output(result):
-        """Safely get container command output"""
-        if hasattr(result, 'output'):
-            if hasattr(result.output, 'decode'):
-                return result.output.decode()
-            return str(result.output)
-        return str(result)
-
-    logger.info(f"Checking container ready: container_id={container_id}, user_id={user_id}, file_name={file_name}")
-
     if not container_id:
-        logger.error("No container ID provided")
-        return JsonResponse({'status': ContainerStatus.ERROR, 'error': 'No container ID provided'}, status=400)
+        return JsonResponse({'error': 'No container ID provided'}, status=400)
 
     try:
         container = client.containers.get(container_id)
         container.reload()
-        logger.info(f"Container status: {container.status}")
-
-        # Get initial container logs
         logs = container.logs(tail=50).decode('utf-8').strip()
-        latest_log = logs.split('\n')[-1] if logs else "No logs available"
 
-        # Check basic container status first
-        if container.status != 'running':
+        # Check for successful compilation markers
+        if ('Compiled successfully' in logs or 'webpack compiled successfully' in logs):
+            # Check for warnings
+            if 'WARNING in' in logs:
+                return JsonResponse({
+                    'status': 'warning',
+                    'url': f"https://{container.ports['3001/tcp'][0]['HostPort']}.{HOST_URL}",
+                    'warnings': extract_warnings(logs),
+                    'detailed_logs': logs
+                })
+            else:
+                return JsonResponse({
+                    'status': 'ready',
+                    'url': f"https://{container.ports['3001/tcp'][0]['HostPort']}.{HOST_URL}",
+                    'detailed_logs': logs
+                })
+
+        # Check if server is actually accepting connections
+        if 'Accepting connections at http://localhost:3001' in logs:
             return JsonResponse({
-                'status': ContainerStatus.CREATING,
-                'message': 'Container is starting up...',
-                'log': latest_log
+                'status': 'ready',
+                'url': f"https://{container.ports['3001/tcp'][0]['HostPort']}.{HOST_URL}",
+                'detailed_logs': logs
             })
 
-        # Check if yarn is running
-        ps_result = container.exec_run("ps aux | grep yarn")
-        if ps_result.exit_code != 0 or "yarn start" not in get_container_output(ps_result):
+        # Still compiling/building
+        if 'Compiling...' in logs:
             return JsonResponse({
-                'status': ContainerStatus.COMPILING,
-                'message': 'Starting development server...',
-                'log': latest_log
+                'status': 'compiling',
+                'message': 'Compiling application...',
+                'detailed_logs': logs
             })
 
-        compilation_status = get_compilation_status(container)
-        logger.info(f"Compilation status: {compilation_status}")
+        # Check for compilation failures
+        if 'Failed to compile' in logs:
+            return JsonResponse({
+                'status': 'compilation_failed',
+                'error': extract_errors(logs),
+                'detailed_logs': logs
+            })
 
-        if not compilation_status:
-            compilation_status = ContainerStatus.COMPILING
+        # Default to checking container status
+        if container.status == 'running':
+            port_mapping = container.ports.get('3001/tcp')
+            if port_mapping:
+                return JsonResponse({
+                    'status': 'ready',
+                    'url': f"https://{port_mapping[0]['HostPort']}.{HOST_URL}",
+                    'detailed_logs': logs
+                })
 
-        all_logs = container.logs(stdout=True, stderr=True).decode('utf-8').strip()
-        recent_logs = container.logs(stdout=True, stderr=True, tail=50).decode('utf-8').strip()
-        latest_log = recent_logs.split('\n')[-1] if recent_logs else "No recent logs"
-
-        if container.status != 'running':
-            return JsonResponse({'status': ContainerStatus.CREATING, 'log': latest_log})
-
-        port_mapping = container.ports.get('3001/tcp')
-        if not port_mapping:
-            return JsonResponse({'status': ContainerStatus.BUILDING, 'log': latest_log})
-
-        host_port = port_mapping[0]['HostPort']
-        dynamic_url = f"https://{host_port}.{HOST_URL}"
-
-        response_data = {
-            'status': compilation_status,
-            'url': dynamic_url,
-            'log': latest_log,
-            'detailed_logs': all_logs
-        }
-
-        if compilation_status == ContainerStatus.WARNING:
-            warnings = re.findall(r"warning.*\n.*\n.*\n", all_logs, re.IGNORECASE)
-            response_data['warnings'] = warnings
-
-        if compilation_status == ContainerStatus.COMPILATION_FAILED:
-            errors = re.findall(r"error.*\n.*\n.*\n", all_logs, re.IGNORECASE)
-            response_data['errors'] = errors
-
-        return JsonResponse(response_data)
+        return JsonResponse({
+            'status': container.status,
+            'message': 'Container is starting...',
+            'detailed_logs': logs
+        })
 
     except docker.errors.NotFound:
-        return JsonResponse({'status': ContainerStatus.NOT_FOUND, 'log': 'Container not found'}, status=404)
+        return JsonResponse({'status': 'not_found', 'message': 'Container not found'}, status=404)
     except Exception as e:
-        logger.error(f"Error checking container status: {str(e)}", exc_info=True)
-        return JsonResponse({'status': ContainerStatus.ERROR, 'error': str(e), 'log': str(e)}, status=500)
+        return JsonResponse({
+            'status': 'error',
+            'message': str(e),
+            'detailed_logs': traceback.format_exc()
+        }, status=500)
+
+
+def extract_warnings(logs):
+    warnings = []
+    for line in logs.split('\n'):
+        if line.startswith('WARNING in'):
+            warnings.append(line)
+    return warnings
+
+
+def extract_errors(logs):
+    errors = []
+    for line in logs.split('\n'):
+        if 'ERROR in' in line:
+            errors.append(line)
+    return errors
 
 
 @api_view(['GET'])

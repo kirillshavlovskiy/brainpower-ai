@@ -434,8 +434,13 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                 break
 
         # Save compilation status
-        exec_command_with_retry(container, ["sh", "-c", f"echo {compilation_status} > /app/compilation_status"])
-        logger.info(f"Saved compilation status: {compilation_status}")
+        status_result = exec_command_with_retry(container, [
+            "sh", "-c",
+            f"echo {compilation_status} > /app/compilation_status"
+        ])
+
+        if status_result.exit_code != 0:
+            logger.warning(f"Failed to save compilation status: {get_container_output(status_result)}")
 
         # Log container status
         container.reload()

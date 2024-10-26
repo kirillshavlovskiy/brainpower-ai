@@ -748,13 +748,12 @@ def check_or_create_container(request):
     except docker.errors.NotFound:
         detailed_logger.log('info', f"Container {container_name} not found. Creating new container.")
         host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
-        detailed_logger.log('info', f"Selected port {host_port} for new container")
 
         try:
-            container = client.containers.run(
+            # First create container without starting it
+            container = client.containers.create(
                 'react_renderer_cra',
-                command=["sh", "-c", "yarn start"],
-                detach=True,
+                command=["sh", "-c", "yarn install && yarn start"],
                 name=container_name,
                 environment={
                     'USER_ID': user_id,
@@ -767,92 +766,82 @@ def check_or_create_container(request):
                 volumes={
                     os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
+                    os.path.join(react_renderer_path, 'yarn.lock'): {'bind': '/app/yarn.lock', 'mode': 'ro'},
                     os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
                 },
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',
                 memswap_limit='16g',
                 cpu_quota=100000,
-                restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
+                restart_policy={"Name": "on-failure", "MaximumRetryCount": 5},
+                detach=True
             )
-            detailed_logger.log('info', f"New container created: {container_name}")
-            container_info['build_status'] = 'created'
 
-            # Prepare container environment
-            prepare_container_environment(container)
+            # Start container with timeout
+            container.start()
 
+            # Wait for container to be ready with timeout
+            start_time = time.time()
+            timeout = 30  # 30 seconds timeout
+
+            while time.time() - start_time < timeout:
+                container.reload()
+                logs = container.logs().decode('utf-8')
+
+                if "Compiled successfully" in logs or "webpack compiled" in logs:
+                    detailed_logger.log('info', "Container started successfully")
+                    break
+
+                if "Failed to compile" in logs:
+                    raise Exception("Container failed to start: Compilation failed")
+
+                time.sleep(1)
+            else:
+                # Timeout exceeded
+                raise Exception("Container startup timed out after 30 seconds")
+
+            # Initialize container and update code
             try:
-                # Check for non-standard imports
-                non_standard_imports = check_non_standard_imports(code)
-                installed_packages = []
-                if non_standard_imports:
-                    installed_packages = install_packages(container, non_standard_imports)
-
-                # Check for local imports
-                missing_local_imports = check_local_imports(container, code)
-
-                # Update code and get build status
                 build_output, files_added, installed_packages, compilation_status = update_code_internal(
                     container, code, user_id, file_name, main_file_path
                 )
-                container_info['build_status'] = 'updated'
 
-                # Get container status
-                file_structure = get_container_file_structure(container)
-                detailed_logs = container.logs(tail=200).decode('utf-8')
-                container_info['file_structure'] = file_structure
-
-                # Check container status
-                container.reload()
-                port_mapping = container.ports.get('3001/tcp')
-
-                if port_mapping:
-                    dynamic_url = f"https://{host_port}.{HOST_URL}"
-                    return JsonResponse({
-                        'status': 'success',
-                        'message': 'Container created and initialized',
-                        'container_id': container.id,
-                        'url': dynamic_url,
-                        'can_deploy': True,
-                        'container_info': container_info,
-                        'build_output': build_output,
-                        'detailed_logs': detailed_logger.get_logs(),
-                        'file_list': file_structure,
-                        'installed_packages': installed_packages,
-                        'files_added': files_added,
-                        'compilation_status': compilation_status
-                    })
-                else:
-                    raise Exception("Failed to get port mapping")
+                return JsonResponse({
+                    'status': 'success',
+                    'message': 'Container created and initialized',
+                    'container_id': container.id,
+                    'url': f"https://{host_port}.{HOST_URL}",
+                    'can_deploy': True,
+                    'build_output': build_output,
+                    'compilation_status': compilation_status
+                })
 
             except Exception as code_update_error:
-                detailed_logger.log('error', f"Failed to initialize container: {str(code_update_error)}")
-                # Cleanup failed container
-                try:
-                    container.stop()
-                    container.remove(force=True)
-                except:
-                    pass
+                # Cleanup on failure
+                container.stop()
+                container.remove(force=True)
                 raise code_update_error
 
-        except docker.errors.APIError as e:
-            detailed_logger.log('error', f"Failed to create container: {str(e)}")
-            return JsonResponse({
-                'error': f'Failed to create container: {str(e)}',
-                'container_info': container_info,
-                'detailed_logs': detailed_logger.get_logs(),
-                'file_list': detailed_logger.get_file_list(),
-            }, status=500)
-
         except Exception as e:
-            detailed_logger.log('error', f"Error during container creation/initialization: {str(e)}")
+            detailed_logger.log('error', f"Container creation failed: {str(e)}")
+            # Ensure cleanup of failed container
+            try:
+                container.stop()
+                container.remove(force=True)
+            except:
+                pass
             return JsonResponse({
-                'error': str(e),
-                'container_info': container_info,
-                'detailed_logs': detailed_logger.get_logs(),
-                'file_list': detailed_logger.get_file_list(),
+                'error': f'Failed to initialize container: {str(e)}',
+                'detailed_logs': detailed_logger.get_logs()
             }, status=500)
 
+    except Exception as e:
+        detailed_logger.log('error', f"Unexpected error: {str(e)}")
+        return JsonResponse({
+            'error': str(e),
+            'detailed_logs': detailed_logger.get_logs()
+        }, status=500)
 def prepare_container_environment(container):
     """Prepare container environment before running packages installation"""
     try:

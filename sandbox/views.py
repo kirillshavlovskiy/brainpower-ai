@@ -145,7 +145,7 @@ def check_container(request):
         }
         logger.info(f"Container info collected: {json.dumps(container_info, indent=2)}")
 
-        if container.status == 'running':
+        if container.status == ContainerStatus.READY:
             logger.info("Container is running, checking port mapping...")
             port_mapping = container.ports.get('3001/tcp')
             logger.info(f"Port mapping found: {port_mapping}")
@@ -167,7 +167,7 @@ def check_container(request):
                 logger.info(f"Host port found: {host_port}")
 
                 response_data = {
-                    'status': 'ready',
+                    'status': ContainerStatus.READY,
                     'container_id': container.id,
                     'container_info': container_info,
                     'url': f"https://{host_port}.{HOST_URL}",
@@ -180,14 +180,14 @@ def check_container(request):
             else:
                 logger.warning("Container running but no port mapping found")
                 return JsonResponse({
-                    'status': 'not_ready',
+                    'status': ContainerStatus.FAILED,
                     'container_id': container.id,
                     'reason': 'No port mapping found'
                 })
         else:
             logger.warning(f"Container found but not running. Status: {container.status}")
             return JsonResponse({
-                'status': 'not_ready',
+                'status': ContainerStatus.CREATING,
                 'container_id': container.id,
                 'reason': f'Container status is {container.status}'
             })

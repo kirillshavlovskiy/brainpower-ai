@@ -671,8 +671,7 @@ def check_or_create_container(request):
     file_name = data.get('file_name', 'component.js')
     main_file_path = data.get('main_file_path')
 
-    detailed_logger.log('info',
-                        f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
+    detailed_logger.log('info', f"Received request to check or create container for user {user_id}, file {file_name}")
 
     if not all([code, language, file_name]):
         return JsonResponse({'error': 'Missing required fields'}, status=400)
@@ -690,14 +689,11 @@ def check_or_create_container(request):
         if container.status != 'running':
             container.start()
             container.reload()
-            time.sleep(2)  # Brief wait for startup
+            time.sleep(2)
 
         # Get host port for existing container
         port_bindings = container.attrs['NetworkSettings']['Ports']
         host_port = port_bindings.get('3001/tcp', [{}])[0].get('HostPort')
-
-        if not host_port:
-            raise Exception("Container exists but has no port binding")
 
     except docker.errors.NotFound:
         detailed_logger.log('info', f"Container {container_name} not found. Creating new container.")
@@ -705,51 +701,29 @@ def check_or_create_container(request):
         detailed_logger.log('info', f"Selected port {host_port} for new container")
 
         try:
-            # Run container with simplified startup
             container = client.containers.run(
-                'react_renderer_prod',  # Make sure this image exists and has necessary setup
-                command="yarn start",  # Simplified command since setup should be in image
-                detach=True,
+                image='react_renderer_cra',
+                command="yarn start",
                 name=container_name,
+                detach=True,
                 environment={
                     'USER_ID': user_id,
                     'REACT_APP_USER_ID': user_id,
                     'FILE_NAME': file_name,
                     'PORT': '3001',
-                    'NODE_ENV': 'production'
+                    'WDS_SOCKET_PORT': '0',
+                    'WATCHPACK_POLLING': 'true',
+                    'FAST_REFRESH': 'false',
+                    'NODE_ENV': 'development'
                 },
                 volumes={
                     os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
+                    os.path.join(react_renderer_path, 'node_modules'): {'bind': '/app/node_modules', 'mode': 'rw'},
                 },
                 ports={'3001/tcp': host_port},
                 mem_limit='4g',
-                restart_policy={"Name": "on-failure", "MaximumRetryCount": 3},
-                container=client.containers.run(
-                    'react_renderer_cra',
-                    detach=True,
-                    name=container_name,
-                    environment={
-                        'USER_ID': user_id,
-                        'REACT_APP_USER_ID': user_id,
-                        'FILE_NAME': file_name,
-                        'PORT': '3001',
-                        'WDS_SOCKET_PORT': '0',
-                        'WATCHPACK_POLLING': 'true',
-                        'FAST_REFRESH': 'false',
-                        'NODE_ENV': 'development'  # Changed to development for hot reloading
-                    },
-                    volumes={
-                        os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
-                        os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
-                        os.path.join(react_renderer_path, 'node_modules'): {'bind': '/app/node_modules', 'mode': 'rw'},
-                    },
-                    ports={'3001/tcp': host_port},
-                    mem_limit='4g',
-                    restart_policy={"Name": "on-failure", "MaximumRetryCount": 3},
-                    user='node'  # Explicitly run as node user
-                )
+                restart_policy={"Name": "on-failure", "MaximumRetryCount": 3}
             )
 
             # Quick health check
@@ -759,6 +733,13 @@ def check_or_create_container(request):
             if container.status != 'running':
                 raise Exception("Container failed to start properly")
 
+        except docker.errors.ImageNotFound:
+            detailed_logger.log('error', "Docker image 'react_renderer_cra' not found locally")
+            return JsonResponse({
+                'error': 'Docker image not found. Please ensure react_renderer_cra is built locally.',
+                'detailed_logs': detailed_logger.get_logs()
+            }, status=500)
+
         except Exception as e:
             detailed_logger.log('error', f"Failed to create container: {str(e)}")
             if 'container' in locals():
@@ -767,16 +748,16 @@ def check_or_create_container(request):
                     container.remove(force=True)
                 except:
                     pass
-            raise
+            return JsonResponse({
+                'error': f'Failed to create container: {str(e)}',
+                'detailed_logs': detailed_logger.get_logs()
+            }, status=500)
 
     # Continue with code update for both new and existing containers
     try:
         build_output, files_added, installed_packages, compilation_status = update_code_internal(
             container, code, user_id, file_name, main_file_path
         )
-
-        file_structure = get_container_file_structure(container)
-        detailed_logs = container.logs(tail=100).decode('utf-8')
 
         return JsonResponse({
             'status': 'success',
@@ -785,9 +766,8 @@ def check_or_create_container(request):
             'url': f"https://{host_port}.{HOST_URL}",
             'can_deploy': True,
             'build_output': build_output,
-            'detailed_logs': detailed_logger.get_logs(),
-            'file_list': file_structure,
-            'compilation_status': compilation_status
+            'compilation_status': compilation_status,
+            'detailed_logs': detailed_logger.get_logs()
         })
 
     except Exception as e:
@@ -796,6 +776,7 @@ def check_or_create_container(request):
             'error': str(e),
             'detailed_logs': detailed_logger.get_logs()
         }, status=500)
+
 
 def prepare_container_environment(container):
     """Prepare container environment before running packages installation"""

@@ -77,36 +77,37 @@ from docker.errors import NotFound, APIError
 
 def exec_command_with_retry(container, command, max_retries=3):
     """Execute command with retry logic and container state check"""
+
+    def get_container_output(result):
+        if hasattr(result, 'output'):
+            if hasattr(result.output, 'decode'):
+                return result.output.decode()
+            return str(result.output)
+        return str(result)
+
     for attempt in range(max_retries):
         try:
-            # Reload container status
             container.reload()
 
-            # Check if container is running
             if container.status != 'running':
                 logger.info(f"Container {container.id} is not running, attempting to start...")
                 container.start()
                 container.reload()
-                # Wait for container to be fully started
                 time.sleep(5)
 
-            # Check again if container is running after potential start
             if container.status != 'running':
                 raise Exception(f"Container failed to start, status: {container.status}")
 
-            # Execute command
             result = container.exec_run(command)
+            if result.exit_code != 0:
+                output = get_container_output(result)
+                raise Exception(f"Command failed with exit code {result.exit_code}: {output}")
+
             return result
 
         except docker.errors.APIError as e:
             if "is not running" in str(e) and attempt < max_retries - 1:
                 logger.warning(f"Container not running on attempt {attempt + 1}, retrying...")
-                time.sleep(2)
-                continue
-            raise
-        except Exception as e:
-            if attempt < max_retries - 1:
-                logger.warning(f"Command failed on attempt {attempt + 1}: {str(e)}, retrying...")
                 time.sleep(2)
                 continue
             raise
@@ -291,6 +292,15 @@ def update_code_internal(container, code, user, file_name, main_file_path):
     files_added = []
     build_output = []
     installed_packages = []
+
+    def get_container_output(result):
+        """Safely get container command output"""
+        if hasattr(result, 'output'):
+            if hasattr(result.output, 'decode'):
+                return result.output.decode()
+            return str(result.output)
+        return str(result)
+
     try:
         set_container_permissions(container)
 

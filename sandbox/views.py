@@ -465,17 +465,26 @@ def get_file_with_extension(user, base_file_path, import_path, base_path):
 
 
 def get_compilation_status(container):
+    """Get container compilation status safely"""
     try:
+        def get_container_output(result):
+            """Safely get container command output"""
+            if hasattr(result, 'output'):
+                if hasattr(result.output, 'decode'):
+                    return result.output.decode()
+                return str(result.output)
+            return str(result)
+
         # Try to read the compilation status file
         status_result = exec_command_with_retry(container, ["cat", "/app/compilation_status"])
-        saved_status = status_result.decode().strip()
+        saved_status = get_container_output(status_result).strip()
 
         if saved_status and saved_status in [ContainerStatus.READY, ContainerStatus.WARNING,
                                              ContainerStatus.COMPILATION_FAILED]:
             return saved_status
 
-        # If no valid status is saved, or if it's still COMPILING, we need to check the logs
-        logs = container.logs(tail=100).decode('utf-8')
+        # If no valid status is saved, or if it's still COMPILING, check the logs
+        logs = get_container_output(container.logs(tail=100))
 
         if "Compiled successfully" in logs:
             return ContainerStatus.READY
@@ -485,6 +494,7 @@ def get_compilation_status(container):
             return ContainerStatus.COMPILATION_FAILED
         else:
             return ContainerStatus.COMPILING
+
     except Exception as e:
         logger.error(f"Error getting compilation status: {str(e)}")
         return ContainerStatus.ERROR

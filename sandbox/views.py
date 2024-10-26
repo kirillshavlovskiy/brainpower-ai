@@ -815,7 +815,6 @@ def check_or_create_container(request):
             user_id,
             file_name,
             main_file_path,
-            optimize_memory=True  # Add this flag to your update_code_internal function
         )
 
         return JsonResponse({

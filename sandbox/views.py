@@ -112,39 +112,6 @@ def exec_command_with_retry(container, command, max_retries=3):
             raise
 
 
-def update_code_internal(container, code, user, file_name, main_file_path):
-    try:
-        # First ensure container is running
-        container.reload()
-        if container.status != 'running':
-            logger.info(f"Container {container.id} not running, attempting to start...")
-            container.start()
-            time.sleep(5)  # Wait for container to fully start
-
-        encoded_code = base64.b64encode(code.encode()).decode()
-
-
-
-        if exec_result.exit_code != 0:
-            raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
-
-        logger.info(f"Updated component.js in container with content from {file_name}")
-
-        # Execute the build with retry
-        build_result = exec_command_with_retry(container, [
-            "sh", "-c", "cd /app && yarn start"
-        ])
-
-        if build_result.exit_code != 0:
-            raise Exception(f"Failed to build project: {build_result.output.decode()}")
-
-        return True
-
-    except Exception as e:
-        logger.error(f"Failed to update code: {str(e)}")
-        raise
-
-
 @api_view(['GET'])
 def check_container(request):
     # Log incoming request details
@@ -325,8 +292,6 @@ def update_code_internal(container, code, user, file_name, main_file_path):
     build_output = []
     installed_packages = []
     try:
-
-
         set_container_permissions(container)
 
         container.reload()
@@ -346,6 +311,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                     f"echo {encoded_code} | base64 -d > /app/src/component.js"
                 ])
 
+                logger.info(f"Updated component.js in container with content from {file_name}")
                 if exec_result.exit_code != 0:
                     raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
                 files_added.append('/app/src/component.js')
@@ -364,39 +330,55 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         logger.info(f"Base path derived from main file: {base_path}")
 
         # Handle all imports (CSS, JS, TS, JSON, etc.)
-        import_pattern = r"import\s+(?:(?:{\s*[\w\s,]+\s*})|(?:[\w]+)|\*\s+as\s+[\w]+)\s+from\s+['\"](.+?)['\"]|import\s+['\"](.+?)['\"]"
-        imports = re.findall(import_pattern, code)
+        # Handle local imports with proper extension resolution
+        local_import_pattern = r"import\s+(?:{\s*[\w\s,]+\s*}|\*\s+as\s+[\w]+|[\w]+)\s+from\s+['\"](\.[/\\].*?)['\"]"
+        local_imports = re.findall(local_import_pattern, code)
 
-        for import_match in imports:
-            import_path = import_match[0] or import_match[1]  # Get the non-empty group
-            if import_path:
-                logger.info(f"Attempting to retrieve content for imported file: {import_path}")
-                file_content = FileStructureConsumer.get_file_content_for_container(user, import_path, base_path)
-                if file_content is not None:
-                    logger.info(f"Retrieved content for file: {import_path}")
-                    encoded_content = base64.b64encode(file_content.encode()).decode()
-                    container_path = f"/app/src/{import_path}"
-                    exec_result = container.exec_run([
-                        "sh", "-c",
-                        f"mkdir -p $(dirname {container_path}) && echo {encoded_content} | base64 -d > {container_path}"
-                    ])
-                    if exec_result.exit_code != 0:
-                        raise Exception(f"Failed to update {import_path} in container: {exec_result.output.decode()}")
-                    logger.info(f"Updated {import_path} in container")
-                    files_added.append(container_path)
+        base_path = os.path.dirname(main_file_path)
+        logger.info(f"Base path for imports: {base_path}")
+
+        for import_path in local_imports:
+            logger.info(f"Processing import: {import_path}")
+
+            content, resolved_path = get_file_with_extension(user, file_name, import_path, base_path)
+
+            if content is not None:
+                # Get the correct container path maintaining the extension
+                container_path = f"/app/src/{os.path.relpath(resolved_path, 'Root')}"
+                encoded_content = base64.b64encode(content.encode()).decode()
+
+                logger.info(f"Adding file to container: {container_path}")
+
+                exec_result = container.exec_run([
+                    "sh", "-c",
+                    f"mkdir -p $(dirname {container_path}) && echo {encoded_content} | base64 -d > {container_path}"
+                ])
+
+                if exec_result.exit_code != 0:
+                    output = exec_result.output.decode() if hasattr(exec_result.output, 'decode') else str(
+                        exec_result.output)
+                    raise Exception(f"Failed to update {container_path} in container: {output}")
+
+                files_added.append(container_path)
+                logger.info(f"Successfully added {container_path}")
+            else:
+                # If file not found, create empty file with default extension
+                default_ext = '.tsx' if file_name.endswith(('.ts', '.tsx')) else '.js'
+                container_path = f"/app/src/{import_path}{default_ext}"
+
+                logger.warning(f"Creating empty file for {container_path}")
+                exec_result = container.exec_run([
+                    "sh", "-c",
+                    f"mkdir -p $(dirname {container_path}) && touch {container_path}"
+                ])
+
+                if exec_result.exit_code != 0:
+                    output = exec_result.output.decode() if hasattr(exec_result.output, 'decode') else str(
+                        exec_result.output)
+                    logger.error(f"Failed to create empty file: {output}")
                 else:
-                    logger.warning(f"File {import_path} not found or empty. Creating empty file in container.")
-                    container_path = f"/app/src/{import_path}"
-                    exec_result = container.exec_run([
-                        "sh", "-c",
-                        f"mkdir -p $(dirname {container_path}) && touch {container_path}"
-                    ])
-                    if exec_result.exit_code != 0:
-                        logger.error(
-                            f"Failed to create empty file {import_path} in container: {exec_result.output.decode()}")
-                    else:
-                        logger.info(f"Created empty file {import_path} in container")
-                        files_added.append(container_path)
+                    files_added.append(container_path)
+                    logger.info(f"Created empty file: {container_path}")
 
         # Check for non-standard imports
         non_standard_imports = check_non_standard_imports(code)
@@ -452,6 +434,34 @@ def update_code_internal(container, code, user, file_name, main_file_path):
     except Exception as e:
         logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
         raise
+
+
+def get_file_with_extension(user, base_file_path, import_path, base_path):
+    """Resolve import path with proper extension"""
+    # If the import has explicit extension, use it
+    if import_path.endswith(('.tsx', '.ts', '.jsx', '.js', '.css')):
+        full_path = os.path.join(base_path, import_path)
+        return FileStructureConsumer.get_file_content_for_container(user, full_path, base_path)
+
+    # Remove ./ or ../ prefix for extension check
+    clean_path = re.sub(r'^\.{1,2}[/\\]', '', import_path)
+
+    # Check source file extension to determine priority
+    is_typescript = base_file_path.endswith(('.ts', '.tsx'))
+
+    # Try extensions in priority order
+    extensions = ['.tsx', '.ts', '.jsx', '.js'] if is_typescript else ['.jsx', '.js', '.tsx', '.ts']
+
+    for ext in extensions:
+        try_path = f"{os.path.join(base_path, clean_path)}{ext}"
+        logger.info(f"Trying path: {try_path}")
+        content = FileStructureConsumer.get_file_content_for_container(user, try_path, base_path)
+        if content is not None:
+            logger.info(f"Found file with extension {ext}: {try_path}")
+            return content, try_path
+
+    logger.warning(f"No file found for import {import_path} with any extension")
+    return None, None
 
 
 def get_compilation_status(container):

@@ -404,11 +404,12 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         else:
             logger.info("No non-standard imports detected")
 
-        # Start the development server
-        logger.info("Starting the development server with 'yarn start'")
-        exec_result = exec_command_with_retry(container, [
-            "sh", "-c", "cd /app && yarn start"
-        ])
+        # Build the project
+        exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"])
+        if exec_result.exit_code != 0:
+            raise Exception(f"Failed to build project: {exec_result.output.decode()}")
+
+        logger.info("Project rebuilt and server restarted successfully")
 
         # Process the output safely
         output_text = get_container_output(exec_result)
@@ -719,19 +720,21 @@ def check_or_create_container(request):
                     'USER_ID': user_id,
                     'REACT_APP_USER_ID': user_id,
                     'FILE_NAME': file_name,
-                    'PORT': '3001',
-                    'NODE_ENV': 'development',
-                    'NODE_OPTIONS': '--max-old-space-size=2048'  # Add memory limit
+                    'PORT': str(3001),
+                    'NODE_ENV': 'production',  # Set to production
+                    'NODE_OPTIONS': '--max-old-space-size=8192'
                 },
                 volumes={
                     os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'rw'}
                 },
                 ports={'3001/tcp': host_port},
-                mem_limit='3g',  # Increased memory limit
-                memswap_limit='4g',  # Added swap limit
-                restart_policy={"Name": "on-failure", "MaximumRetryCount": 3}
+                mem_limit='8g',
+                memswap_limit='16g',
+                cpu_quota=100000,
+                restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
 
             # Quick health check

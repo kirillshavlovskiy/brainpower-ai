@@ -563,6 +563,14 @@ def check_container_ready(request):
                 'detailed_logs': logs
             })
 
+        # Still compiling/building
+        if 'Building...' in logs:
+            return JsonResponse({
+                'status': ContainerStatus.BUILDING,
+                'message': 'Compiling application...',
+                'detailed_logs': logs
+            })
+
         # Check for compilation failures
         if 'Failed to compile' in logs:
             return JsonResponse({

@@ -522,97 +522,82 @@ def check_container_ready(request):
     container_id = request.GET.get('container_id')
     user_id = request.GET.get('user_id', 'default')
     file_name = request.GET.get('file_name')
-
-    def get_container_output(result):
-        """Safely get container command output"""
-        if hasattr(result, 'output'):
-            if hasattr(result.output, 'decode'):
-                return result.output.decode()
-            return str(result.output)
-        return str(result)
-
     logger.info(f"Checking container ready: container_id={container_id}, user_id={user_id}, file_name={file_name}")
 
     if not container_id:
-        return JsonResponse({'error': 'No container ID provided'}, status=400)
+        return JsonResponse({'status': 'error', 'error': 'No container ID provided'}, status=400)
 
     try:
         container = client.containers.get(container_id)
         container.reload()
-        logs = container.logs(tail=50).decode('utf-8').strip()
 
-        # Check for successful compilation markers
-        if ('Compiled successfully' in logs or 'webpack compiled successfully' in logs):
-            # Check for warnings
-            if 'WARNING in' in logs:
+        # First check if container is actually running
+        if container.status != 'running':
+            # Check if container has exited
+            if container.status == 'exited':
+                # Get exit code and last logs
+                exit_code = container.attrs.get('State', {}).get('ExitCode', -1)
+                last_logs = container.logs(tail=50).decode('utf-8')
+
                 return JsonResponse({
-                    'status': ContainerStatus.WARNING,
-                    'url': f"https://{container.ports['3001/tcp'][0]['HostPort']}.{HOST_URL}",
-                    'warnings': extract_warnings(logs),
-                    'detailed_logs': logs
-                })
-            else:
-                return JsonResponse({
-                    'status': ContainerStatus.READY,
-                    'url': f"https://{container.ports['3001/tcp'][0]['HostPort']}.{HOST_URL}",
-                    'detailed_logs': logs
+                    'status': 'failed',
+                    'message': f'Container exited with code {exit_code}',
+                    'detailed_logs': last_logs,
+                    'should_stop_polling': True  # Signal to stop polling
                 })
 
-        # Check if server is actually accepting connections
-        if 'Accepting connections at http://localhost:3001' in logs:
             return JsonResponse({
-                'status': ContainerStatus.READY,
-                'url': f"https://{container.ports['3001/tcp'][0]['HostPort']}.{HOST_URL}",
-                'detailed_logs': logs
+                'status': container.status,
+                'message': 'Container is not running',
+                'detailed_logs': container.logs(tail=50).decode('utf-8'),
+                'should_stop_polling': True  # Signal to stop polling
             })
 
-        # Still compiling/building
-        if 'Compiling...' in logs:
+        # If running, check the logs for application status
+        logs = container.logs(tail=100).decode('utf-8')
+
+        # Check for specific error conditions
+        if "Error:" in logs or "error:" in logs:
             return JsonResponse({
-                'status': ContainerStatus.COMPILING,
-                'message': 'Compiling application...',
-                'detailed_logs': logs
+                'status': 'error',
+                'message': 'Container encountered an error',
+                'detailed_logs': logs,
+                'should_stop_polling': True
             })
 
-        # Still compiling/building
-        if 'Building...' in logs:
-            return JsonResponse({
-                'status': ContainerStatus.BUILDING,
-                'message': 'Compiling application...',
-                'detailed_logs': logs
-            })
-
-        # Check for compilation failures
-        if 'Failed to compile' in logs:
-            return JsonResponse({
-                'status': ContainerStatus.COMPILATION_FAILED,
-                'error': extract_errors(logs),
-                'detailed_logs': logs
-            })
-
-        # Default to checking container status
-        if container.status == 'running':
+        # Check for successful startup
+        if "Compiled successfully" in logs or "webpack compiled" in logs:
             port_mapping = container.ports.get('3001/tcp')
             if port_mapping:
+                host_port = port_mapping[0]['HostPort']
                 return JsonResponse({
-                    'status': ContainerStatus.READY,
-                    'url': f"https://{port_mapping[0]['HostPort']}.{HOST_URL}",
-                    'detailed_logs': logs
+                    'status': 'ready',
+                    'url': f"https://{host_port}.{HOST_URL}",
+                    'message': 'Container is ready',
+                    'should_stop_polling': True
                 })
 
+        # If still starting up normally
         return JsonResponse({
-            'status': container.status,
+            'status': 'starting',
             'message': 'Container is starting...',
-            'detailed_logs': logs
+            'detailed_logs': logs,
+            'should_stop_polling': False
         })
 
     except docker.errors.NotFound:
-        return JsonResponse({'status': 'not_found', 'message': 'Container not found'}, status=404)
+        return JsonResponse({
+            'status': 'not_found',
+            'message': 'Container not found',
+            'should_stop_polling': True
+        }, status=404)
+
     except Exception as e:
+        logger.error(f"Error checking container status: {str(e)}")
         return JsonResponse({
             'status': 'error',
             'message': str(e),
-            'detailed_logs': traceback.format_exc()
+            'should_stop_polling': True
         }, status=500)
 
 

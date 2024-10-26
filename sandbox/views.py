@@ -522,75 +522,71 @@ def check_container_ready(request):
     container_id = request.GET.get('container_id')
     user_id = request.GET.get('user_id', 'default')
     file_name = request.GET.get('file_name')
+
     logger.info(f"Checking container ready: container_id={container_id}, user_id={user_id}, file_name={file_name}")
 
     if not container_id:
-        return JsonResponse({'status': 'error', 'error': 'No container ID provided'}, status=400)
+        return JsonResponse({'error': 'No container ID provided'}, status=400)
 
     try:
         container = client.containers.get(container_id)
         container.reload()
 
-        # First check if container is actually running
-        if container.status != 'running':
-            # Check if container has exited
-            if container.status == 'exited':
-                # Get exit code and last logs
-                exit_code = container.attrs.get('State', {}).get('ExitCode', -1)
-                last_logs = container.logs(tail=200).decode('utf-8')
-
-                return JsonResponse({
-                    'status': 'exited',
-                    'message': f'Container exited with code {exit_code}',
-                    'detailed_logs': last_logs,
-                    'should_stop_polling': True  # Signal to stop polling
-                })
+        # If container exists but exited
+        if container.status == 'exited':
+            logger.warning(f"Found exited container {container_id}. Removing it.")
+            try:
+                # Remove the old container
+                container.remove(force=True)
+                logger.info(f"Successfully removed exited container {container_id}")
+            except Exception as e:
+                logger.error(f"Error removing container: {str(e)}")
 
             return JsonResponse({
-                'status': container.status,
-                'message': 'Container is not running',
-                'detailed_logs': container.logs(tail=50).decode('utf-8'),
-                'should_stop_polling': True  # Signal to stop polling
+                'status': 'exited',
+                'message': 'Previous container failed. Please start server again.',
+                'should_stop_polling': True,
+                'should_cleanup': True  # Signal frontend to clean up old container reference
             })
 
-        # If running, check the logs for application status
-        logs = container.logs(tail=100).decode('utf-8')
+        # If container is running, do normal checks
+        if container.status == 'running':
+            logs = container.logs(tail=100).decode('utf-8')
 
-        # Check for specific error conditions
-        if "Error:" in logs or "error:" in logs:
+            if "Compiled successfully" in logs or "webpack compiled" in logs:
+                port_mapping = container.ports.get('3001/tcp')
+                if port_mapping:
+                    host_port = port_mapping[0]['HostPort']
+                    return JsonResponse({
+                        'status': 'ready',
+                        'url': f"https://{host_port}.{HOST_URL}",
+                        'message': 'Container is ready',
+                        'should_stop_polling': True
+                    })
+
             return JsonResponse({
-                'status': 'error',
-                'message': 'Container encountered an error',
+                'status': 'running',
+                'message': 'Container is still starting...',
                 'detailed_logs': logs,
-                'should_stop_polling': True
+                'should_stop_polling': False
             })
 
-        # Check for successful startup
-        if "Compiled successfully" in logs or "webpack compiled" in logs:
-            port_mapping = container.ports.get('3001/tcp')
-            if port_mapping:
-                host_port = port_mapping[0]['HostPort']
-                return JsonResponse({
-                    'status': 'ready',
-                    'url': f"https://{host_port}.{HOST_URL}",
-                    'message': 'Container is ready',
-                    'should_stop_polling': True
-                })
-
-        # If still starting up normally
+        # Any other status
         return JsonResponse({
-            'status': 'starting',
-            'message': 'Container is starting...',
-            'detailed_logs': logs,
-            'should_stop_polling': False
+            'status': container.status,
+            'message': f'Container is in {container.status} state. Please start server again.',
+            'should_stop_polling': True,
+            'should_cleanup': True
         })
 
     except docker.errors.NotFound:
+        # Container not found - let user start manually
+        logger.info(f"Container {container_id} not found. User needs to start server manually.")
         return JsonResponse({
             'status': 'not_found',
-            'message': 'Container not found',
+            'message': 'No server running. Please click "Start Server" to begin.',
             'should_stop_polling': True
-        }, status=404)
+        })
 
     except Exception as e:
         logger.error(f"Error checking container status: {str(e)}")

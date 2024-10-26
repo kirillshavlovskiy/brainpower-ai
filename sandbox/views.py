@@ -537,10 +537,10 @@ def check_container_ready(request):
             if container.status == 'exited':
                 # Get exit code and last logs
                 exit_code = container.attrs.get('State', {}).get('ExitCode', -1)
-                last_logs = container.logs(tail=50).decode('utf-8')
+                last_logs = container.logs(tail=200).decode('utf-8')
 
                 return JsonResponse({
-                    'status': 'failed',
+                    'status': 'exited',
                     'message': f'Container exited with code {exit_code}',
                     'detailed_logs': last_logs,
                     'should_stop_polling': True  # Signal to stop polling

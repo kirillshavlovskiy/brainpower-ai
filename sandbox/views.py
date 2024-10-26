@@ -40,6 +40,7 @@ class ContainerStatus:
     BUILDING = 'building'
     COMPILING = 'compiling'
     READY = 'ready'
+    NOT_READY = 'not ready'
     FAILED = 'failed'
     COMPILATION_FAILED = 'compilation_failed'
     ERROR = 'error'
@@ -187,7 +188,7 @@ def check_container(request):
         else:
             logger.warning(f"Container found but not running. Status: {container.status}")
             return JsonResponse({
-                'status': ContainerStatus.CREATING,
+                'status': ContainerStatus.NOT_READY,
                 'container_id': container.id,
                 'reason': f'Container status is {container.status}'
             })
@@ -534,14 +535,14 @@ def check_container_ready(request):
             # Check for warnings
             if 'WARNING in' in logs:
                 return JsonResponse({
-                    'status': 'warning',
+                    'status': ContainerStatus.WARNING,
                     'url': f"https://{container.ports['3001/tcp'][0]['HostPort']}.{HOST_URL}",
                     'warnings': extract_warnings(logs),
                     'detailed_logs': logs
                 })
             else:
                 return JsonResponse({
-                    'status': 'ready',
+                    'status': ContainerStatus.READY,
                     'url': f"https://{container.ports['3001/tcp'][0]['HostPort']}.{HOST_URL}",
                     'detailed_logs': logs
                 })
@@ -549,7 +550,7 @@ def check_container_ready(request):
         # Check if server is actually accepting connections
         if 'Accepting connections at http://localhost:3001' in logs:
             return JsonResponse({
-                'status': 'ready',
+                'status': ContainerStatus.READY,
                 'url': f"https://{container.ports['3001/tcp'][0]['HostPort']}.{HOST_URL}",
                 'detailed_logs': logs
             })
@@ -557,7 +558,7 @@ def check_container_ready(request):
         # Still compiling/building
         if 'Compiling...' in logs:
             return JsonResponse({
-                'status': 'compiling',
+                'status': ContainerStatus.COMPILING,
                 'message': 'Compiling application...',
                 'detailed_logs': logs
             })
@@ -565,7 +566,7 @@ def check_container_ready(request):
         # Check for compilation failures
         if 'Failed to compile' in logs:
             return JsonResponse({
-                'status': 'compilation_failed',
+                'status': ContainerStatus.COMPILATION_FAILED,
                 'error': extract_errors(logs),
                 'detailed_logs': logs
             })
@@ -575,7 +576,7 @@ def check_container_ready(request):
             port_mapping = container.ports.get('3001/tcp')
             if port_mapping:
                 return JsonResponse({
-                    'status': 'ready',
+                    'status': ContainerStatus.READY,
                     'url': f"https://{port_mapping[0]['HostPort']}.{HOST_URL}",
                     'detailed_logs': logs
                 })

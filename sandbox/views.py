@@ -407,7 +407,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         # Build the project
         exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"])
         if exec_result.exit_code != 0:
-            raise Exception(f"Failed to build project: {exec_result.output.decode()}")
+            raise Exception(f"Failed to build project: {exec_result}")
 
         logger.info("Project rebuilt and server restarted successfully")
 

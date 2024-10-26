@@ -410,10 +410,13 @@ def update_code_internal(container, code, user, file_name, main_file_path):
             "sh", "-c", "cd /app && yarn start"
         ])
 
-        # Process the output
-        output_lines = exec_result.decode().split('\n')
+        # Process the output safely
+        output_text = get_container_output(exec_result)
+        output_lines = output_text.split('\n')
         build_output = output_lines
         compilation_status = ContainerStatus.COMPILING
+
+        logger.info("Analyzing build output...")
 
         logger.info("Analyzing build output...")
         for line in output_lines:

@@ -696,7 +696,6 @@ def check_or_create_container(request):
     }
 
     try:
-        # Try to get existing container
         container = client.containers.get(container_name)
         detailed_logger.log('info', f"Found existing container: {container.id}")
 
@@ -705,7 +704,6 @@ def check_or_create_container(request):
             container.reload()
             time.sleep(2)
 
-        # Get host port for existing container
         port_bindings = container.attrs['NetworkSettings']['Ports']
         host_port = port_bindings.get('3001/tcp', [{}])[0].get('HostPort')
 
@@ -714,83 +712,41 @@ def check_or_create_container(request):
         host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
 
         try:
-            # Prepare container configuration with optimized memory settings
-            container_config = {
-                'image': 'react_renderer_cra',
-                'command': 'sh -c "export NODE_OPTIONS=--max-old-space-size=2048 && yarn start"',
-                'name': container_name,
-                'detach': True,
-                'environment': {
+            container = client.containers.run(
+                image='react_renderer_cra',
+                command='yarn start',
+                name=container_name,
+                detach=True,
+                environment={
                     'USER_ID': user_id,
                     'REACT_APP_USER_ID': user_id,
                     'FILE_NAME': file_name,
                     'PORT': '3001',
-                    'WDS_SOCKET_PORT': '0',
-                    'WATCHPACK_POLLING': 'true',
-                    'FAST_REFRESH': 'false',
                     'NODE_ENV': 'development',
-                    'GENERATE_SOURCEMAP': 'false',  # Reduce memory usage
-                    'TSC_COMPILE_ON_ERROR': 'true',
-                    'DISABLE_ESLINT_PLUGIN': 'true',
                     'NODE_OPTIONS': '--max-old-space-size=2048'  # Add memory limit
-
                 },
-                'volumes': {
+                volumes={
                     os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
                 },
-                'ports': {'3001/tcp': host_port},
-                'mem_limit': '3g',  # Hard memory limit
-                'memswap_limit': '4g',  # Swap limit
-                'mem_reservation': '2g',  # Soft memory limit
-                'oom_kill_disable': False,  # Allow OOM killer to prevent host issues
-                'oom_score_adj': 500,  # Higher priority for OOM killer
-                'cpu_shares': 512,  # CPU share allocation
-                'restart_policy': {"Name": "on-failure", "MaximumRetryCount": 3}
-            }
+                ports={'3001/tcp': host_port},
+                mem_limit='3g',  # Increased memory limit
+                memswap_limit='4g',  # Added swap limit
+                restart_policy={"Name": "on-failure", "MaximumRetryCount": 3}
+            )
 
-            # Create and start container
-            container = client.containers.run(**container_config)
+            # Quick health check
+            time.sleep(2)
+            container.reload()
 
-            # Wait for container to be ready with proper health checks
-            start_time = time.time()
-            ready = False
+            if container.status != 'running':
+                raise Exception("Container failed to start properly")
 
-            while time.time() - start_time < 30:  # 30 second timeout
-                try:
-                    container.reload()
-
-                    if container.status == 'running':
-                        # Check container logs for readiness
-                        logs = container.logs(tail=50).decode('utf-8')
-
-                        if "Compiled successfully" in logs or "webpack compiled" in logs:
-                            ready = True
-                            detailed_logger.log('info', "Container started successfully")
-                            break
-
-                        if "Failed to compile" in logs:
-                            raise Exception("Container startup failed: Compilation error")
-
-                        # Check memory usage
-                        stats = container.stats(stream=False)
-                        memory_usage = stats['memory_stats'].get('usage', 0)
-                        if memory_usage > (2.5 * 1024 * 1024 * 1024):  # 2.5GB warning threshold
-                            detailed_logger.log('warning',
-                                                f"High memory usage detected: {memory_usage / 1024 / 1024:.2f}MB")
-
-                except Exception as e:
-                    detailed_logger.log('error', f"Error during container health check: {str(e)}")
-
-                time.sleep(1)
-
-            if not ready:
-                raise Exception("Container failed to start within timeout period")
-
-        except (docker.errors.ImageNotFound, docker.errors.APIError) as e:
-            detailed_logger.log('error', f"Docker error: {str(e)}")
+        except docker.errors.ImageNotFound:
+            detailed_logger.log('error', "Docker image 'react_renderer_cra' not found locally")
             return JsonResponse({
-                'error': str(e),
+                'error': 'Docker image not found. Please ensure react_renderer_cra is built locally.',
                 'detailed_logs': detailed_logger.get_logs()
             }, status=500)
 
@@ -803,18 +759,14 @@ def check_or_create_container(request):
                 except:
                     pass
             return JsonResponse({
-                'error': str(e),
+                'error': f'Failed to create container: {str(e)}',
                 'detailed_logs': detailed_logger.get_logs()
             }, status=500)
 
-        # Update code with memory-optimized settings
+        # Continue with code update for both new and existing containers
     try:
         build_output, files_added, installed_packages, compilation_status = update_code_internal(
-            container,
-            code,
-            user_id,
-            file_name,
-            main_file_path,
+            container, code, user_id, file_name, main_file_path
         )
 
         return JsonResponse({

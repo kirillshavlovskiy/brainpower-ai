@@ -316,8 +316,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         max_attempts = 3
         for attempt in range(max_attempts):
             try:
-                # Use the retry function for execution
-                exec_result = exec_command_with_retry(container, [
+                exec_result = container.exec_run([
                     "sh", "-c",
                     f"echo {encoded_code} | base64 -d > /app/src/component.js"
                 ])
@@ -416,8 +415,6 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         output_lines = output_text.split('\n')
         build_output = output_lines
         compilation_status = ContainerStatus.COMPILING
-
-        logger.info("Analyzing build output...")
 
         logger.info("Analyzing build output...")
         for line in output_lines:
@@ -717,6 +714,7 @@ def check_or_create_container(request):
                 command='yarn start',
                 name=container_name,
                 detach=True,
+                user='node',
                 environment={
                     'USER_ID': user_id,
                     'REACT_APP_USER_ID': user_id,
@@ -728,7 +726,7 @@ def check_or_create_container(request):
                 volumes={
                     os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
                     os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
+                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'rw'},
                 },
                 ports={'3001/tcp': host_port},
                 mem_limit='3g',  # Increased memory limit
@@ -765,6 +763,7 @@ def check_or_create_container(request):
 
         # Continue with code update for both new and existing containers
     try:
+
         build_output, files_added, installed_packages, compilation_status = update_code_internal(
             container, code, user_id, file_name, main_file_path
         )

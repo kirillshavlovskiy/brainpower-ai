@@ -725,7 +725,31 @@ def check_or_create_container(request):
                 },
                 ports={'3001/tcp': host_port},
                 mem_limit='4g',
-                restart_policy={"Name": "on-failure", "MaximumRetryCount": 3}
+                restart_policy={"Name": "on-failure", "MaximumRetryCount": 3},
+                container=client.containers.run(
+                    'react_renderer_cra',
+                    detach=True,
+                    name=container_name,
+                    environment={
+                        'USER_ID': user_id,
+                        'REACT_APP_USER_ID': user_id,
+                        'FILE_NAME': file_name,
+                        'PORT': '3001',
+                        'WDS_SOCKET_PORT': '0',
+                        'WATCHPACK_POLLING': 'true',
+                        'FAST_REFRESH': 'false',
+                        'NODE_ENV': 'development'  # Changed to development for hot reloading
+                    },
+                    volumes={
+                        os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
+                        os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
+                        os.path.join(react_renderer_path, 'node_modules'): {'bind': '/app/node_modules', 'mode': 'rw'},
+                    },
+                    ports={'3001/tcp': host_port},
+                    mem_limit='4g',
+                    restart_policy={"Name": "on-failure", "MaximumRetryCount": 3},
+                    user='node'  # Explicitly run as node user
+                )
             )
 
             # Quick health check

@@ -218,6 +218,11 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 5242880  # 5 MB
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/4.2/howto/static-files/
 
+# settings.py
+CONTAINER_OPERATION_TIMEOUT = 30  # seconds
+STATUS_CHECK_INTERVAL = 2  # seconds
+MAX_STATUS_CHECKS = 60  # maximum number of status checks
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,

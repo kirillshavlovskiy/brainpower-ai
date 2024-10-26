@@ -524,6 +524,14 @@ def check_container_ready(request):
     user_id = request.GET.get('user_id', 'default')
     file_name = request.GET.get('file_name')
 
+    def get_container_output(result):
+        """Safely get container command output"""
+        if hasattr(result, 'output'):
+            if hasattr(result.output, 'decode'):
+                return result.output.decode()
+            return str(result.output)
+        return str(result)
+
     logger.info(f"Checking container ready: container_id={container_id}, user_id={user_id}, file_name={file_name}")
 
     if not container_id:
@@ -535,8 +543,29 @@ def check_container_ready(request):
         container.reload()
         logger.info(f"Container status: {container.status}")
 
+        # Get initial container logs
+        logs = container.logs(tail=50).decode('utf-8').strip()
+        latest_log = logs.split('\n')[-1] if logs else "No logs available"
+
+        # Check basic container status first
+        if container.status != 'running':
+            return JsonResponse({
+                'status': ContainerStatus.CREATING,
+                'message': 'Container is starting up...',
+                'log': latest_log
+            })
+
+        # Check if yarn is running
+        ps_result = container.exec_run("ps aux | grep yarn")
+        if ps_result.exit_code != 0 or "yarn start" not in get_container_output(ps_result):
+            return JsonResponse({
+                'status': ContainerStatus.COMPILING,
+                'message': 'Starting development server...',
+                'log': latest_log
+            })
+
         compilation_status = get_compilation_status(container)
-        logger.info(f"!!!!!!!!!!!!Compilation status: {compilation_status}")
+        logger.info(f"Compilation status: {compilation_status}")
 
         if not compilation_status:
             compilation_status = ContainerStatus.COMPILING
@@ -577,6 +606,7 @@ def check_container_ready(request):
     except Exception as e:
         logger.error(f"Error checking container status: {str(e)}", exc_info=True)
         return JsonResponse({'status': ContainerStatus.ERROR, 'error': str(e), 'log': str(e)}, status=500)
+
 
 @api_view(['GET'])
 def get_container_logs(request):
@@ -710,11 +740,12 @@ def check_or_create_container(request):
                 'detailed_logs': detailed_logger.get_logs(),
                 'file_list': file_structure,
             }, status=500)
-
+    # In the container creation block
     except docker.errors.NotFound:
         detailed_logger.log('info', f"Container {container_name} not found. Creating new container.")
         host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
         detailed_logger.log('info', f"Selected port {host_port} for new container")
+
         try:
             container = client.containers.run(
                 'react_renderer_cra',
@@ -742,6 +773,64 @@ def check_or_create_container(request):
             )
             detailed_logger.log('info', f"New container created: {container_name}")
             container_info['build_status'] = 'created'
+
+            # Prepare container environment
+            prepare_container_environment(container)
+
+            try:
+                # Check for non-standard imports
+                non_standard_imports = check_non_standard_imports(code)
+                installed_packages = []
+                if non_standard_imports:
+                    installed_packages = install_packages(container, non_standard_imports)
+
+                # Check for local imports
+                missing_local_imports = check_local_imports(container, code)
+
+                # Update code and get build status
+                build_output, files_added, installed_packages, compilation_status = update_code_internal(
+                    container, code, user_id, file_name, main_file_path
+                )
+                container_info['build_status'] = 'updated'
+
+                # Get container status
+                file_structure = get_container_file_structure(container)
+                detailed_logs = container.logs(tail=200).decode('utf-8')
+                container_info['file_structure'] = file_structure
+
+                # Check container status
+                container.reload()
+                port_mapping = container.ports.get('3001/tcp')
+
+                if port_mapping:
+                    dynamic_url = f"https://{host_port}.{HOST_URL}"
+                    return JsonResponse({
+                        'status': 'success',
+                        'message': 'Container created and initialized',
+                        'container_id': container.id,
+                        'url': dynamic_url,
+                        'can_deploy': True,
+                        'container_info': container_info,
+                        'build_output': build_output,
+                        'detailed_logs': detailed_logger.get_logs(),
+                        'file_list': file_structure,
+                        'installed_packages': installed_packages,
+                        'files_added': files_added,
+                        'compilation_status': compilation_status
+                    })
+                else:
+                    raise Exception("Failed to get port mapping")
+
+            except Exception as code_update_error:
+                detailed_logger.log('error', f"Failed to initialize container: {str(code_update_error)}")
+                # Cleanup failed container
+                try:
+                    container.stop()
+                    container.remove(force=True)
+                except:
+                    pass
+                raise code_update_error
+
         except docker.errors.APIError as e:
             detailed_logger.log('error', f"Failed to create container: {str(e)}")
             return JsonResponse({
@@ -751,77 +840,14 @@ def check_or_create_container(request):
                 'file_list': detailed_logger.get_file_list(),
             }, status=500)
 
-            # Prepare container environment
-        prepare_container_environment(container)
-
-        try:
-
-            # Check for non-standard imports
-            non_standard_imports = check_non_standard_imports(code)
-            installed_packages = []
-            if non_standard_imports:
-                installed_packages = install_packages(container, non_standard_imports)
-
-            # Check for local imports
-            missing_local_imports = check_local_imports(container, code)
-
-            build_output, files_added, installed_packages, compilation_status = update_code_internal(container, code, user_id, file_name,
-                                                                                 main_file_path)
-            container_info['build_status'] = 'updated'
-
-            file_structure = get_container_file_structure(container)
-            datailed_logs = container.logs(tail=200).decode('utf-8')  # Get last 200 lines of logs
-            detailed_logger.log('warning', f"File structure: {file_structure}, \nbuild output {build_output}")
-            container_info['file_structure'] = file_structure
-
-            container.reload()
-            port_mapping = container.ports.get('3001/tcp')
-            detailed_logger.log('warning', "check that container reload successful, port mapping successful")
-            if port_mapping:
-                dynamic_url = f"https://{host_port}.{HOST_URL}"
-                detailed_logger.log('info', f"Container {container_name} running successfully: {dynamic_url}")
-                return JsonResponse({
-                    'status': 'success',
-                    'message': 'Container is running',
-                    'container_id': container.id,
-                    'url': dynamic_url,
-                    'can_deploy': True,
-                    'container_info': container_info,
-                    'build_output': build_output,
-                    'detailed_logs': detailed_logger.get_logs(),
-                    'file_list': file_structure,
-                    'installed_packages': installed_packages,
-                    'files_added': files_added
-                })
-            else:
-                detailed_logger.log('error', f"Failed to get port mapping for container {container_name}")
-                return JsonResponse({
-                    'error': 'Failed to get port mapping',
-                    'container_info': container_info,
-                    'build_output': build_output,
-                    'detailed_logs': detailed_logger.get_logs(),
-                    'file_list': file_structure,
-                    'installed_packages': installed_packages,
-                    'files_added': files_added
-                }, status=500)
         except Exception as e:
-            detailed_logger.log('error', f"!!!Failed to update code in container: {str(e)}")
+            detailed_logger.log('error', f"Error during container creation/initialization: {str(e)}")
             return JsonResponse({
-                'error': f'Failed to update code in container: {str(e)}',
+                'error': str(e),
                 'container_info': container_info,
                 'detailed_logs': detailed_logger.get_logs(),
-                'file_list': [],
+                'file_list': detailed_logger.get_file_list(),
             }, status=500)
-
-    except Exception as e:
-        detailed_logger.log('error', f"Unexpected error: {str(e)}")
-        return JsonResponse({
-            'error': f'Unexpected error: {str(e)}',
-            'container_info': container_info if 'container_info' in locals() else None,
-            'detailed_logs': detailed_logger.get_logs(),
-            'file_list': detailed_logger.get_file_list(),
-        }, status=500)
-
 
 def prepare_container_environment(container):
     """Prepare container environment before running packages installation"""

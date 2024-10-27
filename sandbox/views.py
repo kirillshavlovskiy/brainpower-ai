@@ -572,7 +572,7 @@ def check_container_ready(request):
                         'status': ContainerStatus.COMPILING,
                         'url': f"https://{host_port}.{HOST_URL}",
                         'message': 'Container is ready',
-                        'should_stop_polling': False
+                        'should_stop_polling': True
                     })
 
             return JsonResponse({

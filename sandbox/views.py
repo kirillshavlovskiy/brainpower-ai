@@ -420,15 +420,15 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         logger.info("Analyzing build output...")
         for line in output_lines:
             if "Compiled successfully" in line:
-                compilation_status = ContainerStatus.READY
+                compilation_status = 'Compiled successfully'
                 logger.info("Compilation successful")
                 break
             elif "Compiled with warnings" in line:
-                compilation_status = ContainerStatus.WARNING
+                compilation_status = 'Compiled with warnings'
                 logger.warning("Compilation completed with warnings")
                 break
             elif "Failed to compile" in line:
-                compilation_status = ContainerStatus.COMPILATION_FAILED
+                compilation_status = 'Compiled with errors'
                 logger.error("Compilation failed")
                 break
 
@@ -504,13 +504,13 @@ def get_compilation_status(container):
         logs = get_container_output(container.logs(tail=100))
 
         if "Compiled successfully" in logs:
-            return ContainerStatus.READY
+            return 'Compiled successfully'
         elif "Compiled with warnings" in logs:
-            return ContainerStatus.WARNING
+            return 'Compiled with warnings'
         elif "Failed to compile" in logs:
-            return ContainerStatus.COMPILATION_FAILED
+            return 'Compiled with errors'
         else:
-            return ContainerStatus.COMPILING
+            return 'Compiling'
 
     except Exception as e:
         logger.error(f"Error getting compilation status: {str(e)}")
@@ -543,7 +543,7 @@ def check_container_ready(request):
                 logger.error(f"Error removing container: {str(e)}")
 
             return JsonResponse({
-                'status': 'exited',
+                'status': container.status,
                 'message': 'Previous container failed. Please start server again.',
                 'should_stop_polling': True,
                 'should_cleanup': True  # Signal frontend to clean up old container reference
@@ -558,14 +558,25 @@ def check_container_ready(request):
                 if port_mapping:
                     host_port = port_mapping[0]['HostPort']
                     return JsonResponse({
-                        'status': 'ready',
+                        'status': ContainerStatus.READY,
+                        'url': f"https://{host_port}.{HOST_URL}",
+                        'message': 'Container is ready',
+                        'should_stop_polling': True
+                    })
+
+            if "Compiling..." in logs or "webpack compiled" in logs:
+                port_mapping = container.ports.get('3001/tcp')
+                if port_mapping:
+                    host_port = port_mapping[0]['HostPort']
+                    return JsonResponse({
+                        'status': ContainerStatus.READY,
                         'url': f"https://{host_port}.{HOST_URL}",
                         'message': 'Container is ready',
                         'should_stop_polling': True
                     })
 
             return JsonResponse({
-                'status': 'running',
+                'status': ContainerStatus.READY,
                 'message': 'Container is still starting...',
                 'detailed_logs': logs,
                 'should_stop_polling': False
@@ -753,7 +764,7 @@ def check_or_create_container(request):
         )
 
         return JsonResponse({
-            'status': 'success',
+            'status': container.status,
             'message': 'Container is running',
             'container_id': container.id,
             'url': f"https://{host_port}.{HOST_URL}",

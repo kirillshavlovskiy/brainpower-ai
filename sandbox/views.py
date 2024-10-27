@@ -564,7 +564,7 @@ def check_container_ready(request):
                         'should_stop_polling': True
                     })
 
-            if "Compiling..." in logs or "webpack compiled" in logs:
+            if "Starting the development server......" in logs:
                 port_mapping = container.ports.get('3001/tcp')
                 if port_mapping:
                     host_port = port_mapping[0]['HostPort']
@@ -572,7 +572,7 @@ def check_container_ready(request):
                         'status': ContainerStatus.COMPILING,
                         'url': f"https://{host_port}.{HOST_URL}",
                         'message': 'Container is ready',
-                        'should_stop_polling': True
+                        'should_stop_polling': False
                     })
 
             return JsonResponse({

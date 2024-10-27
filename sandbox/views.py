@@ -623,6 +623,7 @@ def check_container_ready(request):
                 'status': status,
                 'container_id': container.id,
                 'container_name': container.name,
+                'compilationStatus': compilation_status,
                 'url': url,
                 'message': 'Container is ready' if status == ContainerStatus.READY else 'Container is building',
                 'should_stop_polling': status in [ContainerStatus.READY, ContainerStatus.WARNING],

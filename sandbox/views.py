@@ -564,7 +564,7 @@ def check_container_ready(request):
                         'should_stop_polling': True
                     })
 
-            if "Starting the development server..." in logs:
+            if "Compiling..." in logs:
                 port_mapping = container.ports.get('3001/tcp')
                 if port_mapping:
                     host_port = port_mapping[0]['HostPort']

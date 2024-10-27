@@ -617,7 +617,7 @@ def check_container_ready(request):
             elif "Starting the development server..." in logs:
                 status = ContainerStatus.BUILDING
             else:
-                status = ContainerStatus.BUILDING
+                status = ContainerStatus.CREATING
 
             response_data = {
                 'status': status,

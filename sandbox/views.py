@@ -569,14 +569,14 @@ def check_container_ready(request):
                 if port_mapping:
                     host_port = port_mapping[0]['HostPort']
                     return JsonResponse({
-                        'status': ContainerStatus.READY,
+                        'status': ContainerStatus.COMPILING,
                         'url': f"https://{host_port}.{HOST_URL}",
                         'message': 'Container is ready',
                         'should_stop_polling': True
                     })
 
             return JsonResponse({
-                'status': ContainerStatus.READY,
+                'status': ContainerStatus.BUILDING,
                 'message': 'Container is still starting...',
                 'detailed_logs': logs,
                 'should_stop_polling': False

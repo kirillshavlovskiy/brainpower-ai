@@ -533,6 +533,20 @@ def check_container_ready(request):
         container = client.containers.get(container_id)
         container.reload()
 
+        # Collect debug info matching frontend structure
+        debug_info = {
+            'id': container.id,
+            'container_name': container.name,
+            'created_at': container.attrs.get('Created', 'N/A'),
+            'status': container.status,
+            'file_list': get_container_file_structure(container),
+            'container_info': {
+                'ports': container.ports,
+                'image': container.image.tags[0] if container.image.tags else 'Unknown',
+                'state': container.attrs.get('State', {}),
+            }
+        }
+
         # If container exists but exited
         if container.status == 'exited':
             logger.warning(f"Found exited container {container_id}. Removing it.")
@@ -546,107 +560,111 @@ def check_container_ready(request):
                 'status': container.status,
                 'message': 'Previous container failed. Please start server again.',
                 'should_stop_polling': True,
-                'should_cleanup': True
+                'should_cleanup': True,
+                'debug_info': debug_info,
+                'container_id': container.id,
+                'container_name': container.name,
             })
-
-        all_logs = container.logs(stdout=True, stderr=True).decode('utf-8').strip()
-        recent_logs = container.logs(stdout=True, stderr=True, tail=50).decode('utf-8').strip()
-        latest_log = recent_logs.split('\n')[-1] if recent_logs else "No recent logs"
-
-
 
         # If container is running, do normal checks
         if container.status == 'running':
-            logs = container.logs(tail=100).decode('utf-8')
+            logs = container.logs(tail=200).decode('utf-8')
 
+            # Extract timestamps and categorize logs
+            detailed_logs = []
+            for line in logs.split('\n'):
+                if line.strip():
+                    detailed_logs.append(
+                        f"[{datetime.now().isoformat()}] {line.strip()}"
+                    )
+
+            # Parse compilation status
+            compilation_status = 'not ready'
+            if "Compiled successfully" in logs:
+                compilation_status = 'success'
+            elif "Compiled with warnings" in logs:
+                compilation_status = 'warning'
+            elif "Failed to compile" in logs:
+                compilation_status = 'failed'
+            elif "Compiling..." in logs:
+                compilation_status = 'compiling'
+
+            # Extract warnings if present
+            warnings = None
+            if 'WARNING in' in logs:
+                warnings = [
+                    w.split('\n')[0].strip()
+                    for w in logs.split('WARNING in')[1:]
+                    if w.strip()
+                ]
+
+            # Extract errors if present
+            errors = None
+            if 'Failed to compile' in logs:
+                error_section = logs.split('Failed to compile')[1].split('\n')[1:]
+                errors = [line.strip() for line in error_section if line.strip()]
+
+            # Get URL if available
             port_mapping = container.ports.get('3001/tcp')
-            if not port_mapping:
-                return JsonResponse({
-                    'status': ContainerStatus.STARTING,
-                    'message': 'Container is starting...',
-                    'detailed_logs': logs,
-                    'should_stop_polling': False
-                })
-
-            host_port = port_mapping[0]['HostPort']
-            dynamic_url = f"https://{host_port}.{HOST_URL}"
-
-            # Parse package installation status from logs
-            package_status = parse_package_status(logs)
-
-            if package_status:
-                return JsonResponse({
-                    'status': ContainerStatus.BUILDING,
-                    'message': 'Installing packages...',
-                    'package_status': package_status,
-                    'detailed_logs': logs,
-                    'should_stop_polling': False
-                })
+            url = f"https://{port_mapping[0]['HostPort']}.{HOST_URL}" if port_mapping else None
 
             if "Compiled successfully" in logs or "webpack compiled" in logs:
-                return JsonResponse({
-                    'status': ContainerStatus.READY,
-                    'url': f"https://{host_port}.{HOST_URL}",
-                    'message': 'Container is ready',
-                    'detailed_logs': all_logs,
-                    'should_stop_polling': True
-                })
-            if "Failed to compile" in all_logs or "Error:" in all_logs:
-                return JsonResponse({
-                    'status': ContainerStatus.COMPILATION_FAILED,
-                    'url': f"https://{host_port}.{HOST_URL}",
-                    'message': "Compilation failed. Check the logs for details.",
-                    'detailed_logs': all_logs,
-                    'should_stop_polling': False
-                })
+                status = ContainerStatus.READY
+                if warnings:
+                    status = ContainerStatus.WARNING
+            elif "Compiling..." in logs:
+                status = ContainerStatus.COMPILING
+            elif "Starting the development server..." in logs:
+                status = ContainerStatus.BUILDING
+            else:
+                status = ContainerStatus.BUILDING
 
-            if "Compiling..." in logs:
-                port_mapping = container.ports.get('3001/tcp')
-                if port_mapping:
-                    host_port = port_mapping[0]['HostPort']
-                    return JsonResponse({
-                        'status': ContainerStatus.COMPILING,
-                        'url': f"https://{host_port}.{HOST_URL}",
-                        'message': 'Compiling web app...',
-                        'detailed_logs': logs,
-                        'should_stop_polling': False
-                    })
+            response_data = {
+                'status': status,
+                'container_id': container.id,
+                'container_name': container.name,
+                'compilationStatus': compilation_status,
+                'url': url,
+                'message': 'Container is ready' if status == ContainerStatus.READY else 'Container is building',
+                'should_stop_polling': status in [ContainerStatus.READY, ContainerStatus.WARNING],
+                'debug_info': debug_info,
+                'detailed_logs': detailed_logs,
+                'warnings': warnings,
+                'errors': errors
+            }
 
-            if "Starting the development server..." in logs:
-                return JsonResponse({
-                    'status': ContainerStatus.BUILDING,
-                    'url': f"https://{host_port}.{HOST_URL}",
-                    'message': 'Starting build process...',
-                    'detailed_logs': logs,
-                    'should_stop_polling': False
-                })
+            if url:
+                response_data['url'] = url
 
-        # Any other status
+            return JsonResponse(response_data)
+
         return JsonResponse({
             'status': container.status,
-            'url': f"https://{host_port}.{HOST_URL}",
             'message': f'Container is in {container.status} state. Please start server again.',
             'should_stop_polling': True,
-            'should_cleanup': True
+            'should_cleanup': True,
+            'debug_info': debug_info,
+            'container_id': container.id,
+            'container_name': container.name
         })
 
     except docker.errors.NotFound:
         logger.info(f"Container {container_id} not found. User needs to start server manually.")
         return JsonResponse({
-            'status': ContainerStatus.NOT_FOUND,
+            'status': 'not_found',
             'message': 'No server running. Please click "Start Server" to begin.',
-            'detailed_logs': [],
             'should_stop_polling': True
         })
 
     except Exception as e:
         logger.error(f"Error checking container status: {str(e)}")
         return JsonResponse({
-            'status': ContainerStatus.ERROR,
+            'status': 'error',
             'message': str(e),
-            'detailed_logs': [],
-            'should_stop_polling': True
+            'should_stop_polling': True,
+            'error': str(e)
         }, status=500)
+
 
 
 def parse_package_status(logs):

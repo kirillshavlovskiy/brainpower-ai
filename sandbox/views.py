@@ -308,6 +308,8 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         return str(result)
 
     try:
+        set_container_permissions(container)
+
         container.reload()
         if container.status != 'running':
             logger.info(f"Container {container.id} not running, attempting to start...")
@@ -327,7 +329,6 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         if exec_result.exit_code != 0:
             raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
         files_added.append('/app/src/component.js')
-
 
         logger.info(f"Updated component.js in container with content from {file_name} at path {main_file_path}")
 

@@ -809,8 +809,8 @@ def check_or_create_container(request):
                 },
                 volumes={
                 #     f"{react_renderer_path}/package.json": {'bind': '/app/package.json', 'mode': 'ro'},
-                #     f"{react_renderer_path}/tsconfig.json": {'bind': '/app/tsconfig.json', 'mode': 'ro'},
-                #     f"{react_renderer_path}/tailwind.config.json": {'bind': '/app/tsconfig.json', 'mode': 'ro'},
+                    f"{react_renderer_path}/tsconfig.json": {'bind': '/app/tsconfig.json', 'mode': 'ro'},
+                    f"{react_renderer_path}/tailwind.config.json": {'bind': '/app/tsconfig.json', 'mode': 'ro'},
                     f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'ro'},
                     f"{react_renderer_path}/src/index.js": {'bind': '/app/src/index.js', 'mode': 'ro'},
                     f"{react_renderer_path}/src/index.css": {'bind': '/app/src/index.css', 'mode': 'ro'},

@@ -124,7 +124,7 @@ def check_container(request):
 
     container_name = f'react_renderer_{user_id}_{file_name}'
     logger.info(f"Looking for container: {container_name}")
-
+    compilation_status = 'not ready'
     try:
         # Log container lookup attempt
         logger.info(f"Attempting to get container with name: {container_name}")
@@ -169,6 +169,7 @@ def check_container(request):
 
                 response_data = {
                     'status': ContainerStatus.READY,
+                    'compilationStatus': compilation_status,
                     'container_id': container.id,
                     'container_name': container.name,
                     'container_info': container_info,
@@ -183,6 +184,7 @@ def check_container(request):
                 logger.warning("Container running but no port mapping found")
                 return JsonResponse({
                     'status': ContainerStatus.FAILED,
+                    'compilationStatus': compilation_status,
                     'container_id': container.id,
                     'reason': 'No port mapping found'
                 })
@@ -190,6 +192,7 @@ def check_container(request):
             logger.warning(f"Container found but not running. Status: {container.status}")
             return JsonResponse({
                 'status': ContainerStatus.NOT_READY,
+                'compilationStatus': compilation_status,
                 'container_id': container.id,
                 'reason': f'Container status is {container.status}'
             })
@@ -198,6 +201,7 @@ def check_container(request):
         logger.warning(f"Container not found: {container_name}")
         return JsonResponse({
             'status': 'not_found',
+            'compilationStatus': compilation_status,
             'message': f'No container found with name: {container_name}'
         }, status=404)
     except Exception as e:

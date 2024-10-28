@@ -570,18 +570,6 @@ def check_container_ready(request):
                         f"[{datetime.now().isoformat()}] {line.strip()}"
                     )
 
-            # Parse compilation status
-            compilation_status = 'not ready'
-
-            if 'Failed to compile' in logs:
-                compilation_status = 'failed'
-            elif "Compiled" in logs or "Webpack compiled" in logs:
-                compilation_status = 'success'
-            elif "Compiling" in logs:
-                compilation_status = 'compiling'
-            else:
-                compilation_status = 'not ready'
-
             # Extract warnings if present
             warnings = None
             if 'WARNING in' in logs:
@@ -616,6 +604,21 @@ def check_container_ready(request):
                 status = ContainerStatus.BUILDING
             else:
                 status = ContainerStatus.CREATING
+
+            # Parse compilation status
+            compilation_status = 'not ready'
+
+            if 'Failed to compile' in logs or errors:
+                compilation_status = 'failed to compile'
+            elif warnings:
+                compilation_status = 'compiled with warnings'
+            elif "Compiled" in logs or "Webpack compiled" in logs:
+                compilation_status = 'successfully compiled'
+            elif "Compiling" in logs:
+                compilation_status = 'compiling'
+            else:
+                compilation_status = 'not ready'
+
             logger.info(f"Checking container ready: \nstatus: {status}, \ncompilation status: {compilation_status}, \nwarnings: {warnings}, \nerrors: {errors}")
 
             response_data = {
@@ -637,8 +640,10 @@ def check_container_ready(request):
 
             return JsonResponse(response_data)
 
+
         return JsonResponse({
-            'status': container.status,
+            'status': 'not ready',
+            'compilationStatus': 'not ready',
             'message': f'Container is in {container.status} state. Please start server again.',
             'should_stop_polling': True,
             'should_cleanup': True,

@@ -864,9 +864,7 @@ def check_or_create_container(request):
                 user='node',
                 environment=env_vars,
                 volumes={
-                    f"{react_renderer_path}/src": {'bind': '/app/src', 'mode': 'rw'},
-                    f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'rw'},
-                    f"{react_renderer_path}/build": {'bind': '/app/build', 'mode': 'rw'},
+                    f"{react_renderer_path}/": {'bind': '/app', 'mode': 'rw'}
                 },
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',

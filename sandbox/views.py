@@ -317,14 +317,6 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         max_attempts = 3
         for attempt in range(max_attempts):
             try:
-                # First clean up the src directory completely
-                exec_result = container.exec_run(["sh", "-c", "rm -rf /app/src/*"])
-                if exec_result.exit_code != 0:
-                    logger.error(f"Failed to clean src directory: {exec_result.output.decode()}")
-                    raise Exception("Failed to clean container directory")
-
-                logger.info("Cleaned up src directory")
-
                 exec_result = container.exec_run([
                     "sh", "-c",
                     f"echo {encoded_code} | base64 -d > /app/src/component.js"
@@ -333,9 +325,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                 logger.info(f"Updated component.js in container with content from {file_name}")
                 if exec_result.exit_code != 0:
                     raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
-                # Log current state
-                ls_result = container.exec_run(["ls", "-la", "/app/src"])
-                logger.info(f"Container src directory after cleanup and update:\n{ls_result.output.decode()}")
+                files_added.append('/app/src/component.js')
                 break
             except docker.errors.APIError as e:
                 if attempt == max_attempts - 1:
@@ -820,9 +810,12 @@ def check_or_create_container(request):
                 volumes={
                     f"{react_renderer_path}/package.json": {'bind': '/app/package.json', 'mode': 'ro'},
                     f"{react_renderer_path}/tsconfig.json": {'bind': '/app/tsconfig.json', 'mode': 'ro'},
+                    f"{react_renderer_path}/tailwind.config.json": {'bind': '/app/tsconfig.json', 'mode': 'ro'},
                     f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'ro'},
                     f"{react_renderer_path}/src/index.js": {'bind': '/app/src/index.js', 'mode': 'ro'},
                     f"{react_renderer_path}/src/index.css": {'bind': '/app/src/index.css', 'mode': 'ro'},
+                    f"{react_renderer_path}/postcss.config.js": {'bind': '/app/postcss.config.js', 'mode': 'ro'},
+
                 },
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',

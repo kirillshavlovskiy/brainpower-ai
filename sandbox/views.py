@@ -787,25 +787,6 @@ def check_or_create_container(request):
         host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
 
         try:
-            # Define source code directory bind mounts
-            source_mounts = {
-                # Mount source directory for runtime modifications
-                f"{react_renderer_path}/src": {
-                    'bind': '/app/src',
-                    'mode': 'rw'
-                },
-                # Mount public assets
-                f"{react_renderer_path}/public": {
-                    'bind': '/app/public',
-                    'mode': 'rw'
-                },
-                # Mount build directory for output
-                f"{react_renderer_path}/build": {
-                    'bind': '/app/build',
-                    'mode': 'rw'
-                }
-            }
-
             container = client.containers.run(
                 image='react_renderer_cra',
                 command='yarn start',
@@ -822,7 +803,14 @@ def check_or_create_container(request):
                     'CHOKIDAR_USEPOLLING': 'true',  # Enable hot reloading
                     'WATCHPACK_POLLING': 'true'  # Enable file watching
                 },
-                volumes=source_mounts,
+                volumes={
+                    # Mount the entire src directory
+                    f"{react_renderer_path}/src": {'bind': '/app/src', 'mode': 'rw'},
+                    # Mount public directory if needed
+                    f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'rw'},
+                    # Mount build directory for output
+                    f"{react_renderer_path}/build": {'bind': '/app/build', 'mode': 'rw'},
+                },
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',
                 memswap_limit='16g',

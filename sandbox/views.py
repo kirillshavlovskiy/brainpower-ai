@@ -783,30 +783,18 @@ def check_or_create_container(request):
     file_name = data.get('file_name', 'component.js')
     main_file_path = data.get('main_file_path')
 
-    detailed_logger.log('info',
-                        f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
+    detailed_logger.log('info', f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
 
     if not all([code, language, file_name]):
         return JsonResponse({'error': 'Missing required fields'}, status=400)
     if language != 'react':
         return JsonResponse({'error': 'Unsupported language'}, status=400)
-
-    # Determine component type based on file extension
-    file_extension = file_name.split('.')[-1].lower()
-    is_typescript = file_extension in ['ts', 'tsx']
-
-    # Set appropriate component filename and compiler options
-    if is_typescript:
-        component_filename = 'component.tsx'
-        compiler_options = {
-            'target': 'es5',
-            'jsx': 'react',
-            'module': 'esnext',
-            'strict': True
-        }
-    else:
-        component_filename = 'component.js'
-        compiler_options = None
+        # Add validation
+    if not file_name or not isinstance(file_name, str):
+        return JsonResponse({
+            'error': 'Invalid or missing file name',
+            'details': f'Received file_name: {file_name}'
+        }, status=400)
 
     react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'
     container_name = f'react_renderer_{user_id}_{file_name}'
@@ -816,8 +804,7 @@ def check_or_create_container(request):
         'container_name': container_name,
         'created_at': datetime.now().isoformat(),
         'files_added': [],
-        'build_status': 'pending',
-        'component_type': 'TypeScript' if is_typescript else 'JavaScript'
+        'build_status': 'pending'
     }
 
     try:
@@ -837,34 +824,30 @@ def check_or_create_container(request):
         host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
 
         try:
-            # Prepare environment variables based on component type
-            env_vars = {
-                'USER_ID': user_id,
-                'REACT_APP_USER_ID': user_id,
-                'FILE_NAME': file_name,
-                'PORT': str(3001),
-                'NODE_ENV': 'development',
-                'NODE_OPTIONS': '--max-old-space-size=8192',
-                'CHOKIDAR_USEPOLLING': 'true',
-                'WATCHPACK_POLLING': 'true',
-                'COMPONENT_TYPE': 'typescript' if is_typescript else 'javascript'
-            }
-
-            if is_typescript:
-                env_vars.update({
-                    'TSC_COMPILE_ON_ERROR': 'true',
-                    'TYPESCRIPT_COMPILER_OPTIONS': json.dumps(compiler_options)
-                })
-
             container = client.containers.run(
                 image='react_renderer_cra',
                 command='yarn start',
                 name=container_name,
                 detach=True,
                 user='node',
-                environment=env_vars,
+                environment={
+                    'USER_ID': user_id,
+                    'REACT_APP_USER_ID': user_id,
+                    'FILE_NAME': file_name,
+                    'PORT': str(3001),
+                    'NODE_ENV': 'development',
+                    'NODE_OPTIONS': '--max-old-space-size=8192',
+                    'CHOKIDAR_USEPOLLING': 'true',  # Enable hot reloading
+                    'WATCHPACK_POLLING': 'true'  # Enable file watching
+                },
                 volumes={
-                    f"{react_renderer_path}/": {'bind': '/app', 'mode': 'rw'},                },
+                    # Mount the entire src directory
+                    f"{react_renderer_path}/src": {'bind': '/app/src', 'mode': 'rw'},
+                    # Mount public directory if needed
+                    f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'rw'},
+                    # Mount build directory for output
+                    f"{react_renderer_path}/build": {'bind': '/app/build', 'mode': 'rw'},
+                },
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',
                 memswap_limit='16g',
@@ -879,22 +862,9 @@ def check_or_create_container(request):
             if container.status != 'running':
                 raise Exception("Container failed to start properly")
 
-            # Initialize the src directory structure with appropriate file types
-            init_commands = [
-                "mkdir -p /app/src",
-                "touch /app/src/index.js /app/src/index.css",
-                f"touch /app/src/{component_filename}"
-            ]
-
-            # Add TypeScript-specific initialization if needed
-            if is_typescript:
-                init_commands.extend([
-                    "touch /app/src/tsconfig.json",
-                    "echo '{}' > /app/src/tsconfig.json"  # Initialize empty tsconfig
-                ])
-
+            # Initialize the src directory structure
             container.exec_run(
-                f"sh -c '{' && '.join(init_commands)}'",
+                "sh -c 'mkdir -p /app/src && touch /app/src/index.js /app/src/index.css'",
                 user='node'
             )
 
@@ -911,15 +881,11 @@ def check_or_create_container(request):
                 'detailed_logs': detailed_logger.get_logs()
             }, status=500)
 
+        # Continue with code update for both new and existing containers
     try:
-        # Update code in container with appropriate component file
+
         build_output, files_added, installed_packages, compilation_status = update_code_internal(
-            container,
-            code,
-            user_id,
-            component_filename,  # Use the determined component filename
-            main_file_path,
-            is_typescript=is_typescript
+            container, code, user_id, file_name, main_file_path
         )
 
         return JsonResponse({
@@ -930,7 +896,6 @@ def check_or_create_container(request):
             'can_deploy': True,
             'build_output': build_output,
             'compilation_status': compilation_status,
-            'component_type': 'TypeScript' if is_typescript else 'JavaScript',
             'detailed_logs': detailed_logger.get_logs()
         })
 

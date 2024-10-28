@@ -168,6 +168,7 @@ def check_container(request):
                 logger.info(f"Host port found: {host_port}")
 
                 response_data = {
+                    'isServerRunning': 'true',
                     'status': ContainerStatus.READY,
                     'compilationStatus': compilation_status,
                     'container_id': container.id,
@@ -183,6 +184,7 @@ def check_container(request):
             else:
                 logger.warning("Container running but no port mapping found")
                 return JsonResponse({
+                    'isServerRunning': 'false',
                     'status': ContainerStatus.FAILED,
                     'compilationStatus': compilation_status,
                     'container_id': container.id,
@@ -191,6 +193,7 @@ def check_container(request):
         else:
             logger.warning(f"Container found but not running. Status: {container.status}")
             return JsonResponse({
+                'isServerRunning': 'false',
                 'status': ContainerStatus.NOT_READY,
                 'compilationStatus': compilation_status,
                 'container_id': container.id,
@@ -200,6 +203,7 @@ def check_container(request):
     except docker.errors.NotFound:
         logger.warning(f"Container not found: {container_name}")
         return JsonResponse({
+            'isServerRunning': 'false',
             'status': ContainerStatus.NOT_FOUND,
             'compilationStatus': compilation_status,
             'message': f'No container found with name: {container_name}'
@@ -412,18 +416,41 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         output_text = get_container_output(exec_result)
         output_lines = output_text.split('\n')
         build_output = output_lines
-        compilation_status = ContainerStatus.COMPILING
+        if container.status == 'running':
+            logs = container.logs(tail=50).decode('utf-8')
+            # Extract warnings if present
+            warnings = None
+            if 'WARNING in' in logs:
+                warnings = [
+                    w.split('\n')[0].strip()
+                    for w in logs.split('WARNING in')[1:]
+                    if w.strip()
+                ]
+
+            # Extract errors if present
+            errors = None
+            if 'Failed to compile' in logs:
+                error_section = logs.split('Failed to compile')[1].split('\n')[1:]
+                errors = [line.strip() for line in error_section if line.strip()]
+            logger.info(
+                f"Checking container ready: \ncompilation status: {container.id}, \nwarnings: {warnings}, \nerrors: {errors}")
+
+        # Get URL if available
+        port_mapping = container.ports.get('3001/tcp')
+        url = f"https://{port_mapping[0]['HostPort']}.{HOST_URL}" if port_mapping else None
 
         logger.info("Analyzing build output...", output_lines)
         for line in output_lines:
-            if "Compiled successfully" in logs:
-                compilation_status = 'success'
-            elif "Compiled with warnings" in logs:
-                compilation_status = 'warning'
-            elif "Failed to compile" in logs:
-                compilation_status = 'failed'
-            elif "Compiling..." in logs:
+            if 'Failed to compile' in line or errors:
+                compilation_status = 'failed to compile'
+            elif warnings:
+                compilation_status = 'compiled with warnings'
+            elif "Compiled" in logs or "Webpack compiled" in logs:
+                compilation_status = 'successfully compiled'
+            elif "Compiling" in logs:
                 compilation_status = 'compiling'
+            else:
+                compilation_status = 'not ready'
 
         # Save compilation status
         status_result = exec_command_with_retry(container, [
@@ -474,41 +501,41 @@ def get_file_with_extension(user, base_file_path, import_path, base_path):
     return None, None
 
 
-def get_compilation_status(container):
-    """Get container compilation status safely"""
-    try:
-        def get_container_output(result):
-            """Safely get container command output"""
-            if hasattr(result, 'output'):
-                if hasattr(result.output, 'decode'):
-                    return result.output.decode()
-                return str(result.output)
-            return str(result)
-
-        # Try to read the compilation status file
-        status_result = exec_command_with_retry(container, ["cat", "/app/compilation_status"])
-        saved_status = get_container_output(status_result).strip()
-
-        if saved_status and saved_status in [ContainerStatus.READY, ContainerStatus.WARNING,
-                                             ContainerStatus.COMPILATION_FAILED]:
-            return saved_status
-
-        # If no valid status is saved, or if it's still COMPILING, check the logs
-        logs = get_container_output(container.logs(tail=100))
-
-        compilation_status = 'not ready'
-        if "Compiled successfully" in logs:
-            compilation_status = 'success'
-        elif "Compiled with warnings" in logs:
-            compilation_status = 'warning'
-        elif "Failed to compile" in logs:
-            compilation_status = 'failed'
-        elif "Compiling..." in logs:
-            compilation_status = 'compiling'
-        return compilation_status
-    except Exception as e:
-        logger.error(f"Error getting compilation status: {str(e)}")
-        return ContainerStatus.ERROR
+# def get_compilation_status(container):
+#     """Get container compilation status safely"""
+#     try:
+#         def get_container_output(result):
+#             """Safely get container command output"""
+#             if hasattr(result, 'output'):
+#                 if hasattr(result.output, 'decode'):
+#                     return result.output.decode()
+#                 return str(result.output)
+#             return str(result)
+#
+#         # Try to read the compilation status file
+#         status_result = exec_command_with_retry(container, ["cat", "/app/compilation_status"])
+#         saved_status = get_container_output(status_result).strip()
+#
+#         if saved_status and saved_status in [ContainerStatus.READY, ContainerStatus.WARNING,
+#                                              ContainerStatus.COMPILATION_FAILED]:
+#             return saved_status
+#
+#         # If no valid status is saved, or if it's still COMPILING, check the logs
+#         logs = get_container_output(container.logs(tail=100))
+#
+#         compilation_status = 'not ready'
+#         if "Compiled successfully" in logs:
+#             compilation_status = 'success'
+#         elif "Compiled with warnings" in logs:
+#             compilation_status = 'warning'
+#         elif "Failed to compile" in logs:
+#             compilation_status = 'failed'
+#         elif "Compiling..." in logs:
+#             compilation_status = 'compiling'
+#         return compilation_status
+#     except Exception as e:
+#         logger.error(f"Error getting compilation status: {str(e)}")
+#         return ContainerStatus.ERROR
 
 
 @api_view(['GET'])
@@ -607,7 +634,6 @@ def check_container_ready(request):
                 status = ContainerStatus.CREATING
 
             # Parse compilation status
-            compilation_status = 'not ready'
 
             if 'Failed to compile' in logs or errors:
                 compilation_status = 'failed to compile'

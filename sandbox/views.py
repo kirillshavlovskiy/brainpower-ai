@@ -807,16 +807,16 @@ def check_or_create_container(request):
                     'NODE_ENV': 'production',  # Set to production
                     'NODE_OPTIONS': '--max-old-space-size=8192'
                 },
-                volumes={
-                    f"{react_renderer_path}/package.json": {'bind': '/app/package.json', 'mode': 'ro'},
-                    f"{react_renderer_path}/tsconfig.json": {'bind': '/app/tsconfig.json', 'mode': 'ro'},
-                    f"{react_renderer_path}/tailwind.config.json": {'bind': '/app/tsconfig.json', 'mode': 'ro'},
-                    f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'ro'},
-                    f"{react_renderer_path}/src/index.js": {'bind': '/app/src/index.js', 'mode': 'ro'},
-                    f"{react_renderer_path}/src/index.css": {'bind': '/app/src/index.css', 'mode': 'ro'},
-                    f"{react_renderer_path}/postcss.config.js": {'bind': '/app/postcss.config.js', 'mode': 'ro'},
-
-                },
+                # volumes={
+                #     f"{react_renderer_path}/package.json": {'bind': '/app/package.json', 'mode': 'ro'},
+                #     f"{react_renderer_path}/tsconfig.json": {'bind': '/app/tsconfig.json', 'mode': 'ro'},
+                #     f"{react_renderer_path}/tailwind.config.json": {'bind': '/app/tsconfig.json', 'mode': 'ro'},
+                #     f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'ro'},
+                #     f"{react_renderer_path}/src/index.js": {'bind': '/app/src/index.js', 'mode': 'ro'},
+                #     f"{react_renderer_path}/src/index.css": {'bind': '/app/src/index.css', 'mode': 'ro'},
+                #     f"{react_renderer_path}/postcss.config.js": {'bind': '/app/postcss.config.js', 'mode': 'ro'},
+                #
+                # },
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',
                 memswap_limit='16g',

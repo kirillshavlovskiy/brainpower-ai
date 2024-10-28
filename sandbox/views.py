@@ -310,13 +310,21 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         if container.status != 'running':
             logger.info(f"Container {container.id} not running, attempting to start...")
             container.start()
-            time.sleep(5)  # Wait for container to fully start
+            time.sleep(3)  # Wait for container to fully start
 
         # Update component.js
         encoded_code = base64.b64encode(code.encode()).decode()
         max_attempts = 3
         for attempt in range(max_attempts):
             try:
+                # First clean up the src directory completely
+                exec_result = container.exec_run(["sh", "-c", "rm -rf /app/src/*"])
+                if exec_result.exit_code != 0:
+                    logger.error(f"Failed to clean src directory: {exec_result.output.decode()}")
+                    raise Exception("Failed to clean container directory")
+
+                logger.info("Cleaned up src directory")
+
                 exec_result = container.exec_run([
                     "sh", "-c",
                     f"echo {encoded_code} | base64 -d > /app/src/component.js"
@@ -325,7 +333,9 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                 logger.info(f"Updated component.js in container with content from {file_name}")
                 if exec_result.exit_code != 0:
                     raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
-                files_added.append('/app/src/component.js')
+                # Log current state
+                ls_result = container.exec_run(["ls", "-la", "/app/src"])
+                logger.info(f"Container src directory after cleanup and update:\n{ls_result.output.decode()}")
                 break
             except docker.errors.APIError as e:
                 if attempt == max_attempts - 1:

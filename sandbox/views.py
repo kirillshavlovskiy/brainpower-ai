@@ -614,7 +614,8 @@ def check_container_ready(request):
                 status = ContainerStatus.WARNING
             elif "Compiled" in logs or "Webpack compiled" in logs:
                 status = ContainerStatus.READY
-
+            elif "Compiling" in logs:
+                status = ContainerStatus.COMPILING
             elif "Starting the development server..." in logs:
                 status = ContainerStatus.BUILDING
             else:

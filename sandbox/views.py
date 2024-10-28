@@ -412,21 +412,30 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         output_lines = output_text.split('\n')
         build_output = output_lines
         compilation_status = ContainerStatus.COMPILING
+        # First check for critical errors
+        for line in output_lines:
+            if "Failed to compile" in line:
+                error_details = "\n".join([l for l in output_lines if "ERROR in" in l])
+                raise Exception(f"Build failed: \n{error_details}")
+
+            if "Module not found" in line:
+                raise Exception(f"Missing module: {line}")
+
+            if "ERROR in" in line:
+                error_context = "\n".join(output_lines[output_lines.index(line):output_lines.index(line) + 3])
+                raise Exception(f"Build error: \n{error_context}")
+
 
         logger.info("Analyzing build output...", output_lines)
         for line in output_lines:
             if "Compiled successfully" in line:
                 compilation_status = 'success'
-                break
             elif "Compiled with warnings" in line:
                 compilation_status = 'warning'
-                break
             elif "Failed to compile" in line:
                 compilation_status = 'failed'
-                break
             elif "Compiling..." in line:
                 compilation_status = 'compiling'
-                break
 
         # Save compilation status
         status_result = exec_command_with_retry(container, [

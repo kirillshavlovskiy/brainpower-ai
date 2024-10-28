@@ -200,7 +200,7 @@ def check_container(request):
     except docker.errors.NotFound:
         logger.warning(f"Container not found: {container_name}")
         return JsonResponse({
-            'status': 'not_found',
+            'status': ContainerStatus.NOT_FOUND,
             'compilationStatus': compilation_status,
             'message': f'No container found with name: {container_name}'
         }, status=404)

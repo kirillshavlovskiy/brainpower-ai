@@ -595,6 +595,7 @@ def check_container_ready(request):
             if 'Failed to compile' in logs:
                 error_section = logs.split('Failed to compile')[1].split('\n')[1:]
                 errors = [line.strip() for line in error_section if line.strip()]
+            logger.info(f"Checking container ready: \ncompilation status: {container_id}, \nwarnings: {warnings}, \nerrors: {errors}")
 
             # Get URL if available
             port_mapping = container.ports.get('3001/tcp')
@@ -610,6 +611,7 @@ def check_container_ready(request):
                 status = ContainerStatus.BUILDING
             else:
                 status = ContainerStatus.CREATING
+            logger.info(f"Checking container ready: \nstatus: {status}, \ncompilation status: {compilation_status}, \nwarnings: {warnings}, \nerrors: {errors}")
 
             response_data = {
                 'status': status,

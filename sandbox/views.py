@@ -315,26 +315,22 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         # Update component.js
         encoded_code = base64.b64encode(code.encode()).decode()
 
-        try:
-            # Ensure the src directory exists and has correct permissions
-            container.exec_run(
-                "sh -c 'mkdir -p /app/src && chown -R node:node /app/src'",
-                user='root'
-            )
-            # Write the component code
-            exec_result = container.exec_run([
-                "sh", "-c",
-                f"echo {encoded_code} | base64 -d > /app/src/component.js"
-            ], user='node')
+        # Ensure the src directory exists and has correct permissions
+        container.exec_run(
+            "sh -c 'mkdir -p /app/src && chown -R node:node /app/src'",
+            user='root'
+        )
+        # Write the component code
+        exec_result = container.exec_run([
+            "sh", "-c",
+            f"echo {encoded_code} | base64 -d > /app/src/component.js"
+        ], user='node')
 
-            logger.info(f"Updated component.js in container with content from {file_name}")
-            if exec_result.exit_code != 0:
-                raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
-            files_added.append('/app/src/component.js')
+        logger.info(f"Updated component.js in container with content from {file_name}")
+        if exec_result.exit_code != 0:
+            raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
+        files_added.append('/app/src/component.js')
 
-        except Exception as e:
-            logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
-            raise
 
         logger.info(f"Updated component.js in container with content from {file_name} at path {main_file_path}")
         logger.info(f"Processing for user: {user}")

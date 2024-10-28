@@ -789,10 +789,29 @@ def check_or_create_container(request):
         host_port = port_bindings.get('3001/tcp', [{}])[0].get('HostPort')
 
     except docker.errors.NotFound:
-        detailed_logger.log('info', f"Container {container_name} not found. Creating new container.")
+        logger.info(f"Container {container_name} not found. Creating new container.")
         host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
 
         try:
+            # Define source code directory bind mounts
+            source_mounts = {
+                # Mount source directory for runtime modifications
+                f"{react_renderer_path}/src": {
+                    'bind': '/app/src',
+                    'mode': 'rw'
+                },
+                # Mount public assets
+                f"{react_renderer_path}/public": {
+                    'bind': '/app/public',
+                    'mode': 'rw'
+                },
+                # Mount build directory for output
+                f"{react_renderer_path}/build": {
+                    'bind': '/app/build',
+                    'mode': 'rw'
+                }
+            }
+
             container = client.containers.run(
                 image='react_renderer_cra',
                 command='yarn start',
@@ -804,19 +823,12 @@ def check_or_create_container(request):
                     'REACT_APP_USER_ID': user_id,
                     'FILE_NAME': file_name,
                     'PORT': str(3001),
-                    'NODE_ENV': 'production',  # Set to production
-                    'NODE_OPTIONS': '--max-old-space-size=8192'
+                    'NODE_ENV': 'development',
+                    'NODE_OPTIONS': '--max-old-space-size=8192',
+                    'CHOKIDAR_USEPOLLING': 'true',  # Enable hot reloading
+                    'WATCHPACK_POLLING': 'true'  # Enable file watching
                 },
-                volumes={
-                    f"{react_renderer_path}/package.json": {'bind': '/app/package.json', 'mode': 'rw'},
-                    f"{react_renderer_path}/tsconfig.json": {'bind': '/app/tsconfig.json', 'mode': 'rw'},
-                    f"{react_renderer_path}/tailwind.config.json": {'bind': '/app/tsconfig.json', 'mode': 'rw'},
-                    f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'rw'},
-                    f"{react_renderer_path}/src/index.js": {'bind': '/app/src/index.js', 'mode': 'rw'},
-                    f"{react_renderer_path}/src/index.css": {'bind': '/app/src/index.css', 'mode': 'rw'},
-                    f"{react_renderer_path}/postcss.config.js": {'bind': '/app/postcss.config.js', 'mode': 'rw'},
-                #
-                },
+                volumes=source_mounts,
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',
                 memswap_limit='16g',
@@ -831,15 +843,14 @@ def check_or_create_container(request):
             if container.status != 'running':
                 raise Exception("Container failed to start properly")
 
-        except docker.errors.ImageNotFound:
-            detailed_logger.log('error', "Docker image 'react_renderer_cra' not found locally")
-            return JsonResponse({
-                'error': 'Docker image not found. Please ensure react_renderer_cra is built locally.',
-                'detailed_logs': detailed_logger.get_logs()
-            }, status=500)
+            # Initialize the src directory structure
+            container.exec_run(
+                "sh -c 'mkdir -p /app/src && touch /app/src/index.js /app/src/index.css'",
+                user='node'
+            )
 
         except Exception as e:
-            detailed_logger.log('error', f"Failed to create container: {str(e)}")
+            logger.error(f"Failed to create container: {str(e)}", exc_info=True)
             if 'container' in locals():
                 try:
                     container.stop()

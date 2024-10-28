@@ -824,9 +824,7 @@ def check_or_create_container(request):
                     'WATCHPACK_POLLING': 'true'
                 },
                 volumes={
-                    # Only mount the src and public directories
-                    f"{react_renderer_path}/src": {'bind': '/app/src', 'mode': 'rw'},
-                    f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'rw'},
+                    react_renderer_path: {'bind': '/app', 'mode': 'rw'},
                 },
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',
@@ -835,24 +833,44 @@ def check_or_create_container(request):
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
 
+            # Add detailed logging
             time.sleep(2)
             container.reload()
 
+            # Get detailed container information
+            logger.info("Container inspection:", container.attrs)
+
+            # Get PATH and working directory
+            exec_result = container.exec_run('env', user='node')
+            logger.info("Environment variables:", exec_result.output.decode())
+
+            exec_result = container.exec_run('pwd', user='node')
+            logger.info("Working directory:", exec_result.output.decode())
+
+            exec_result = container.exec_run('ls -la /app', user='node')
+            logger.info("App directory contents:", exec_result.output.decode())
+
+            exec_result = container.exec_run('ls -la /app/node_modules/.bin', user='node')
+            logger.info("Bin directory contents:", exec_result.output.decode())
+
             if container.status != 'running':
                 logs = container.logs().decode('utf-8')
+                logger.error(f"Container failed with logs: {logs}")
                 raise Exception(f"Container failed to start properly. Logs: {logs}")
 
         except Exception as e:
-            logger.error(f"Failed to create container: {str(e)}", exc_info=True)
+            logger.error(f"Container error details:", exc_info=True)
             if 'container' in locals():
+                logs = container.logs().decode('utf-8')
+                logger.error(f"Container logs: {logs}")
                 try:
                     container.stop()
                     container.remove(force=True)
                 except:
                     pass
             return JsonResponse({
-                'error': f'Failed to create container: {str(e)}',
-                'detailed_logs': detailed_logger.get_logs()
+                'error': f'Container error: {str(e)}',
+                'logs': logs if 'logs' in locals() else None
             }, status=500)
 
     try:

@@ -307,6 +307,35 @@ def update_code_internal(container, code, user, file_name, main_file_path):
             return str(result.output)
         return str(result)
 
+    def check_build_output(output_text):
+        """Analyze build output for errors and compilation status"""
+        output_lines = output_text.split('\n')
+
+        # First check for critical errors
+        for line in output_lines:
+            if "Failed to compile" in line:
+                error_details = "\n".join([l for l in output_lines if "ERROR in" in l])
+                raise Exception(f"Build failed: \n{error_details}")
+
+            if "Module not found" in line:
+                raise Exception(f"Missing module: {line}")
+
+            if "ERROR in" in line:
+                error_context = "\n".join(output_lines[output_lines.index(line):output_lines.index(line) + 3])
+                raise Exception(f"Build error: \n{error_context}")
+
+        # If no critical errors, determine compilation status
+        compilation_status = 'compiling'
+        for line in output_lines:
+            if "Compiled" in line or "Webpack compiled" in line:
+                compilation_status = 'success'
+            elif "Compiling" in line:
+                compilation_status = 'compiling'
+            else:
+                compilation_status = 'not ready'
+
+        return compilation_status, output_lines
+
     try:
         container.reload()
         if container.status != 'running':
@@ -401,41 +430,30 @@ def update_code_internal(container, code, user, file_name, main_file_path):
             logger.info("No non-standard imports detected")
 
         # Build the project
-        exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"])
-        if exec_result.exit_code != 0:
-            raise Exception(f"Failed to build project: {exec_result}")
+        logger.info("Starting development server...")
+        exec_result = container.exec_run(
+            ["sh", "-c", "cd /app && yarn start"],
+            stream=True  # Stream the output to catch errors early
+        )
 
-        logger.info("Project rebuilt and server restarted successfully")
+        # Collect and analyze output
+        output_text = ""
+        for chunk in exec_result.output:
+            if chunk:
+                chunk_text = chunk.decode('utf-8')
+                output_text += chunk_text
 
-        # Process the output safely
-        output_text = get_container_output(exec_result)
-        output_lines = output_text.split('\n')
-        build_output = output_lines
-        compilation_status = ContainerStatus.COMPILING
-        # First check for critical errors
-        for line in output_lines:
-            if "Failed to compile" in line:
-                error_details = "\n".join([l for l in output_lines if "ERROR in" in l])
-                raise Exception(f"Build failed: \n{error_details}")
+                # Check for immediate errors
+                if "Failed to compile" in chunk_text:
+                    error_lines = '\n'.join([line for line in chunk_text.split('\n') if "ERROR in" in line])
+                    raise Exception(f"Build failed:\n{error_lines}")  # Direct newline character
 
-            if "Module not found" in line:
-                raise Exception(f"Missing module: {line}")
+        # Final analysis of complete output
+        compilation_status, build_output = check_build_output(output_text)
 
-            if "ERROR in" in line:
-                error_context = "\n".join(output_lines[output_lines.index(line):output_lines.index(line) + 3])
-                raise Exception(f"Build error: \n{error_context}")
-
-
-        logger.info("Analyzing build output...", output_lines)
-        for line in output_lines:
-            if "Compiled successfully" in line:
-                compilation_status = 'success'
-            elif "Compiled with warnings" in line:
-                compilation_status = 'warning'
-            elif "Failed to compile" in line:
-                compilation_status = 'failed'
-            elif "Compiling..." in line:
-                compilation_status = 'compiling'
+        logger.info(f"Build analysis complete. Status: {compilation_status}")
+        if compilation_status == 'compiling':
+            logger.warning("Build did not complete within expected time")
 
         # Save compilation status
         status_result = exec_command_with_retry(container, [
@@ -586,14 +604,14 @@ def check_container_ready(request):
             # Parse compilation status
             compilation_status = 'not ready'
 
-            if "Compiled successfully" in logs:
-                compilation_status = 'success'
-            elif "Compiled with warnings" in logs:
-                compilation_status = 'warning'
-            elif "Failed to compile" in logs:
+            if 'Failed to compile' in logs:
                 compilation_status = 'failed'
-            elif "Compiling..." in logs:
+            elif "Compiled" in logs or "Webpack compiled" in logs:
+                compilation_status = 'success'
+            elif "Compiling" in logs:
                 compilation_status = 'compiling'
+            else:
+                compilation_status = 'not ready'
 
             # Extract warnings if present
             warnings = None

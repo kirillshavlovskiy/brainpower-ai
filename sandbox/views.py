@@ -775,7 +775,6 @@ def get_available_port(start, end):
 
 @api_view(['POST'])
 def check_or_create_container(request):
-    file_structure = []
     data = request.data
     code = data.get('main_code')
     language = data.get('language')
@@ -783,29 +782,13 @@ def check_or_create_container(request):
     file_name = data.get('file_name', 'component.js')
     main_file_path = data.get('main_file_path')
 
-    detailed_logger.log('info', f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
-
     if not all([code, language, file_name]):
         return JsonResponse({'error': 'Missing required fields'}, status=400)
     if language != 'react':
         return JsonResponse({'error': 'Unsupported language'}, status=400)
-        # Add validation
-    if not file_name or not isinstance(file_name, str):
-        return JsonResponse({
-            'error': 'Invalid or missing file name',
-            'details': f'Received file_name: {file_name}'
-        }, status=400)
 
     react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'
     container_name = f'react_renderer_{user_id}_{file_name}'
-    app_name = f"{user_id}_{file_name.replace('.', '-')}"
-
-    container_info = {
-        'container_name': container_name,
-        'created_at': datetime.now().isoformat(),
-        'files_added': [],
-        'build_status': 'pending'
-    }
 
     try:
         container = client.containers.get(container_name)
@@ -837,16 +820,12 @@ def check_or_create_container(request):
                     'PORT': str(3001),
                     'NODE_ENV': 'development',
                     'NODE_OPTIONS': '--max-old-space-size=8192',
-                    'CHOKIDAR_USEPOLLING': 'true',  # Enable hot reloading
-                    'WATCHPACK_POLLING': 'true'  # Enable file watching
+                    'CHOKIDAR_USEPOLLING': 'true',
+                    'WATCHPACK_POLLING': 'true'
                 },
                 volumes={
-                    # Mount the entire src directory
-                    f"{react_renderer_path}/src": {'bind': '/app/src', 'mode': 'rw'},
-                    # Mount public directory if needed
-                    f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'rw'},
-                    # Mount build directory for output
-                    f"{react_renderer_path}/build": {'bind': '/app/build', 'mode': 'rw'},
+                    # Mount entire react_renderer directory
+                    react_renderer_path: {'bind': '/app', 'mode': 'rw'},
                 },
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',
@@ -855,18 +834,11 @@ def check_or_create_container(request):
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
 
-            # Quick health check
             time.sleep(2)
             container.reload()
 
             if container.status != 'running':
                 raise Exception("Container failed to start properly")
-
-            # Initialize the src directory structure
-            container.exec_run(
-                "sh -c 'mkdir -p /app/src && touch /app/src/index.js /app/src/index.css'",
-                user='node'
-            )
 
         except Exception as e:
             logger.error(f"Failed to create container: {str(e)}", exc_info=True)
@@ -881,11 +853,13 @@ def check_or_create_container(request):
                 'detailed_logs': detailed_logger.get_logs()
             }, status=500)
 
-        # Continue with code update for both new and existing containers
     try:
-
         build_output, files_added, installed_packages, compilation_status = update_code_internal(
-            container, code, user_id, file_name, main_file_path
+            container,
+            code,
+            user_id,
+            file_name,
+            main_file_path
         )
 
         return JsonResponse({
@@ -896,15 +870,11 @@ def check_or_create_container(request):
             'can_deploy': True,
             'build_output': build_output,
             'compilation_status': compilation_status,
-            'detailed_logs': detailed_logger.get_logs()
         })
 
     except Exception as e:
-        detailed_logger.log('error', f"Error updating container: {str(e)}")
-        return JsonResponse({
-            'error': str(e),
-            'detailed_logs': detailed_logger.get_logs()
-        }, status=500)
+        logger.error(f"Error updating container: {str(e)}")
+        return JsonResponse({'error': str(e)}, status=500)
 
 
 def prepare_container_environment(container):

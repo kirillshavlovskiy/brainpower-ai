@@ -304,8 +304,6 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         return str(result)
 
     try:
-        set_container_permissions(container)
-
         container.reload()
         if container.status != 'running':
             logger.info(f"Container {container.id} not running, attempting to start...")
@@ -315,12 +313,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         # Update component.js
         encoded_code = base64.b64encode(code.encode()).decode()
 
-        # Ensure the src directory exists and has correct permissions
-        container.exec_run(
-            "sh -c 'mkdir -p /app/src && chown -R node:node /app/src'",
-            user='root'
-        )
-        # Write the component code
+        # Write the component code directly (no need to check/create directory)
         exec_result = container.exec_run([
             "sh", "-c",
             f"echo {encoded_code} | base64 -d > /app/src/component.js"
@@ -390,19 +383,19 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                     files_added.append(container_path)
                     logger.info(f"Created empty file: {container_path}")
 
-            # Check for non-standard imports
-            non_standard_imports = check_non_standard_imports(code)
-            if non_standard_imports:
-                logger.info(f"Detected non-standard imports: {', '.join(non_standard_imports)}")
-                installed_packages, failed_packages = install_packages(container, non_standard_imports)
+        # Check for non-standard imports
+        non_standard_imports = check_non_standard_imports(code)
+        if non_standard_imports:
+            logger.info(f"Detected non-standard imports: {', '.join(non_standard_imports)}")
+            installed_packages, failed_packages = install_packages(container, non_standard_imports)
 
-                if failed_packages:
-                    logger.warning(f"Some packages failed to install: {', '.join(failed_packages)}")
+            if failed_packages:
+                logger.warning(f"Some packages failed to install: {', '.join(failed_packages)}")
 
-                # You might want to decide here if you want to continue or raise an exception if some packages failed to install
+            # You might want to decide here if you want to continue or raise an exception if some packages failed to install
 
-            else:
-                logger.info("No non-standard imports detected")
+        else:
+            logger.info("No non-standard imports detected")
 
         # Build the project
         exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"])

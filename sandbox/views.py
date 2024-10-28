@@ -809,7 +809,6 @@ def check_or_create_container(request):
         try:
             container = client.containers.run(
                 image='react_renderer_cra',
-                command='yarn start',
                 name=container_name,
                 detach=True,
                 user='node',
@@ -818,14 +817,16 @@ def check_or_create_container(request):
                     'REACT_APP_USER_ID': user_id,
                     'FILE_NAME': file_name,
                     'PORT': str(3001),
+                    'HOST': '0.0.0.0',
                     'NODE_ENV': 'development',
                     'NODE_OPTIONS': '--max-old-space-size=8192',
                     'CHOKIDAR_USEPOLLING': 'true',
                     'WATCHPACK_POLLING': 'true'
                 },
                 volumes={
-                    # Mount entire react_renderer directory
-                    react_renderer_path: {'bind': '/app', 'mode': 'rw'},
+                    # Only mount the src and public directories
+                    f"{react_renderer_path}/src": {'bind': '/app/src', 'mode': 'rw'},
+                    f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'rw'},
                 },
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',
@@ -838,7 +839,8 @@ def check_or_create_container(request):
             container.reload()
 
             if container.status != 'running':
-                raise Exception("Container failed to start properly")
+                logs = container.logs().decode('utf-8')
+                raise Exception(f"Container failed to start properly. Logs: {logs}")
 
         except Exception as e:
             logger.error(f"Failed to create container: {str(e)}", exc_info=True)

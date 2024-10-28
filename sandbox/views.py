@@ -409,7 +409,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         build_output = output_lines
         compilation_status = ContainerStatus.COMPILING
 
-        logger.info("Analyzing build output...")
+        logger.info("Analyzing build output...", output_lines)
         for line in output_lines:
             if "Compiled successfully" in line:
                 compilation_status = 'Compiled successfully'

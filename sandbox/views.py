@@ -782,9 +782,6 @@ def check_or_create_container(request):
     file_name = data.get('file_name', 'component.js')
     main_file_path = data.get('main_file_path')
 
-    detailed_logger.log('info',
-                        f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
-
     if not all([code, language, file_name]):
         return JsonResponse({'error': 'Missing required fields'}, status=400)
     if language != 'react':
@@ -794,35 +791,8 @@ def check_or_create_container(request):
     file_extension = file_name.split('.')[-1].lower()
     is_typescript = file_extension in ['ts', 'tsx']
 
-    # Set appropriate component filename and compiler options
-    component_filename = 'component.tsx' if is_typescript else 'component.js'
-
-    # Define TypeScript config content
-    tsconfig_content = {
-        "compilerOptions": {
-            "target": "es5",
-            "lib": ["dom", "dom.iterable", "esnext"],
-            "allowJs": True,
-            "skipLibCheck": True,
-            "esModuleInterop": True,
-            "allowSyntheticDefaultImports": True,
-            "strict": True,
-            "forceConsistentCasingInFileNames": True,
-            "noFallthroughCasesInSwitch": True,
-            "module": "esnext",
-            "moduleResolution": "node",
-            "resolveJsonModule": True,
-            "isolatedModules": True,
-            "noEmit": True,
-            "jsx": "react-jsx"
-        },
-        "include": ["src"],
-        "exclude": ["node_modules"]
-    }
-
     react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'
     container_name = f'react_renderer_{user_id}_{file_name}'
-    app_name = f"{user_id}_{file_name.replace('.', '-')}"
 
     try:
         container = client.containers.get(container_name)
@@ -833,11 +803,6 @@ def check_or_create_container(request):
             container.reload()
             time.sleep(2)
 
-        # Update component type in existing container
-        if is_typescript:
-            # Set up TypeScript environment in existing container
-            setup_typescript_env(container, tsconfig_content)
-
         port_bindings = container.attrs['NetworkSettings']['Ports']
         host_port = port_bindings.get('3001/tcp', [{}])[0].get('HostPort')
 
@@ -846,36 +811,28 @@ def check_or_create_container(request):
         host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
 
         try:
-            # Base environment variables
-            env_vars = {
-                'USER_ID': user_id,
-                'REACT_APP_USER_ID': user_id,
-                'FILE_NAME': file_name,
-                'PORT': str(3001),
-                'NODE_ENV': 'development',
-                'NODE_OPTIONS': '--max-old-space-size=8192',
-                'CHOKIDAR_USEPOLLING': 'true',
-                'WATCHPACK_POLLING': 'true',
-                'COMPONENT_TYPE': 'typescript' if is_typescript else 'javascript'
-            }
-
-            # Add TypeScript-specific env vars
-            if is_typescript:
-                env_vars.update({
-                    'TSC_COMPILE_ON_ERROR': 'true',
-                    'SKIP_PREFLIGHT_CHECK': 'true'
-                })
-
             container = client.containers.run(
                 image='react_renderer_cra',
                 command='yarn start',
                 name=container_name,
                 detach=True,
                 user='node',
-                environment=env_vars,
+                environment={
+                    'USER_ID': user_id,
+                    'REACT_APP_USER_ID': user_id,
+                    'FILE_NAME': file_name,
+                    'PORT': str(3001),
+                    'NODE_ENV': 'development',
+                    'NODE_OPTIONS': '--max-old-space-size=8192',
+                    'CHOKIDAR_USEPOLLING': 'true',
+                    'WATCHPACK_POLLING': 'true'
+                },
                 volumes={
+                    # Mount only specific directories needed for development
                     f"{react_renderer_path}/src": {'bind': '/app/src', 'mode': 'rw'},
-                    f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'rw'},
+                    f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'ro'},
+                    f"{react_renderer_path}/package.json": {'bind': '/app/package.json', 'mode': 'ro'},
+                    # Read-only for static files
                     f"{react_renderer_path}/build": {'bind': '/app/build', 'mode': 'rw'},
                 },
                 ports={'3001/tcp': host_port},
@@ -892,9 +849,6 @@ def check_or_create_container(request):
             if container.status != 'running':
                 raise Exception("Container failed to start properly")
 
-            # Set up initial file structure
-            setup_container_files(container, is_typescript, component_filename, tsconfig_content)
-
         except Exception as e:
             logger.error(f"Failed to create container: {str(e)}", exc_info=True)
             if 'container' in locals():
@@ -909,14 +863,12 @@ def check_or_create_container(request):
             }, status=500)
 
     try:
-        # Update code in container
         build_output, files_added, installed_packages, compilation_status = update_code_internal(
             container,
             code,
             user_id,
-            component_filename,  # Use the determined component filename
-            main_file_path,
-            is_typescript=is_typescript
+            file_name,
+            main_file_path
         )
 
         return JsonResponse({
@@ -927,16 +879,11 @@ def check_or_create_container(request):
             'can_deploy': True,
             'build_output': build_output,
             'compilation_status': compilation_status,
-            'component_type': 'TypeScript' if is_typescript else 'JavaScript',
-            'detailed_logs': detailed_logger.get_logs()
         })
 
     except Exception as e:
-        detailed_logger.log('error', f"Error updating container: {str(e)}")
-        return JsonResponse({
-            'error': str(e),
-            'detailed_logs': detailed_logger.get_logs()
-        }, status=500)
+        logger.error(f"Error updating container: {str(e)}")
+        return JsonResponse({'error': str(e)}, status=500)
 
 
 def setup_typescript_env(container, tsconfig_content):

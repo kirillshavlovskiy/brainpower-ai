@@ -412,16 +412,16 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         logger.info("Analyzing build output...", output_lines)
         for line in output_lines:
             if "Compiled successfully" in line:
-                compilation_status = 'Compiled successfully'
-                logger.info("Compilation successful")
+                compilation_status = 'success'
                 break
             elif "Compiled with warnings" in line:
-                compilation_status = 'Compiled with warnings'
-                logger.warning("Compilation completed with warnings")
+                compilation_status = 'warning'
                 break
             elif "Failed to compile" in line:
-                compilation_status = 'Compiled with errors'
-                logger.error("Compilation failed")
+                compilation_status = 'failed'
+                break
+            elif "Compiling..." in line:
+                compilation_status = 'compiling'
                 break
 
         # Save compilation status
@@ -495,15 +495,16 @@ def get_compilation_status(container):
         # If no valid status is saved, or if it's still COMPILING, check the logs
         logs = get_container_output(container.logs(tail=100))
 
+        compilation_status = 'not ready'
         if "Compiled successfully" in logs:
-            return 'Compiled successfully'
+            compilation_status = 'success'
         elif "Compiled with warnings" in logs:
-            return 'Compiled with warnings'
+            compilation_status = 'warning'
         elif "Failed to compile" in logs:
-            return 'Compiled with errors'
-        else:
-            return 'Compiling'
-
+            compilation_status = 'failed'
+        elif "Compiling..." in logs:
+            compilation_status = 'compiling'
+        return compilation_status
     except Exception as e:
         logger.error(f"Error getting compilation status: {str(e)}")
         return ContainerStatus.ERROR

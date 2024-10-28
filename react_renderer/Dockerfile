@@ -42,14 +42,9 @@ RUN yarn config set network-timeout 300000 && \
     yarn config set network-concurrency 4 && \
     yarn install
 
-# Copy source files and public assets
-COPY src/ ./src/
-COPY public/ ./public/
-
 
 # Create build directory with correct permissions
-RUN mkdir -p /app/build && \
-    chown -R node:node /app && \
+RUN chown -R node:node /app && \
     chmod -R 755 /app/node_modules
 
 # Add node_modules/.bin to PATH

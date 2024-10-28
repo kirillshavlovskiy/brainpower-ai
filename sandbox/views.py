@@ -310,7 +310,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         if container.status != 'running':
             logger.info(f"Container {container.id} not running, attempting to start...")
             container.start()
-            time.sleep(3)  # Wait for container to fully start
+            time.sleep(5)  # Wait for container to fully start
 
         # Update component.js
         encoded_code = base64.b64encode(code.encode()).decode()

@@ -326,7 +326,6 @@ def update_code_internal(container, code, user, file_name, main_file_path):
 
 
         logger.info(f"Updated component.js in container with content from {file_name} at path {main_file_path}")
-        logger.info(f"Processing for user: {user}")
 
         # Get the directory of the main file
         base_path = os.path.dirname(main_file_path)

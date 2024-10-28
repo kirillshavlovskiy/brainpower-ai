@@ -29,12 +29,10 @@ RUN yarn global add \
     @types/react \
     @types/react-dom
 
-# Copy configuration files first
+# Copy only configuration files
 COPY package.json yarn.lock ./
-COPY tsconfig.json ./
-COPY tailwind.config.js ./
-COPY postcss.config.js ./
-COPY .babelrc ./
+COPY tsconfig.json .babelrc ./
+COPY tailwind.config.js postcss.config.js ./
 COPY webpack.config.js ./
 
 # Configure yarn and install dependencies
@@ -42,10 +40,10 @@ RUN yarn config set network-timeout 300000 && \
     yarn config set network-concurrency 4 && \
     yarn install
 
-
-# Create build directory with correct permissions
-RUN chown -R node:node /app && \
-    chmod -R 755 /app/node_modules
+# Create necessary directories with correct permissions
+RUN mkdir -p /app/src /app/public /app/build && \
+    chown -R node:node /app && \
+    chmod -R 755 /app
 
 # Add node_modules/.bin to PATH
 ENV PATH=/app/node_modules/.bin:$PATH

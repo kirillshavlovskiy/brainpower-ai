@@ -564,7 +564,7 @@ def check_container_ready(request):
 
         # If container is running, do normal checks
         if container.status == 'running':
-            logs = container.logs(tail=200).decode('utf-8')
+            logs = container.logs(tail=50).decode('utf-8')
 
             # Extract timestamps and categorize logs
             detailed_logs = []
@@ -576,6 +576,7 @@ def check_container_ready(request):
 
             # Parse compilation status
             compilation_status = 'not ready'
+
             if "Compiled successfully" in logs:
                 compilation_status = 'success'
             elif "Compiled with warnings" in logs:
@@ -605,12 +606,15 @@ def check_container_ready(request):
             port_mapping = container.ports.get('3001/tcp')
             url = f"https://{port_mapping[0]['HostPort']}.{HOST_URL}" if port_mapping else None
 
-            if "Compiled successfully" in logs or "webpack compiled" in logs:
+            if 'Failed to compile' in logs:
+                status = ContainerStatus.COMPILATION_FAILED
+            elif errors:
+                status = ContainerStatus.ERROR
+            elif warnings:
+                status = ContainerStatus.WARNING
+            elif "Compiled" in logs or "Webpack compiled" in logs:
                 status = ContainerStatus.READY
-                if warnings:
-                    status = ContainerStatus.WARNING
-            elif "Compiling..." in logs:
-                status = ContainerStatus.COMPILING
+
             elif "Starting the development server..." in logs:
                 status = ContainerStatus.BUILDING
             else:

@@ -314,24 +314,27 @@ def update_code_internal(container, code, user, file_name, main_file_path):
 
         # Update component.js
         encoded_code = base64.b64encode(code.encode()).decode()
-        max_attempts = 3
-        for attempt in range(max_attempts):
-            try:
-                exec_result = container.exec_run([
-                    "sh", "-c",
-                    f"echo {encoded_code} | base64 -d > /app/src/component.js"
-                ])
 
-                logger.info(f"Updated component.js in container with content from {file_name}")
-                if exec_result.exit_code != 0:
-                    raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
-                files_added.append('/app/src/component.js')
-                break
-            except docker.errors.APIError as e:
-                if attempt == max_attempts - 1:
-                    raise
-                logger.warning(f"API error on attempt {attempt + 1}, retrying: {str(e)}")
-                time.sleep(1)
+        try:
+            # Ensure the src directory exists and has correct permissions
+            container.exec_run(
+                "sh -c 'mkdir -p /app/src && chown -R node:node /app/src'",
+                user='root'
+            )
+            # Write the component code
+            exec_result = container.exec_run([
+                "sh", "-c",
+                f"echo {encoded_code} | base64 -d > /app/src/component.js"
+            ], user='node')
+
+            logger.info(f"Updated component.js in container with content from {file_name}")
+            if exec_result.exit_code != 0:
+                raise Exception(f"Failed to update component.js in container: {exec_result.output.decode()}")
+            files_added.append('/app/src/component.js')
+
+        except Exception as e:
+            logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
+            raise
 
         logger.info(f"Updated component.js in container with content from {file_name} at path {main_file_path}")
         logger.info(f"Processing for user: {user}")
@@ -391,19 +394,19 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                     files_added.append(container_path)
                     logger.info(f"Created empty file: {container_path}")
 
-        # Check for non-standard imports
-        non_standard_imports = check_non_standard_imports(code)
-        if non_standard_imports:
-            logger.info(f"Detected non-standard imports: {', '.join(non_standard_imports)}")
-            installed_packages, failed_packages = install_packages(container, non_standard_imports)
+            # Check for non-standard imports
+            non_standard_imports = check_non_standard_imports(code)
+            if non_standard_imports:
+                logger.info(f"Detected non-standard imports: {', '.join(non_standard_imports)}")
+                installed_packages, failed_packages = install_packages(container, non_standard_imports)
 
-            if failed_packages:
-                logger.warning(f"Some packages failed to install: {', '.join(failed_packages)}")
+                if failed_packages:
+                    logger.warning(f"Some packages failed to install: {', '.join(failed_packages)}")
 
-            # You might want to decide here if you want to continue or raise an exception if some packages failed to install
+                # You might want to decide here if you want to continue or raise an exception if some packages failed to install
 
-        else:
-            logger.info("No non-standard imports detected")
+            else:
+                logger.info("No non-standard imports detected")
 
         # Build the project
         exec_result = container.exec_run(["sh", "-c", "cd /app && yarn start"])

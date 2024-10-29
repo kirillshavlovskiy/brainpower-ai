@@ -360,7 +360,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         logger.info(f"Base path for imports: {base_path}")
 
         for import_path in local_imports:
-            logger.info(f"Processing import: {import_path}")
+            logger.info(f"=================\nProcessing import: {import_path},\nimport path: {file_name},\nbase path: {base_path}\n==========")
 
             content, resolved_path = get_file_with_extension(user, file_name, import_path, base_path)
 

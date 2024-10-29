@@ -27,6 +27,12 @@ import shutil
 import socket
 logger = logging.getLogger(__name__)
 client = docker.from_env()
+import time
+
+from docker.errors import NotFound, APIError
+
+
+
 
 HOST_URL = 'brainpower-ai.net'
 HOST_PORT_RANGE_START = 32768
@@ -71,9 +77,14 @@ class DetailedLogger:
         return self.file_list
 detailed_logger = DetailedLogger()
 
-import time
+import asyncio
+import re
+import base64
+import logging
+from concurrent.futures import ThreadPoolExecutor
+from typing import Tuple, Set, Dict, Any
 
-from docker.errors import NotFound, APIError
+logger = logging.getLogger(__name__)
 
 
 def exec_command_with_retry(container, command, max_retries=3):
@@ -395,12 +406,6 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         non_standard_imports = check_non_standard_imports(code)
         if non_standard_imports:
             logger.info(f"Detected non-standard imports: {', '.join(non_standard_imports)}")
-            installed_packages, failed_packages = install_packages(container, non_standard_imports)
-
-            if failed_packages:
-                logger.warning(f"Some packages failed to install: {', '.join(failed_packages)}")
-
-            # You might want to decide here if you want to continue or raise an exception if some packages failed to install
 
         else:
             logger.info("No non-standard imports detected")
@@ -441,6 +446,8 @@ def update_code_internal(container, code, user, file_name, main_file_path):
 
         logger.info("Analyzing build output...", output_lines)
         for line in output_lines:
+            if non_standard_imports:
+                compilation_status = 'compilation failed'
             if 'Failed to compile' in line or errors:
                 compilation_status = 'compilation failed'
             elif warnings:
@@ -466,7 +473,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         logger.info(f"Container status after yarn start: {container.status}")
         logger.info(f"Container state: {container.attrs['State']}")
 
-        return "\n".join(build_output), files_added, installed_packages, compilation_status
+        return "\n".join(build_output), files_added, installed_packages, compilation_status, non_standard_imports
 
     except Exception as e:
         logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
@@ -773,6 +780,7 @@ def get_available_port(start, end):
             return port
 
 
+
 @api_view(['POST'])
 def check_or_create_container(request):
     file_structure = []
@@ -901,7 +909,7 @@ def check_or_create_container(request):
 
     try:
         # Update code in container with appropriate component file
-        build_output, files_added, installed_packages, compilation_status = update_code_internal(
+        build_output, files_added, installed_packages, compilation_status, non_standard_imports = update_code_internal(
             container,
             code,
             user_id,
@@ -911,7 +919,8 @@ def check_or_create_container(request):
 
         return JsonResponse({
             'status': container.status,
-            'compilation_status': compilation_status,
+            'installPackages': non_standard_imports,
+            'compilationStatus': compilation_status,
             'message': 'Container is running',
             'container_id': container.id,
             'container_info': container_info,
@@ -954,71 +963,31 @@ def prepare_container_environment(container):
         return False
 
 
-def install_peer_dependencies(container):
-    """Install common peer dependencies"""
-    peer_deps = [
-        "react-refresh@^0.14.0",
-        "eslint@^8.0.0",
-        "@babel/plugin-syntax-flow@^7.14.5",
-        "@babel/plugin-transform-react-jsx@^7.14.9"
-    ]
+# def install_peer_dependencies(container):
+#     """Install common peer dependencies"""
+#     peer_deps = [
+#         "react-refresh@^0.14.0",
+#         "eslint@^8.0.0",
+#         "@babel/plugin-syntax-flow@^7.14.5",
+#         "@babel/plugin-transform-react-jsx@^7.14.9"
+#     ]
+#
+#     for dep in peer_deps:
+#         try:
+#             result = container.exec_run(
+#                 [
+#                     "sh", "-c",
+#                     f"cd /app && yarn add {dep} --dev --ignore-engines"
+#                 ],
+#                 user="node"
+#             )
+#             if result.exit_code != 0:
+#                 logger.warning(f"Failed to install peer dependency {dep}")
+#         except Exception as e:
+#             logger.error(f"Error installing peer dependency {dep}: {str(e)}")
 
-    for dep in peer_deps:
-        try:
-            result = container.exec_run(
-                [
-                    "sh", "-c",
-                    f"cd /app && yarn add {dep} --dev --ignore-engines"
-                ],
-                user="node"
-            )
-            if result.exit_code != 0:
-                logger.warning(f"Failed to install peer dependency {dep}")
-        except Exception as e:
-            logger.error(f"Error installing peer dependency {dep}: {str(e)}")
 
 
-def install_packages(container, packages):
-    """Install packages in container with proper error handling"""
-    try:
-        # Prepare environment first
-        if not prepare_container_environment(container):
-            raise Exception("Failed to prepare container environment")
-
-        installed = []
-        failed = []
-
-        for package in packages:
-            try:
-                # Install package as node user with proper permissions
-                result = container.exec_run(
-                    [
-                        "sh", "-c",
-                        f"cd /app && yarn add {package} --ignore-engines --network-timeout 100000"
-                    ],
-                    user="node"
-                )
-
-                if result.exit_code == 0:
-                    logger.info(f"Successfully installed {package}")
-                    installed.append(package)
-                else:
-                    error_msg = result.output.decode()
-                    logger.error(f"Failed to install {package}: {error_msg}")
-                    failed.append(package)
-
-            except Exception as e:
-                logger.error(f"Error installing {package}: {str(e)}")
-                failed.append(package)
-
-        # Install peer dependencies if needed
-        install_peer_dependencies(container)
-
-        return installed, failed
-
-    except Exception as e:
-        logger.error(f"Package installation failed: {str(e)}")
-        return [], [str(p) for p in packages]
 
 
 

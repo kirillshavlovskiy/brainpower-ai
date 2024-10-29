@@ -1,5 +1,8 @@
 import uuid
+from datetime import datetime
+from typing import Set, Dict, Any
 import os
+import shutil
 from .query_process import query, message_queue
 from asgiref.sync import async_to_sync
 from .models import FileStructure, UserProfile
@@ -17,8 +20,6 @@ from django.views.generic import TemplateView
 from channels.layers import get_channel_layer
 import traceback
 
-import os
-import shutil
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -765,3 +766,95 @@ class DeployToProduction_prod(AsyncWebsocketConsumer):
         await channel_layer.group_send(channel_name, log_data)
         logger.info(f"Deployment log: {message}")  # Add this line to log to the server console as well
 
+
+class PackageInstallationConsumer(AsyncWebsocketConsumer):
+    async def connect(self):
+        """Handle WebSocket connection"""
+        self.container_id = self.scope['url_route']['kwargs']['container_id']
+        self.group_name = f"package_install_{self.container_id}"
+
+        # Join installation group
+        await self.channel_layer.group_add(
+            self.group_name,
+            self.channel_name
+        )
+        await self.accept()
+
+    async def disconnect(self, close_code):
+        """Handle WebSocket disconnection"""
+        await self.channel_layer.group_discard(
+            self.group_name,
+            self.channel_name
+        )
+
+    async def receive(self, text_data):
+        """Handle incoming WebSocket messages"""
+        try:
+            data = json.loads(text_data)
+            action = data.get('action')
+
+            if action == 'install_packages':
+                packages = set(data.get('packages', []))
+                container_id = data.get('container_id')
+
+                if packages and container_id:
+                    await self.install_packages(packages, container_id)
+                else:
+                    await self.send_status('error', 'Invalid package installation request')
+
+        except json.JSONDecodeError:
+            await self.send_status('error', 'Invalid message format')
+        except Exception as e:
+            await self.send_status('error', str(e))
+
+    async def install_packages(self, packages: Set[str], container_id: str):
+        """Handle package installation process"""
+        try:
+            client = docker.from_env()
+            container = client.containers.get(container_id)
+
+            await self.send_status('starting', f'Installing packages: {", ".join(packages)}')
+
+            # Install packages one by one for better status reporting
+            for package in sorted(packages):
+                await self.send_status('installing', f'Installing {package}...')
+
+                # Run yarn add in the container
+                result = await self.run_in_executor(
+                    container.exec_run,
+                    f"yarn add {package}",
+                    workdir="/app"
+                )
+
+                if result.exit_code != 0:
+                    error_msg = result.output.decode()
+                    await self.send_status('error', f'Failed to install {package}: {error_msg}')
+                    return
+
+                await self.send_status('progress', f'Installed {package}')
+
+            await self.send_status('completed', 'All packages installed successfully')
+
+        except docker.errors.NotFound:
+            await self.send_status('error', 'Container not found')
+        except Exception as e:
+            await self.send_status('error', f'Installation error: {str(e)}')
+
+    async def send_status(self, status: str, message: str):
+        """Send status update to WebSocket"""
+        await self.send(text_data=json.dumps({
+            'type': 'installation_status',
+            'status': status,
+            'message': message,
+            'timestamp': datetime.now().isoformat()
+        }))
+
+    @staticmethod
+    async def run_in_executor(func, *args, **kwargs):
+        """Run blocking function in executor"""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, func, *args, **kwargs)
+
+    async def installation_message(self, event):
+        """Handle installation messages from channel layer"""
+        await self.send(text_data=json.dumps(event))

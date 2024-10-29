@@ -795,7 +795,7 @@ def check_or_create_container(request):
     file_extension = file_name.split('.')[-1].lower()
     is_typescript = file_extension in ['ts', 'tsx']
 
-    # Set appropriate component filename and compiler options
+    # Set appropriate component filename
     component_filename = 'component.tsx' if is_typescript else 'component.js'
 
     react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'
@@ -827,7 +827,47 @@ def check_or_create_container(request):
         host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
 
         try:
-            # Base environment variables
+            # First create a temporary container to create the React app
+            temp_container = client.containers.run(
+                image='node:18',
+                name=f'temp_{container_name}',
+                command='tail -f /dev/null',  # Keep container running
+                detach=True,
+                user='node',
+                working_dir='/app'
+            )
+
+            try:
+                # Create React app using CRA
+                create_app_cmd = [
+                    "npm install -g create-react-app",
+                    f"npx create-react-app . {'--template typescript' if is_typescript else ''}"
+                ]
+
+                for cmd in create_app_cmd:
+                    exec_result = temp_container.exec_run(
+                        cmd,
+                        workdir='/app'
+                    )
+                    if exec_result.exit_code != 0:
+                        raise Exception(f"Failed to create React app: {exec_result.output.decode()}")
+
+                # Copy the created app to the host machine's react_renderer path
+                temp_container.put_archive(
+                    '/app',
+                    client.containers.get(temp_container.id).export()
+                )
+
+                # Clean up temporary container
+                temp_container.stop()
+                temp_container.remove()
+
+            except Exception as e:
+                temp_container.stop()
+                temp_container.remove()
+                raise e
+
+            # Now create the actual container with the React app and volumes
             env_vars = {
                 'USER_ID': user_id,
                 'REACT_APP_USER_ID': user_id,
@@ -840,16 +880,14 @@ def check_or_create_container(request):
                 'FAST_REFRESH': 'false'
             }
 
-            # Additional env vars for TypeScript if needed
             if is_typescript:
                 env_vars.update({
                     'TSC_COMPILE_ON_ERROR': 'true',
                     'SKIP_PREFLIGHT_CHECK': 'true'
                 })
 
-            # Define volume mappings
             volumes = {
-                # Mount the entire src directory from react_renderer
+                # Mount the source code directory
                 f"{react_renderer_path}/src": {'bind': '/app/src', 'mode': 'rw'},
                 f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'rw'},
                 # Configuration files
@@ -857,10 +895,12 @@ def check_or_create_container(request):
                 # Tailwind configuration
                 f"{react_renderer_path}/tailwind.config.js": {'bind': '/app/tailwind.config.js', 'mode': 'ro'},
                 f"{react_renderer_path}/postcss.config.js": {'bind': '/app/postcss.config.js', 'mode': 'ro'},
-             }
+                # Build directory
+                f"{react_renderer_path}/build": {'bind': '/app/build', 'mode': 'rw'},
+            }
 
             container = client.containers.run(
-                image='react_renderer_cra',
+                image='node:18',
                 command='yarn start',
                 name=container_name,
                 detach=True,
@@ -874,25 +914,27 @@ def check_or_create_container(request):
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
 
+            # Install dependencies
+            setup_commands = [
+                "npm install",
+                "npm install tailwindcss postcss autoprefixer",
+                "npx tailwindcss init -p"
+            ]
+
+            for cmd in setup_commands:
+                exec_result = container.exec_run(
+                    cmd,
+                    workdir='/app'
+                )
+                if exec_result.exit_code != 0:
+                    raise Exception(f"Failed to execute setup command: {cmd}\nError: {exec_result.output.decode()}")
+
             # Quick health check
             time.sleep(2)
             container.reload()
 
             if container.status != 'running':
                 raise Exception("Container failed to start properly")
-
-            # Verify the src directory structure is correctly mounted
-            check_commands = [
-                "ls -la /app/src",
-                "ls -la /app/public",
-                "ls -la /app"
-            ]
-
-            for cmd in check_commands:
-                exec_result = container.exec_run(cmd, user='node')
-                if exec_result.exit_code != 0:
-                    logger.warning(f"Directory check failed: {cmd}")
-                    logger.warning(exec_result.output.decode())
 
         except Exception as e:
             logger.error(f"Failed to create container: {str(e)}", exc_info=True)

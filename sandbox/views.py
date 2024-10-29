@@ -356,24 +356,54 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         # Get the directory of the main file
         base_path = os.path.dirname(main_file_path)
         logger.info(f"Base path derived from main file: {base_path}")
+        css_import_matches = re.findall(r"import\s+['\"](.+\.css)['\"];?", code)
+        logger.info(f"Found CSS imports: {css_import_matches}")
+        for css_file_path in css_import_matches:
+            logger.info(f"Attempting to retrieve content for CSS file: {css_file_path}")
+            css_content = FileStructureConsumer.get_file_content_for_container(user, css_file_path, base_path)
+            if css_content is not None:
+                logger.info(f"Retrieved content for CSS file: {css_file_path}")
+                encoded_css = base64.b64encode(css_content.encode()).decode()
+                container_css_path = f"/app/src/{css_file_path}"
+                exec_result = container.exec_run([
+                    "sh", "-c",
+                    f"mkdir -p $(dirname {container_css_path}) && echo {encoded_css} | base64 -d > {container_css_path}"
+                ])
+                if exec_result.exit_code != 0:
+                    logger.error(f"Failed to update {css_file_path} in container: {exec_result.output.decode()}")
+                    raise Exception(f"Failed to update {css_file_path} in container: {exec_result.output.decode()}")
+                logger.info(f"Updated {css_file_path} in container")
+            else:
+                logger.warning(f"CSS file {css_file_path} not found or empty. Creating empty file in container.")
+                container_css_path = f"/app/src/{css_file_path}"
+                exec_result = container.exec_run([
+                    "sh", "-c",
+                    f"mkdir -p $(dirname {container_css_path}) && touch {container_css_path}"
+                ])
+                if exec_result.exit_code != 0:
+                    logger.error(
+                        f"Failed to create empty CSS file {css_file_path} in container: {exec_result.output.decode()}")
+                else:
+                    logger.info(f"Created empty CSS file {css_file_path} in container")
 
-        # Handle all imports (CSS, JS, TS, JSON, etc.)
-        # Handle local imports with proper extension resolution
-        local_import_pattern = r"import\s+(?:{\s*[\w\s,]+\s*}|\*\s+as\s+[\w]+|[\w]+)\s+from\s+['\"](\.[/\\].*?)['\"]"
-        local_imports = re.findall(local_import_pattern, code)
+        # Handle other imports (if any)
+        import_pattern = r"import\s+(?:(?:{\s*[\w\s,]+\s*})|(?:[\w]+))\s+from\s+['\"](.+?)['\"]"
+        imports = re.findall(import_pattern, code)
 
         base_path = os.path.dirname(main_file_path)
         logger.info(f"Base path for imports: {base_path}")
 
-        for import_path in local_imports:
+        for import_path in imports:
             logger.info(f"=================\nProcessing import: {import_path},\nimport path: {file_name},\nbase path: {base_path}\n==========")
 
-            content, resolved_path = get_file_with_extension(user, file_name, import_path, base_path)
+            file_content, resolved_path = get_file_with_extension(user, file_name, import_path, base_path)
 
-            if content is not None:
+            if file_content is not None:
+                encoded_content = base64.b64encode(file_content.encode()).decode()
+
                 # Get the correct container path maintaining the extension
                 container_path = f"/app/src/{os.path.relpath(resolved_path, 'Root')}"
-                encoded_content = base64.b64encode(content.encode()).decode()
+                encoded_content = base64.b64encode(file_content.encode()).decode()
 
                 logger.info(f"Adding file to container: {container_path}")
 

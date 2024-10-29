@@ -660,7 +660,7 @@ def check_container_ready(request):
                 'compilationStatus': compilation_status,
                 'url': url,
                 'message': 'Container is ready' if status == ContainerStatus.READY else 'Container is building',
-                'should_stop_polling': status in [ContainerStatus.READY, ContainerStatus.WARNING],
+                'should_stop_polling': status in [ContainerStatus.READY, ContainerStatus.WARNING, ContainerStatus.COMPILATION_FAILED],
                 'debug_info': debug_info,
                 'detailed_logs': detailed_logs,
                 'warnings': warnings,

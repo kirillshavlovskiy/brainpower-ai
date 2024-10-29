@@ -2,11 +2,9 @@
 module.exports = {
   content: [
     "./src/**/*.{js,jsx,ts,tsx}",
-    "./public/index.html"
   ],
   theme: {
     extend: {
-      // Keep your existing theme extensions
       animation: {
         'tick': 'tick 1s linear infinite',
       },
@@ -24,6 +22,7 @@ module.exports = {
     'w-2',
     'w-3',
     'w-4',
+    'h-6',
     'h-32',
     'h-40',
     'h-48',
@@ -46,5 +45,17 @@ module.exports = {
     'duration-1000',
     'ease-linear',
     'ease-in-out',
+    'shadow-lg',
+    'shadow-sm',
+    'min-h-screen',
+    'flex',
+    'flex-col',
+    'items-center',
+    'justify-center',
+    'relative',
+    'absolute',
+    'mb-8',
+    'text-4xl',
+    'font-mono'
   ],
 }

@@ -846,10 +846,10 @@ def check_or_create_container(request):
                 f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'rw'},
                 f"{react_renderer_path}/build": {'bind': '/app/build', 'mode': 'rw'},
                 # Configuration files
-                f"{react_renderer_path}/package.json": {'bind': '/app/package.json', 'mode': 'ro'},
+                f"{react_renderer_path}/package.json": {'bind': '/app/package.json', 'mode': 'rw'},
                 # Tailwind configuration
-                f"{react_renderer_path}/tailwind.config.js": {'bind': '/app/tailwind.config.js', 'mode': 'ro'},
-                f"{react_renderer_path}/postcss.config.js": {'bind': '/app/postcss.config.js', 'mode': 'ro'},
+                f"{react_renderer_path}/tailwind.config.js": {'bind': '/app/tailwind.config.js', 'mode': 'rw'},
+                f"{react_renderer_path}/postcss.config.js": {'bind': '/app/postcss.config.js', 'mode': 'rw'},
              }
 
             container = client.containers.run(

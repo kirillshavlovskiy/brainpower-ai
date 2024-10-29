@@ -442,7 +442,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         logger.info("Analyzing build output...", output_lines)
         for line in output_lines:
             if 'Failed to compile' in line or errors:
-                compilation_status = 'failed to compile'
+                compilation_status = 'compilation failed'
             elif warnings:
                 compilation_status = 'compiled with warnings'
             elif "Compiled" in logs or "Webpack compiled" in logs:
@@ -636,7 +636,7 @@ def check_container_ready(request):
             # Parse compilation status
 
             if 'Failed to compile' in logs or errors:
-                compilation_status = 'failed to compile'
+                compilation_status = 'compilation failed'
             elif warnings:
                 compilation_status = 'compiled with warnings'
             elif "Compiled" in logs or "Webpack compiled" in logs:

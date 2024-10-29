@@ -895,10 +895,9 @@ def check_or_create_container(request):
                 "yarn add @radix-ui/react-icons"
             ]
 
-            # for cmd in tailwind_commands:
-            #     exec_result = container.exec_run(cmd)
-            #     if exec_result.exit_code != 0:
-            #         raise Exception(f"Failed to install Tailwind packages: {exec_result.output.decode()}")
+            exec_result = container.exec_run([f'echo "" > src/{component_filename}'])
+            if exec_result.exit_code != 0:
+                raise Exception(f"Failed to install Tailwind packages: {exec_result.output.decode()}")
 
         except Exception as e:
             logger.error(f"Failed to create container: {str(e)}", exc_info=True)

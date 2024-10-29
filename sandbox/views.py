@@ -877,7 +877,7 @@ def check_or_create_container(request):
                     f"{react_renderer_path}/src": {'bind': '/app/src', 'mode': 'rw'},
                     f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'rw'},
                     f"{react_renderer_path}/build": {'bind': '/app/build', 'mode': 'rw'},
-                    f"{react_renderer_path}/tailwind.config.js": {'bind': '/app/build', 'mode': 'rw'},
+                    f"{react_renderer_path}/tailwind.config.js": {'bind': '/app/tailwind.config.js', 'mode': 'rw'},
                 },
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',

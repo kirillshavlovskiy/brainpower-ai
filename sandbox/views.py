@@ -331,13 +331,19 @@ def update_code_internal(container, code, user, file_name, main_file_path):
             container.start()
             time.sleep(5)  # Wait for container to fully start
 
+        file_extension = file_name.split('.')[-1].lower()
+        is_typescript = file_extension in ['ts', 'tsx']
+
+        # Set appropriate component filename and compiler options
+        component_filename = 'component.tsx' if is_typescript else 'component.js'
+
         # Update component.js
         encoded_code = base64.b64encode(code.encode()).decode()
 
         # Write the component code directly (no need to check/create directory)
         exec_result = container.exec_run([
             "sh", "-c",
-            f"echo {encoded_code} | base64 -d > /app/src/component.js"
+            f"echo {encoded_code} | base64 -d > /app/src/{component_filename}"
         ], user='node')
 
         logger.info(f"Updated component.js in container with content from {file_name}")

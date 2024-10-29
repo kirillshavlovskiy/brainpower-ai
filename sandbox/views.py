@@ -819,7 +819,7 @@ def check_or_create_container(request):
                     'PORT': str(3001),
                     'HOST': '0.0.0.0',
                     'NODE_ENV': 'development',
-                    'NODE_OPTIONS': '--max-old-space-size=8192',
+                    'NODE_OPTIONS': '--max-old-space-size=4096',  # Reduced from 8192
                     'CHOKIDAR_USEPOLLING': 'true',
                     'WATCHPACK_POLLING': 'true'
                 },
@@ -827,31 +827,17 @@ def check_or_create_container(request):
                     react_renderer_path: {'bind': '/app', 'mode': 'rw'},
                 },
                 ports={'3001/tcp': host_port},
-                mem_limit='8g',
-                memswap_limit='16g',
+                mem_limit='6g',  # Increased from previous setting
+                memswap_limit='8g',  # Increased from previous setting
+                mem_swappiness=60,  # Added to allow more aggressive swapping
+                oom_kill_disable=True,  # Prevent OOM killer
                 cpu_quota=100000,
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
 
-            # Add detailed logging
-            time.sleep(2)
+            # Add proper delay for container startup
+            time.sleep(5)  # Increased from 2 seconds
             container.reload()
-
-            # Get detailed container information
-            logger.info("Container inspection:", container.attrs)
-
-            # Get PATH and working directory
-            exec_result = container.exec_run('env', user='node')
-            logger.info("Environment variables:", exec_result.output.decode())
-
-            exec_result = container.exec_run('pwd', user='node')
-            logger.info("Working directory:", exec_result.output.decode())
-
-            exec_result = container.exec_run('ls -la /app', user='node')
-            logger.info("App directory contents:", exec_result.output.decode())
-
-            exec_result = container.exec_run('ls -la /app/node_modules/.bin', user='node')
-            logger.info("Bin directory contents:", exec_result.output.decode())
 
             if container.status != 'running':
                 logs = container.logs().decode('utf-8')

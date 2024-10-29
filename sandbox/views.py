@@ -446,8 +446,6 @@ def update_code_internal(container, code, user, file_name, main_file_path):
 
         logger.info("Analyzing build output...", output_lines)
         for line in output_lines:
-            if non_standard_imports:
-                compilation_status = 'compilation failed'
             if 'Failed to compile' in line or errors:
                 compilation_status = 'compilation failed'
             elif warnings:
@@ -916,6 +914,8 @@ def check_or_create_container(request):
             component_filename,
             main_file_path
         )
+        if non_standard_imports != []:
+            installation_status = ''
 
         return JsonResponse({
             'status': container.status,

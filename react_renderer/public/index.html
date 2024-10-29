@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>React App</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script>
+      window.addEventListener('message', function(event) {
+          if (event.data === 'reload') {
+              location.reload();
+          } else if (event.data.type === 'takeScreenshot') {
+              html2canvas(document.body).then(function(canvas) {
+                  var screenshot = canvas.toDataURL('image/png');
+                  window.parent.postMessage({ type: 'screenshot', screenshot: screenshot }, '*');
+              });
+          }
+      }, false);
+    </script>
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+  </body>
+</html>

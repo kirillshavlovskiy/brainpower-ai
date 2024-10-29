@@ -3,7 +3,7 @@
       "baseUrl": ".",
         "paths": {
           "@/*": ["./*"]
-        }
+        },
         "target": "es5",
         "lib": ["dom", "dom.iterable", "esnext"],
         "allowJs": true,

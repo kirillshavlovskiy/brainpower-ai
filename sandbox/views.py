@@ -853,8 +853,6 @@ def check_or_create_container(request):
                     f"{react_renderer_path}/build": {'bind': '/app/build', 'mode': 'rw'},
                     f"{react_renderer_path}/tailwind.config.js": {'bind': '/app/tailwind.config.js', 'mode': 'rw'},
                     f"{react_renderer_path}/postcss.config.js": {'bind': '/app/postcss.config.js', 'mode': 'rw'},
-                    f"{react_renderer_path}/webpack.config.js": {'bind': '/app/webpack.config.js', 'mode': 'rw'},
-                    f"{react_renderer_path}/tsconfig.json": {'bind': '/app/tsconfig.json', 'mode': 'rw'},
                 },
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',

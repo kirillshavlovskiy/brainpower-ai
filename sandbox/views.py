@@ -775,6 +775,7 @@ def get_available_port(start, end):
 
 @api_view(['POST'])
 def check_or_create_container(request):
+    file_structure = []
     data = request.data
     code = data.get('main_code')
     language = data.get('language')
@@ -797,32 +798,17 @@ def check_or_create_container(request):
     # Set appropriate component filename and compiler options
     component_filename = 'component.tsx' if is_typescript else 'component.js'
 
-    # Define TypeScript config content
-    tsconfig_content = {
-        "compilerOptions": {
-            "target": "es5",
-            "lib": ["dom", "dom.iterable", "esnext"],
-            "allowJs": True,
-            "skipLibCheck": True,
-            "esModuleInterop": True,
-            "allowSyntheticDefaultImports": True,
-            "strict": True,
-            "forceConsistentCasingInFileNames": True,
-            "noFallthroughCasesInSwitch": True,
-            "module": "esnext",
-            "moduleResolution": "node",
-            "resolveJsonModule": True,
-            "isolatedModules": True,
-            "noEmit": True,
-            "jsx": "react-jsx"
-        },
-        "include": ["src"],
-        "exclude": ["node_modules"]
-    }
-
     react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'
     container_name = f'react_renderer_{user_id}_{file_name}'
     app_name = f"{user_id}_{file_name.replace('.', '-')}"
+
+    container_info = {
+        'container_name': container_name,
+        'created_at': datetime.now().isoformat(),
+        'files_added': [],
+        'build_status': 'pending',
+        'component_type': 'TypeScript' if is_typescript else 'JavaScript'
+    }
 
     try:
         container = client.containers.get(container_name)
@@ -832,11 +818,6 @@ def check_or_create_container(request):
             container.start()
             container.reload()
             time.sleep(2)
-
-        # Update component type in existing container
-        if is_typescript:
-            # Set up TypeScript environment in existing container
-            setup_typescript_env(container, tsconfig_content)
 
         port_bindings = container.attrs['NetworkSettings']['Ports']
         host_port = port_bindings.get('3001/tcp', [{}])[0].get('HostPort')
@@ -856,15 +837,30 @@ def check_or_create_container(request):
                 'NODE_OPTIONS': '--max-old-space-size=8192',
                 'CHOKIDAR_USEPOLLING': 'true',
                 'WATCHPACK_POLLING': 'true',
-                'COMPONENT_TYPE': 'typescript' if is_typescript else 'javascript'
+                'FAST_REFRESH': 'false'
             }
 
-            # Add TypeScript-specific env vars
+            # Additional env vars for TypeScript if needed
             if is_typescript:
                 env_vars.update({
                     'TSC_COMPILE_ON_ERROR': 'true',
                     'SKIP_PREFLIGHT_CHECK': 'true'
                 })
+
+            # Define volume mappings
+            volumes = {
+                # Mount the entire src directory from react_renderer
+                f"{react_renderer_path}/src": {'bind': '/app/src', 'mode': 'rw'},
+                f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'rw'},
+                # Configuration files
+                f"{react_renderer_path}/package.json": {'bind': '/app/package.json', 'mode': 'ro'},
+                f"{react_renderer_path}/package-lock.json": {'bind': '/app/package-lock.json', 'mode': 'ro'},
+                # Tailwind configuration
+                f"{react_renderer_path}/tailwind.config.js": {'bind': '/app/tailwind.config.js', 'mode': 'ro'},
+                f"{react_renderer_path}/postcss.config.js": {'bind': '/app/postcss.config.js', 'mode': 'ro'},
+                # Build directory
+                f"{react_renderer_path}/build": {'bind': '/app/build', 'mode': 'rw'},
+            }
 
             container = client.containers.run(
                 image='react_renderer_cra',
@@ -873,12 +869,7 @@ def check_or_create_container(request):
                 detach=True,
                 user='node',
                 environment=env_vars,
-                volumes={
-                    f"{react_renderer_path}/src": {'bind': '/app/src', 'mode': 'rw'},
-                    f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'rw'},
-                    f"{react_renderer_path}/build": {'bind': '/app/build', 'mode': 'rw'},
-                    f"{react_renderer_path}/tailwind.config.js": {'bind': '/app/tailwind.config.js', 'mode': 'rw'},
-                },
+                volumes=volumes,
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',
                 memswap_limit='16g',
@@ -893,8 +884,18 @@ def check_or_create_container(request):
             if container.status != 'running':
                 raise Exception("Container failed to start properly")
 
-            # Set up initial file structure
-            setup_container_files(container, is_typescript, component_filename, tsconfig_content)
+            # Verify the src directory structure is correctly mounted
+            check_commands = [
+                "ls -la /app/src",
+                "ls -la /app/public",
+                "ls -la /app"
+            ]
+
+            for cmd in check_commands:
+                exec_result = container.exec_run(cmd, user='node')
+                if exec_result.exit_code != 0:
+                    logger.warning(f"Directory check failed: {cmd}")
+                    logger.warning(exec_result.output.decode())
 
         except Exception as e:
             logger.error(f"Failed to create container: {str(e)}", exc_info=True)
@@ -910,14 +911,13 @@ def check_or_create_container(request):
             }, status=500)
 
     try:
-        # Update code in container
+        # Update code in container with appropriate component file
         build_output, files_added, installed_packages, compilation_status = update_code_internal(
             container,
             code,
             user_id,
-            component_filename,  # Use the determined component filename
-            main_file_path,
-
+            component_filename,
+            main_file_path
         )
 
         return JsonResponse({
@@ -938,60 +938,6 @@ def check_or_create_container(request):
             'error': str(e),
             'detailed_logs': detailed_logger.get_logs()
         }, status=500)
-
-
-def setup_typescript_env(container, tsconfig_content):
-    """Set up TypeScript environment in container"""
-    try:
-        # Write tsconfig.json
-        tsconfig_str = json.dumps(tsconfig_content, indent=2)
-        container.exec_run([
-            "sh", "-c",
-            f"echo '{tsconfig_str}' > /app/tsconfig.json"
-        ])
-
-        # Install TypeScript dependencies if needed
-        container.exec_run([
-            "yarn", "add",
-            "--dev",
-            "typescript",
-            "@types/react",
-            "@types/react-dom"
-        ])
-
-    except Exception as e:
-        detailed_logger.log('error', f"Error setting up TypeScript environment: {str(e)}")
-        raise
-
-
-def setup_container_files(container, is_typescript, component_filename, tsconfig_content):
-    """Initialize container file structure"""
-    try:
-        # Create necessary directories
-        container.exec_run("mkdir -p /app/src", user='node')
-
-        # Base files setup
-        init_commands = [
-            "touch /app/src/index.js",
-            "touch /app/src/index.css",
-            f"touch /app/src/{component_filename}"
-        ]
-
-        # Additional TypeScript setup
-        if is_typescript:
-            tsconfig_str = json.dumps(tsconfig_content, indent=2)
-            init_commands.extend([
-                f"echo '{tsconfig_str}' > /app/tsconfig.json",
-                "yarn add --dev typescript @types/react @types/react-dom"
-            ])
-
-        # Execute commands
-        for cmd in init_commands:
-            container.exec_run(f"sh -c '{cmd}'", user='node')
-
-    except Exception as e:
-        detailed_logger.log('error', f"Error setting up container files: {str(e)}")
-        raise
 
 
 def prepare_container_environment(container):

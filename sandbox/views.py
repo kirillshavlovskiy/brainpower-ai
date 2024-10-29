@@ -775,6 +775,7 @@ def get_available_port(start, end):
 
 @api_view(['POST'])
 def check_or_create_container(request):
+    file_structure = []
     data = request.data
     code = data.get('main_code')
     language = data.get('language')
@@ -782,13 +783,42 @@ def check_or_create_container(request):
     file_name = data.get('file_name', 'component.js')
     main_file_path = data.get('main_file_path')
 
+    detailed_logger.log('info',
+                        f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
+
     if not all([code, language, file_name]):
         return JsonResponse({'error': 'Missing required fields'}, status=400)
     if language != 'react':
         return JsonResponse({'error': 'Unsupported language'}, status=400)
 
+    # Determine component type based on file extension
+    file_extension = file_name.split('.')[-1].lower()
+    is_typescript = file_extension in ['ts', 'tsx']
+
+    # Set appropriate component filename and compiler options
+    if is_typescript:
+        component_filename = 'component.tsx'
+        compiler_options = {
+            'target': 'es5',
+            'jsx': 'react',
+            'module': 'esnext',
+            'strict': True
+        }
+    else:
+        component_filename = 'component.js'
+        compiler_options = None
+
     react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'
     container_name = f'react_renderer_{user_id}_{file_name}'
+    app_name = f"{user_id}_{file_name.replace('.', '-')}"
+
+    container_info = {
+        'container_name': container_name,
+        'created_at': datetime.now().isoformat(),
+        'files_added': [],
+        'build_status': 'pending',
+        'component_type': 'TypeScript' if is_typescript else 'JavaScript'
+    }
 
     try:
         container = client.containers.get(container_name)
@@ -807,65 +837,92 @@ def check_or_create_container(request):
         host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
 
         try:
+            # Prepare environment variables based on component type
+            env_vars = {
+                'USER_ID': user_id,
+                'REACT_APP_USER_ID': user_id,
+                'FILE_NAME': file_name,
+                'PORT': str(3001),
+                'NODE_ENV': 'development',
+                'NODE_OPTIONS': '--max-old-space-size=8192',
+                'CHOKIDAR_USEPOLLING': 'true',
+                'WATCHPACK_POLLING': 'true',
+                'COMPONENT_TYPE': 'typescript' if is_typescript else 'javascript'
+            }
+
+            if is_typescript:
+                env_vars.update({
+                    'TSC_COMPILE_ON_ERROR': 'true',
+                    'TYPESCRIPT_COMPILER_OPTIONS': json.dumps(compiler_options)
+                })
+
             container = client.containers.run(
                 image='react_renderer_cra',
+                command='yarn start',
                 name=container_name,
                 detach=True,
                 user='node',
-                environment={
-                    'USER_ID': user_id,
-                    'REACT_APP_USER_ID': user_id,
-                    'FILE_NAME': file_name,
-                    'PORT': str(3001),
-                    'HOST': '0.0.0.0',
-                    'NODE_ENV': 'development',
-                    'NODE_OPTIONS': '--max-old-space-size=4096',  # Reduced from 8192
-                    'CHOKIDAR_USEPOLLING': 'true',
-                    'WATCHPACK_POLLING': 'true'
-                },
+                environment=env_vars,
                 volumes={
-                    react_renderer_path: {'bind': '/app', 'mode': 'rw'},
+                    f"{react_renderer_path}/src": {'bind': '/app/src', 'mode': 'rw'},
+                    f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'rw'},
+                    f"{react_renderer_path}/build": {'bind': '/app/build', 'mode': 'rw'},
                 },
                 ports={'3001/tcp': host_port},
-                mem_limit='6g',  # Increased from previous setting
-                memswap_limit='8g',  # Increased from previous setting
-                mem_swappiness=60,  # Added to allow more aggressive swapping
-                oom_kill_disable=True,  # Prevent OOM killer
+                mem_limit='8g',
+                memswap_limit='16g',
                 cpu_quota=100000,
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
 
-            # Add proper delay for container startup
-            time.sleep(5)  # Increased from 2 seconds
+            # Quick health check
+            time.sleep(2)
             container.reload()
 
             if container.status != 'running':
-                logs = container.logs().decode('utf-8')
-                logger.error(f"Container failed with logs: {logs}")
-                raise Exception(f"Container failed to start properly. Logs: {logs}")
+                raise Exception("Container failed to start properly")
+
+            # Initialize the src directory structure with appropriate file types
+            init_commands = [
+                "mkdir -p /app/src",
+                "touch /app/src/index.js /app/src/index.css",
+                f"touch /app/src/{component_filename}"
+            ]
+
+            # Add TypeScript-specific initialization if needed
+            if is_typescript:
+                init_commands.extend([
+                    "touch /app/src/tsconfig.json",
+                    "echo '{}' > /app/src/tsconfig.json"  # Initialize empty tsconfig
+                ])
+
+            container.exec_run(
+                f"sh -c '{' && '.join(init_commands)}'",
+                user='node'
+            )
 
         except Exception as e:
-            logger.error(f"Container error details:", exc_info=True)
+            logger.error(f"Failed to create container: {str(e)}", exc_info=True)
             if 'container' in locals():
-                logs = container.logs().decode('utf-8')
-                logger.error(f"Container logs: {logs}")
                 try:
                     container.stop()
                     container.remove(force=True)
                 except:
                     pass
             return JsonResponse({
-                'error': f'Container error: {str(e)}',
-                'logs': logs if 'logs' in locals() else None
+                'error': f'Failed to create container: {str(e)}',
+                'detailed_logs': detailed_logger.get_logs()
             }, status=500)
 
     try:
+        # Update code in container with appropriate component file
         build_output, files_added, installed_packages, compilation_status = update_code_internal(
             container,
             code,
             user_id,
-            file_name,
-            main_file_path
+            component_filename,  # Use the determined component filename
+            main_file_path,
+            is_typescript=is_typescript
         )
 
         return JsonResponse({
@@ -876,11 +933,16 @@ def check_or_create_container(request):
             'can_deploy': True,
             'build_output': build_output,
             'compilation_status': compilation_status,
+            'component_type': 'TypeScript' if is_typescript else 'JavaScript',
+            'detailed_logs': detailed_logger.get_logs()
         })
 
     except Exception as e:
-        logger.error(f"Error updating container: {str(e)}")
-        return JsonResponse({'error': str(e)}, status=500)
+        detailed_logger.log('error', f"Error updating container: {str(e)}")
+        return JsonResponse({
+            'error': str(e),
+            'detailed_logs': detailed_logger.get_logs()
+        }, status=500)
 
 
 def prepare_container_environment(container):

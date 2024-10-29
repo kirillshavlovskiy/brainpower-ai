@@ -919,6 +919,7 @@ def check_or_create_container(request):
 
         return JsonResponse({
             'status': container.status,
+            'installationStatus': "installing_dependencies",
             'installPackages': non_standard_imports,
             'compilationStatus': compilation_status,
             'message': 'Container is running',

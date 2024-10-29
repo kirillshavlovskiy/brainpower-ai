@@ -842,11 +842,7 @@ def check_or_create_container(request):
                 },
                 volumes={
                     # Mount the entire src directory
-                    f"{react_renderer_path}/src": {'bind': '/app/src', 'mode': 'rw'},
-                    # Mount public directory if needed
-                    f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'rw'},
-                    # Mount build directory for output
-                    f"{react_renderer_path}/build": {'bind': '/app/build', 'mode': 'rw'},
+                    f"{react_renderer_path}/": {'bind': '/app', 'mode': 'rw'},
                 },
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',

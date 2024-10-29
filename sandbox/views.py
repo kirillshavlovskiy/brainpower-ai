@@ -795,7 +795,7 @@ def check_or_create_container(request):
     file_extension = file_name.split('.')[-1].lower()
     is_typescript = file_extension in ['ts', 'tsx']
 
-    # Set appropriate component filename
+    # Set appropriate component filename and compiler options
     component_filename = 'component.tsx' if is_typescript else 'component.js'
 
     react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'
@@ -827,47 +827,7 @@ def check_or_create_container(request):
         host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
 
         try:
-            # First create a temporary container to create the React app
-            temp_container = client.containers.run(
-                image='node:18',
-                name=f'temp_{container_name}',
-                command='tail -f /dev/null',  # Keep container running
-                detach=True,
-                user='node',
-                working_dir='/app'
-            )
-
-            try:
-                # Create React app using CRA
-                create_app_cmd = [
-                    "npm install -g create-react-app",
-                    f"npx create-react-app . {'--template typescript' if is_typescript else ''}"
-                ]
-
-                for cmd in create_app_cmd:
-                    exec_result = temp_container.exec_run(
-                        cmd,
-                        workdir='/app'
-                    )
-                    if exec_result.exit_code != 0:
-                        raise Exception(f"Failed to create React app: {exec_result.output.decode()}")
-
-                # Copy the created app to the host machine's react_renderer path
-                temp_container.put_archive(
-                    '/app',
-                    client.containers.get(temp_container.id).export()
-                )
-
-                # Clean up temporary container
-                temp_container.stop()
-                temp_container.remove()
-
-            except Exception as e:
-                temp_container.stop()
-                temp_container.remove()
-                raise e
-
-            # Now create the actual container with the React app and volumes
+            # Base environment variables
             env_vars = {
                 'USER_ID': user_id,
                 'REACT_APP_USER_ID': user_id,
@@ -877,36 +837,25 @@ def check_or_create_container(request):
                 'NODE_OPTIONS': '--max-old-space-size=8192',
                 'CHOKIDAR_USEPOLLING': 'true',
                 'WATCHPACK_POLLING': 'true',
-                'FAST_REFRESH': 'false'
-            }
-
-            if is_typescript:
-                env_vars.update({
-                    'TSC_COMPILE_ON_ERROR': 'true',
-                    'SKIP_PREFLIGHT_CHECK': 'true'
-                })
-
-            volumes = {
-                # Mount the source code directory
-                f"{react_renderer_path}/src": {'bind': '/app/src', 'mode': 'rw'},
-                f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'rw'},
-                # Configuration files
-                f"{react_renderer_path}/package.json": {'bind': '/app/package.json', 'mode': 'ro'},
-                # Tailwind configuration
-                f"{react_renderer_path}/tailwind.config.js": {'bind': '/app/tailwind.config.js', 'mode': 'ro'},
-                f"{react_renderer_path}/postcss.config.js": {'bind': '/app/postcss.config.js', 'mode': 'ro'},
-                # Build directory
-                f"{react_renderer_path}/build": {'bind': '/app/build', 'mode': 'rw'},
+                'COMPONENT_TYPE': 'typescript' if is_typescript else 'javascript'
             }
 
             container = client.containers.run(
-                image='node:18',
+                image='react_renderer_cra',
                 command='yarn start',
                 name=container_name,
                 detach=True,
                 user='node',
                 environment=env_vars,
-                volumes=volumes,
+                volumes={
+                    f"{react_renderer_path}/src": {'bind': '/app/src', 'mode': 'rw'},
+                    f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'rw'},
+                    f"{react_renderer_path}/build": {'bind': '/app/build', 'mode': 'rw'},
+                    f"{react_renderer_path}/tailwind.config.js": {'bind': '/app/tailwind.config.js', 'mode': 'rw'},
+                    f"{react_renderer_path}/postcss.config.js": {'bind': '/app/postcss.config.js', 'mode': 'rw'},
+                    f"{react_renderer_path}/webpack.config.js": {'bind': '/app/webpack.config.js', 'mode': 'rw'},
+                    f"{react_renderer_path}/tsconfig.json": {'bind': '/app/tsconfig.json', 'mode': 'rw'},
+                },
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',
                 memswap_limit='16g',
@@ -914,27 +863,23 @@ def check_or_create_container(request):
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
 
-            # Install dependencies
-            setup_commands = [
-                "npm install",
-                "npm install tailwindcss postcss autoprefixer",
-                "npx tailwindcss init -p"
-            ]
-
-            for cmd in setup_commands:
-                exec_result = container.exec_run(
-                    cmd,
-                    workdir='/app'
-                )
-                if exec_result.exit_code != 0:
-                    raise Exception(f"Failed to execute setup command: {cmd}\nError: {exec_result.output.decode()}")
-
             # Quick health check
             time.sleep(2)
             container.reload()
 
             if container.status != 'running':
                 raise Exception("Container failed to start properly")
+
+            # Install additional Tailwind packages
+            tailwind_commands = [
+                "yarn add tailwindcss-animate class-variance-authority clsx tailwind-merge",
+                "yarn add @radix-ui/react-icons"
+            ]
+
+            for cmd in tailwind_commands:
+                exec_result = container.exec_run(cmd)
+                if exec_result.exit_code != 0:
+                    raise Exception(f"Failed to install Tailwind packages: {exec_result.output.decode()}")
 
         except Exception as e:
             logger.error(f"Failed to create container: {str(e)}", exc_info=True)
@@ -961,12 +906,13 @@ def check_or_create_container(request):
 
         return JsonResponse({
             'status': container.status,
+            'compilation_status': compilation_status,
             'message': 'Container is running',
             'container_id': container.id,
+            'container_info': container_info,
             'url': f"https://{host_port}.{HOST_URL}",
             'can_deploy': True,
             'build_output': build_output,
-            'compilation_status': compilation_status,
             'component_type': 'TypeScript' if is_typescript else 'JavaScript',
             'detailed_logs': detailed_logger.get_logs()
         })

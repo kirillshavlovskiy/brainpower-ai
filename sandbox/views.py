@@ -775,7 +775,6 @@ def get_available_port(start, end):
 
 @api_view(['POST'])
 def check_or_create_container(request):
-    file_structure = []
     data = request.data
     code = data.get('main_code')
     language = data.get('language')
@@ -796,29 +795,34 @@ def check_or_create_container(request):
     is_typescript = file_extension in ['ts', 'tsx']
 
     # Set appropriate component filename and compiler options
-    if is_typescript:
-        component_filename = 'component.tsx'
-        compiler_options = {
-            'target': 'es5',
-            'jsx': 'react',
-            'module': 'esnext',
-            'strict': True
-        }
-    else:
-        component_filename = 'component.js'
-        compiler_options = None
+    component_filename = 'component.tsx' if is_typescript else 'component.js'
+
+    # Define TypeScript config content
+    tsconfig_content = {
+        "compilerOptions": {
+            "target": "es5",
+            "lib": ["dom", "dom.iterable", "esnext"],
+            "allowJs": True,
+            "skipLibCheck": True,
+            "esModuleInterop": True,
+            "allowSyntheticDefaultImports": True,
+            "strict": True,
+            "forceConsistentCasingInFileNames": True,
+            "noFallthroughCasesInSwitch": True,
+            "module": "esnext",
+            "moduleResolution": "node",
+            "resolveJsonModule": True,
+            "isolatedModules": True,
+            "noEmit": True,
+            "jsx": "react-jsx"
+        },
+        "include": ["src"],
+        "exclude": ["node_modules"]
+    }
 
     react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer'
     container_name = f'react_renderer_{user_id}_{file_name}'
     app_name = f"{user_id}_{file_name.replace('.', '-')}"
-
-    container_info = {
-        'container_name': container_name,
-        'created_at': datetime.now().isoformat(),
-        'files_added': [],
-        'build_status': 'pending',
-        'component_type': 'TypeScript' if is_typescript else 'JavaScript'
-    }
 
     try:
         container = client.containers.get(container_name)
@@ -829,6 +833,11 @@ def check_or_create_container(request):
             container.reload()
             time.sleep(2)
 
+        # Update component type in existing container
+        if is_typescript:
+            # Set up TypeScript environment in existing container
+            setup_typescript_env(container, tsconfig_content)
+
         port_bindings = container.attrs['NetworkSettings']['Ports']
         host_port = port_bindings.get('3001/tcp', [{}])[0].get('HostPort')
 
@@ -837,7 +846,7 @@ def check_or_create_container(request):
         host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
 
         try:
-            # Prepare environment variables based on component type
+            # Base environment variables
             env_vars = {
                 'USER_ID': user_id,
                 'REACT_APP_USER_ID': user_id,
@@ -850,10 +859,11 @@ def check_or_create_container(request):
                 'COMPONENT_TYPE': 'typescript' if is_typescript else 'javascript'
             }
 
+            # Add TypeScript-specific env vars
             if is_typescript:
                 env_vars.update({
                     'TSC_COMPILE_ON_ERROR': 'true',
-                    'TYPESCRIPT_COMPILER_OPTIONS': json.dumps(compiler_options)
+                    'SKIP_PREFLIGHT_CHECK': 'true'
                 })
 
             container = client.containers.run(
@@ -882,24 +892,8 @@ def check_or_create_container(request):
             if container.status != 'running':
                 raise Exception("Container failed to start properly")
 
-            # Initialize the src directory structure with appropriate file types
-            init_commands = [
-                "mkdir -p /app/src",
-                "touch /app/src/index.js /app/src/index.css",
-                f"touch /app/src/{component_filename}"
-            ]
-
-            # Add TypeScript-specific initialization if needed
-            if is_typescript:
-                init_commands.extend([
-                    "touch /app/src/tsconfig.json",
-                    "echo '{}' > /app/src/tsconfig.json"  # Initialize empty tsconfig
-                ])
-
-            container.exec_run(
-                f"sh -c '{' && '.join(init_commands)}'",
-                user='node'
-            )
+            # Set up initial file structure
+            setup_container_files(container, is_typescript, component_filename, tsconfig_content)
 
         except Exception as e:
             logger.error(f"Failed to create container: {str(e)}", exc_info=True)
@@ -915,7 +909,7 @@ def check_or_create_container(request):
             }, status=500)
 
     try:
-        # Update code in container with appropriate component file
+        # Update code in container
         build_output, files_added, installed_packages, compilation_status = update_code_internal(
             container,
             code,
@@ -943,6 +937,60 @@ def check_or_create_container(request):
             'error': str(e),
             'detailed_logs': detailed_logger.get_logs()
         }, status=500)
+
+
+def setup_typescript_env(container, tsconfig_content):
+    """Set up TypeScript environment in container"""
+    try:
+        # Write tsconfig.json
+        tsconfig_str = json.dumps(tsconfig_content, indent=2)
+        container.exec_run([
+            "sh", "-c",
+            f"echo '{tsconfig_str}' > /app/tsconfig.json"
+        ])
+
+        # Install TypeScript dependencies if needed
+        container.exec_run([
+            "yarn", "add",
+            "--dev",
+            "typescript",
+            "@types/react",
+            "@types/react-dom"
+        ])
+
+    except Exception as e:
+        detailed_logger.log('error', f"Error setting up TypeScript environment: {str(e)}")
+        raise
+
+
+def setup_container_files(container, is_typescript, component_filename, tsconfig_content):
+    """Initialize container file structure"""
+    try:
+        # Create necessary directories
+        container.exec_run("mkdir -p /app/src", user='node')
+
+        # Base files setup
+        init_commands = [
+            "touch /app/src/index.js",
+            "touch /app/src/index.css",
+            f"touch /app/src/{component_filename}"
+        ]
+
+        # Additional TypeScript setup
+        if is_typescript:
+            tsconfig_str = json.dumps(tsconfig_content, indent=2)
+            init_commands.extend([
+                f"echo '{tsconfig_str}' > /app/tsconfig.json",
+                "yarn add --dev typescript @types/react @types/react-dom"
+            ])
+
+        # Execute commands
+        for cmd in init_commands:
+            container.exec_run(f"sh -c '{cmd}'", user='node')
+
+    except Exception as e:
+        detailed_logger.log('error', f"Error setting up container files: {str(e)}")
+        raise
 
 
 def prepare_container_environment(container):

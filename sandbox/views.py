@@ -916,7 +916,7 @@ def check_or_create_container(request):
             user_id,
             component_filename,  # Use the determined component filename
             main_file_path,
-            is_typescript=is_typescript
+
         )
 
         return JsonResponse({

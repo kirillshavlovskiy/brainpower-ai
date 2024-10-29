@@ -1,6 +1,7 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { BrowserRouter as Router, Route, Routes, useParams } from 'react-router-dom';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
+import './index.css';
 
 const DynamicComponent = () => {
   const [Component, setComponent] = useState(null);

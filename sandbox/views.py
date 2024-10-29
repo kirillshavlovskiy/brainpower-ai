@@ -839,6 +839,18 @@ def check_or_create_container(request):
                 'WATCHPACK_POLLING': 'true',
                 'COMPONENT_TYPE': 'typescript' if is_typescript else 'javascript'
             }
+            # Define volume mappings
+            volumes = {
+                # Mount the entire src directory from react_renderer
+                f"{react_renderer_path}/src": {'bind': '/app/src', 'mode': 'rw'},
+                f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'rw'},
+                f"{react_renderer_path}/build": {'bind': '/app/build', 'mode': 'rw'},
+                # Configuration files
+                f"{react_renderer_path}/package.json": {'bind': '/app/package.json', 'mode': 'ro'},
+                # Tailwind configuration
+                f"{react_renderer_path}/tailwind.config.js": {'bind': '/app/tailwind.config.js', 'mode': 'ro'},
+                f"{react_renderer_path}/postcss.config.js": {'bind': '/app/postcss.config.js', 'mode': 'ro'},
+             }
 
             container = client.containers.run(
                 image='react_renderer_cra',
@@ -847,13 +859,7 @@ def check_or_create_container(request):
                 detach=True,
                 user='node',
                 environment=env_vars,
-                volumes={
-                    f"{react_renderer_path}/src": {'bind': '/app/src', 'mode': 'rw'},
-                    f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'rw'},
-                    f"{react_renderer_path}/build": {'bind': '/app/build', 'mode': 'rw'},
-                    f"{react_renderer_path}/tailwind.config.js": {'bind': '/app/tailwind.config.js', 'mode': 'rw'},
-                    f"{react_renderer_path}/postcss.config.js": {'bind': '/app/postcss.config.js', 'mode': 'rw'},
-                },
+                volumes=volumes,
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',
                 memswap_limit='16g',

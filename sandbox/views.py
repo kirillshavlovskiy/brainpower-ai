@@ -921,6 +921,7 @@ def check_or_create_container(request):
                 f"{react_renderer_path}/src/App.js": {'bind': '/app/src/App.js', 'mode': 'rw'},
                 f"{react_renderer_path}/src/index.js": {'bind': '/app/src/index.js', 'mode': 'rw'},
                 f"{react_renderer_path}/src/index.css": {'bind': '/app/src/index.css', 'mode': 'rw'},
+                f"{react_renderer_path}/src/lib": {'bind': '/app/src/lib', 'mode': 'rw'},
                 f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'rw'},
                 f"{react_renderer_path}/build": {'bind': '/app/build', 'mode': 'rw'},
                 # Configuration files

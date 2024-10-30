@@ -815,14 +815,7 @@ def get_available_port(start, end):
 
 def shadcn_install(container):
     shadcn_components = [
-        'button',
         'card',
-        'input',
-        'label',
-        'select',
-        'dialog',
-        'alert',
-        'toast'
     ]
     # Initialize shadcn
     init_command = "npx shadcn-ui@latest init --yes"

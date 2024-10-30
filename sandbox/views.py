@@ -813,6 +813,40 @@ def get_available_port(start, end):
         if result != 0:
             return port
 
+def shadcn_install(container):
+    shadcn_components = [
+        'button',
+        'card',
+        'input',
+        'label',
+        'select',
+        'dialog',
+        'alert',
+        'toast'
+    ]
+    # Initialize shadcn
+    init_command = "npx shadcn-ui@latest init --yes"
+    exec_result = container.exec_run(
+        cmd=["sh", "-c", init_command],
+        user="node"
+    )
+    if exec_result.exit_code != 0:
+        detailed_logger.log('warning', f"Shadcn initialization output: {exec_result.output.decode()}")
+
+    # Install each component
+    for component in shadcn_components:
+        install_command = f"npx shadcn-ui@latest add {component} --yes"
+        exec_result = container.exec_run(
+            cmd=["sh", "-c", install_command],
+            user="node"
+        )
+        if exec_result.exit_code != 0:
+            detailed_logger.log('warning', f"Failed to install {component}: {exec_result.output.decode()}")
+        else:
+            detailed_logger.log('info', f"Successfully installed {component}")
+
+        # Add a small delay between installations to prevent rate limiting
+        time.sleep(1)
 
 
 @api_view(['POST'])
@@ -895,7 +929,10 @@ def check_or_create_container(request):
                 f"{react_renderer_path}/tsconfig.json": {'bind': '/app/tsconfig.json', 'mode': 'rw'},
                 f"{react_renderer_path}/tailwind.config.js": {'bind': '/app/tailwind.config.js', 'mode': 'rw'},
                 f"{react_renderer_path}/postcss.config.js": {'bind': '/app/postcss.config.js', 'mode': 'rw'},
-             }
+                # shadcn init
+                f"{react_renderer_path}/components.json": {'bind': '/app/components.json', 'mode': 'rw'},
+
+            }
 
             container = client.containers.run(
                 image='react_renderer_cra',
@@ -916,15 +953,11 @@ def check_or_create_container(request):
             time.sleep(2)
             container.reload()
 
+            # Install additional shadcn ui components
             if container.status != 'running':
                 raise Exception("Container failed to start properly")
-
-            # Install additional Tailwind packages
-            tailwind_commands = [
-                "yarn add tailwindcss-animate class-variance-authority clsx tailwind-merge",
-                "yarn add @radix-ui/react-icons"
-            ]
-
+            else:
+                shadcn_install(container)
 
         except Exception as e:
             logger.error(f"Failed to create container: {str(e)}", exc_info=True)

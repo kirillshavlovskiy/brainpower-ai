@@ -2,31 +2,6 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --border: 214.3 31.8% 91.4%;
-  --background: 0 0% 100%;
-}
-
-.bg-gray-100 {
-  background-color: rgb(243 244 246);
-}
-
-.bg-black {
-  background-color: rgb(0 0 0);
-}
-
-.bg-red-500 {
-  background-color: rgb(239 68 68);
-}
-
-.bg-white {
-  background-color: rgb(255 255 255);
-}
-
-.border-gray-800 {
-  border-color: rgb(31 41 55);
-}
-
 @layer base {
   :root {
     --background: 0 0% 100%;
@@ -78,10 +53,9 @@
   * {
     @apply border-border;
   }
-  
+
   body {
-    @apply text-foreground;
-    background-color: hsl(var(--background));
+    @apply text-foreground bg-background;
   }
 }
 
@@ -89,12 +63,33 @@
   .bg-background {
     background-color: hsl(var(--background));
   }
-  
+
   .text-foreground {
     color: hsl(var(--foreground));
   }
-  
+
   .border-border {
     border-color: hsl(var(--border));
   }
+}
+
+
+.bg-gray-100 {
+  background-color: rgb(243 244 246);
+}
+
+.bg-black {
+  background-color: rgb(0 0 0);
+}
+
+.bg-red-500 {
+  background-color: rgb(239 68 68);
+}
+
+.bg-white {
+  background-color: rgb(255 255 255);
+}
+
+.border-gray-800 {
+  border-color: rgb(31 41 55);
 }

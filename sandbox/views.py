@@ -915,7 +915,7 @@ def check_or_create_container(request):
                 f"{react_renderer_path}/src/index.js": {'bind': '/app/src/index.js', 'mode': 'rw'},
                 f"{react_renderer_path}/src/index.css": {'bind': '/app/src/index.css', 'mode': 'rw'},
                 f"{react_renderer_path}/src/lib/utils.ts": {'bind': '/app/src/lib/utils.ts', 'mode': 'rw'},
-                f"{react_renderer_path}/src/components/ui/card.tsx": {'bind': '/app/src/components/ui/card.tsx', 'mode': 'rw'},
+                f"{react_renderer_path}/components/ui": {'bind': '/app/src/components/ui', 'mode': 'rw'},
 
                 f"{react_renderer_path}/public": {'bind': '/app/public', 'mode': 'rw'},
                 f"{react_renderer_path}/build": {'bind': '/app/build', 'mode': 'rw'},

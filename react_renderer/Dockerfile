@@ -31,9 +31,9 @@ RUN yarn global add \
 
 # Copy only configuration files
 COPY package.json yarn.lock ./
-COPY tsconfig.json .babelrc ./
+COPY tsconfig.json ./
 COPY tailwind.config.js postcss.config.js ./
-COPY webpack.config.js ./
+
 
 # Configure yarn and install dependencies
 RUN yarn config set network-timeout 300000 && \

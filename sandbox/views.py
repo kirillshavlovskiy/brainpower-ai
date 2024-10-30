@@ -950,8 +950,6 @@ def check_or_create_container(request):
             # Install additional shadcn ui components
             if container.status != 'running':
                 raise Exception("Container failed to start properly")
-            else:
-                shadcn_install(container)
 
         except Exception as e:
             logger.error(f"Failed to create container: {str(e)}", exc_info=True)

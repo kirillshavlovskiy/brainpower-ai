@@ -1,49 +1,55 @@
-# Use the official Node.js 18 LTS version
-FROM node:18.18.0-slim
+# Stage 1: Development environment
+FROM node:18-alpine AS development
 
-# Install necessary system dependencies
-RUN apt-get update && apt-get install -y \
-    python3 \
-    make \
-    g++ \
-    procps \
-    curl \
-    netcat-traditional \
-    lsof \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set the working directory
+# Set working directory
 WORKDIR /app
 
-# Copy package.json and yarn.lock before other files to leverage Docker layer caching
-COPY package.json yarn.lock ./
+# Install necessary tools for development
+RUN apk add --no-cache git
 
-# Install dependencies
-RUN yarn install
+# Create Next.js project with specific configurations using create-next-app
+RUN npx create-next-app@latest . --typescript --tailwind --eslint --app --src-dir --import-alias "@/*" --no-git --use-yarn
 
-# Copy Next.js configuration files
-COPY next.config.js ./
+# Install additional dependencies
+RUN yarn add -D @types/node autoprefixer postcss tailwindcss \
+    && yarn add @radix-ui/react-slot class-variance-authority clsx lucide-react \
+    tailwind-merge
 
-# Copy the rest of the application code
-COPY . ./
+# Stage 2: Production build
+FROM node:18-alpine AS builder
 
-# Create a non-root user and set permissions
-RUN useradd -m -s /bin/bash -u 1001 nextjs && \
-    chown -R nextjs:nextjs /app
+WORKDIR /app
 
-# Switch to the non-root user
-USER nextjs
+# Copy files from development stage
+COPY --from=development /app/. .
 
-# Expose port 3001
-EXPOSE 3001
+# Install dependencies and build
+RUN yarn install --frozen-lockfile && \
+    yarn build
 
-# Set environment variables
-ENV PORT=3001
-ENV HOST=0.0.0.0
-ENV NODE_ENV=development
-ENV NODE_OPTIONS="--max-old-space-size=8192"
-ENV NEXT_TELEMETRY_DISABLED=1
-ENV WATCHPACK_POLLING=true
+# Stage 3: Production runtime
+FROM node:18-alpine AS runner
 
-# Start Next.js development server
-CMD ["yarn", "dev", "-p", "3001"]
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+# Copy necessary files from builder
+COPY --from=builder /app/next.config.js ./
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+
+# Expose the port
+EXPOSE 3000
+
+# Set the command to run the app
+CMD ["node", "server.js"]
+
+# Add healthcheck
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:3000/ || exit 1
+
+# Add Docker metadata
+LABEL version="1.0"
+LABEL description="Next.js application with TypeScript and Tailwind"

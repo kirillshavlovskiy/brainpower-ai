@@ -7,44 +7,17 @@ WORKDIR /app
 # Install necessary tools for development
 RUN apk add --no-cache git curl python3 make g++
 
-# Create Next.js project with specific configurations using create-next-app
-RUN npx create-next-app@latest . --typescript --tailwind --eslint --app --src-dir --import-alias "@/*" --no-git --use-yarn
+# Copy package files
+COPY package.json yarn.lock ./
 
-# Install additional dependencies for dynamic component editing
-RUN yarn add -D \
-    @types/node \
-    autoprefixer \
-    postcss \
-    tailwindcss \
-    @types/react-dom \
-    @types/react-syntax-highlighter \
-    typescript \
-    prettier \
-    eslint-config-prettier
+# Install dependencies
+RUN yarn install --frozen-lockfile
 
-# Install runtime dependencies
-RUN yarn add \
-    @radix-ui/react-slot \
-    class-variance-authority \
-    clsx \
-    lucide-react \
-    tailwind-merge \
-    framer-motion \
-    react-syntax-highlighter \
-    @monaco-editor/react \
-    monaco-editor \
-    @babel/parser \
-    @babel/traverse \
-    @babel/generator \
-    @babel/types \
-    chokidar \
-    ws
+# Copy the rest of the application
+COPY . .
 
-# Create necessary directories for dynamic components
-RUN mkdir -p /app/components/dynamic \
-    /app/styles/dynamic \
-    /app/lib/templates \
-    /app/public/previews
+# Add build script to package.json
+RUN node -e "const pkg=require('./package.json'); pkg.scripts.build='next build'; require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2))"
 
 # Stage 2: Production build
 FROM node:18-alpine AS builder
@@ -54,8 +27,8 @@ WORKDIR /app
 # Copy files from development stage
 COPY --from=development /app/. .
 
-# Install dependencies and build
-RUN yarn install --frozen-lockfile && \
+# Install production dependencies and build
+RUN yarn install --production --frozen-lockfile && \
     yarn build
 
 # Stage 3: Production runtime

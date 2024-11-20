@@ -21,14 +21,6 @@ COPY tsconfig.json ./
 COPY tailwind.config.ts ./
 COPY postcss.config.mjs ./
 
-# Create default .env.local if it doesn't exist
-RUN echo "DOCKER_HOST=localhost\n\
-DOCKER_PORT=8000\n\
-NEXT_PUBLIC_API_URL=http://localhost:3000\n\
-NEXT_PUBLIC_DOCKER_API_URL=http://localhost:8000\n\
-WATCHPACK_POLLING=true\n\
-CHOKIDAR_USEPOLLING=true" > .env.local
-
 # Configure yarn and install dependencies
 RUN yarn config set network-timeout 300000 && \
     yarn config set network-concurrency 4 && \

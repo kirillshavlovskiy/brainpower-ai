@@ -1,11 +1,26 @@
-# Stage 1: Development environment
-FROM node:18-alpine AS development
+# Development environment
+FROM node:18-alpine
 
-# Set working directory
 WORKDIR /app
 
-# Install necessary tools for development
+# Install necessary tools
 RUN apk add --no-cache git curl python3 make g++
+
+# Configure yarn for better network handling
+RUN yarn config set network-timeout 300000 && \
+    yarn config set network-concurrency 4 && \
+    yarn config set registry https://registry.npmjs.org/
+
+# Copy package files first
+COPY package.json ./
+
+# Install ALL dependencies (including devDependencies)
+RUN touch yarn.lock && \
+    for i in 1 2 3; \
+    do yarn install && break || \
+    echo "Retry $i/3..." && \
+    sleep 15; \
+    done
 
 # Create necessary directories
 RUN mkdir -p /app/src/app \
@@ -14,18 +29,19 @@ RUN mkdir -p /app/src/app \
     /app/lib/templates \
     /app/public/previews
 
-# Copy configuration files first
-COPY package.json ./
+# Copy configuration files
 COPY next.config.js ./
 COPY tsconfig.json ./
 COPY tailwind.config.ts ./
 COPY postcss.config.mjs ./
 
-# Configure yarn and install dependencies
-RUN yarn config set network-timeout 300000 && \
-    yarn config set network-concurrency 4 && \
-    yarn config set registry https://registry.npmjs.org/ && \
-    yarn install
+# Create default .env.local if it doesn't exist
+RUN echo "DOCKER_HOST=localhost\n\
+DOCKER_PORT=3001\n\
+NEXT_PUBLIC_API_URL=http://localhost:3001\n\
+NEXT_PUBLIC_DOCKER_API_URL=http://localhost:3001\n\
+WATCHPACK_POLLING=true\n\
+CHOKIDAR_USEPOLLING=true" > .env.local
 
 # Copy source files
 COPY src ./src
@@ -34,70 +50,28 @@ COPY lib ./lib
 COPY public ./public
 COPY styles ./styles
 
-# Copy other necessary files
+# Copy watch script
 COPY watch-components.js ./
-COPY .env.local ./
-
-# Stage 2: Production build
-FROM node:18-alpine AS builder
-
-WORKDIR /app
-
-# Copy files from development stage
-COPY --from=development /app/. .
-
-# Install dependencies and build
-RUN yarn install --frozen-lockfile && \
-    yarn build
-
-# Stage 3: Production runtime
-FROM node:18-alpine AS runner
-
-WORKDIR /app
-
-ENV NODE_ENV=production
-
-# Install runtime system dependencies
-RUN apk add --no-cache \
-    curl \
-    python3 \
-    make \
-    g++ \
-    git
-
-# Copy necessary files from builder
-COPY --from=builder /app/next.config.ts ./
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/components/dynamic ./components/dynamic
-COPY --from=builder /app/styles/dynamic ./styles/dynamic
-COPY --from=builder /app/lib/templates ./lib/templates
-COPY --from=builder /app/watch-components.js ./
-
-# Create volume for dynamic components
-VOLUME /app/components/dynamic
-VOLUME /app/styles/dynamic
-VOLUME /app/public/previews
 
 # Set proper permissions
 RUN chown -R node:node /app && \
     chmod -R 755 /app
 
-# Expose ports
+# Create volume for dynamic content
+VOLUME /app/components/dynamic
+VOLUME /app/styles/dynamic
+VOLUME /app/public/previews
+
+# Expose port 3001 (will be mapped to dynamic host port)
 EXPOSE 3001
+
+# Switch to non-root user
+USER node
 
 # Set environment variables
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV WATCHPACK_POLLING=true
 ENV CHOKIDAR_USEPOLLING=true
 
-# Switch to non-root user
-USER node
-
-# Start both the Next.js server and file watcher
-CMD ["sh", "-c", "node watch-components.js & node server.js"]
-
-# Add healthcheck
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:3000/ || exit 1
+# Start development server on port 3001
+CMD ["sh", "-c", "PORT=3001 yarn dev & node watch-components.js"]

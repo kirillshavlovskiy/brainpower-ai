@@ -8,10 +8,10 @@ RUN apk add --no-cache git curl python3 make g++
 
 # Copy configuration files first
 COPY package.json ./
-COPY next.config.js ./
+COPY next.config.ts ./
 COPY tsconfig.json ./
-COPY tailwind.config.js ./
-COPY postcss.config.js ./
+COPY tailwind.config.ts ./
+COPY postcss.config.mjs ./
 
 # Create yarn.lock and install dependencies
 RUN touch yarn.lock && \

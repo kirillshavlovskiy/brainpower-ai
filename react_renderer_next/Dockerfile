@@ -85,8 +85,7 @@ RUN chown -R node:node /app && \
     chmod -R 755 /app
 
 # Expose ports
-EXPOSE 3000
-EXPOSE 8000
+EXPOSE 3001
 
 # Set environment variables
 ENV NEXT_TELEMETRY_DISABLED=1

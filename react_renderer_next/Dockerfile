@@ -7,17 +7,51 @@ WORKDIR /app
 # Install necessary tools for development
 RUN apk add --no-cache git curl python3 make g++
 
-# Copy package files
-COPY package.json yarn.lock ./
+# Copy package.json first
+COPY package.json ./
 
-# Install dependencies
-RUN yarn install --frozen-lockfile
+# Create yarn.lock if it doesn't exist and install dependencies
+RUN touch yarn.lock && \
+    yarn install
 
-# Copy the rest of the application
-COPY . .
+# Create Next.js project with specific configurations using create-next-app
+RUN npx create-next-app@latest . --typescript --tailwind --eslint --app --src-dir --import-alias "@/*" --no-git --use-yarn
 
-# Add build script to package.json
-RUN node -e "const pkg=require('./package.json'); pkg.scripts.build='next build'; require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2))"
+# Install additional dependencies for dynamic component editing
+RUN yarn add -D \
+    @types/node \
+    autoprefixer \
+    postcss \
+    tailwindcss \
+    @types/react-dom \
+    @types/react-syntax-highlighter \
+    typescript \
+    prettier \
+    eslint-config-prettier
+
+# Install runtime dependencies
+RUN yarn add \
+    @radix-ui/react-slot \
+    class-variance-authority \
+    clsx \
+    lucide-react \
+    tailwind-merge \
+    framer-motion \
+    react-syntax-highlighter \
+    @monaco-editor/react \
+    monaco-editor \
+    @babel/parser \
+    @babel/traverse \
+    @babel/generator \
+    @babel/types \
+    chokidar \
+    ws
+
+# Create necessary directories for dynamic components
+RUN mkdir -p /app/components/dynamic \
+    /app/styles/dynamic \
+    /app/lib/templates \
+    /app/public/previews
 
 # Stage 2: Production build
 FROM node:18-alpine AS builder
@@ -27,8 +61,8 @@ WORKDIR /app
 # Copy files from development stage
 COPY --from=development /app/. .
 
-# Install production dependencies and build
-RUN yarn install --production --frozen-lockfile && \
+# Install dependencies and build
+RUN yarn install --frozen-lockfile && \
     yarn build
 
 # Stage 3: Production runtime

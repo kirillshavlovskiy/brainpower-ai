@@ -16,7 +16,7 @@ RUN mkdir -p /app/src/app \
 
 # Copy configuration files first
 COPY package.json ./
-COPY next.config.ts ./
+COPY next.config.js ./
 COPY tsconfig.json ./
 COPY tailwind.config.ts ./
 COPY postcss.config.mjs ./

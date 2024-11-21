@@ -194,17 +194,23 @@ def check_container(request):
 def set_container_permissions(container):
     """Set proper permissions for container directories with read-only handling"""
     try:
-        # Check if src directory exists
-        check_result = container.exec_run(
-            "test -d /app/components || mkdir -p /app/components",
-            user='root'
-        )
+        # Check if directories exist
+        check_commands = [
+            "test -d /app/components/dynamic || mkdir -p /app/components/dynamic",
+            "test -d /app/src || mkdir -p /app/src"
+        ]
 
-        # Only try to set permissions for writable directories
+        for cmd in check_commands:
+            check_result = container.exec_run(cmd, user='root')
+
+        # Set permissions for writable directories
         commands = [
-            "chown -R node:node /app/components",
-            "chmod -R 755 /app/components",
-            "chmod -R g+w /app/components",
+            "chown -R node:node /app/components/dynamic",
+            "chmod -R 755 /app/components/dynamic",
+            "chmod -R g+w /app/components/dynamic",
+            "chown -R node:node /app/src",
+            "chmod -R 755 /app/src",
+            "chmod -R g+w /app/src",
             "touch /app/compilation_status",
             "chown node:node /app/compilation_status",
             "chmod 644 /app/compilation_status"

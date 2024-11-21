@@ -34,6 +34,9 @@ HOST_PORT_RANGE_START = 32768
 HOST_PORT_RANGE_END = 60999
 NGINX_SITES_DYNAMIC = '/etc/nginx/sites-dynamic'
 
+# Add this with other global variables at the top
+react_renderer_path = os.path.join(settings.BASE_DIR, 'react_renderer')
+
 
 class CompilationMessages:
     NEXT_READY = "Ready in"
@@ -231,19 +234,25 @@ def update_code_internal(container, code, user, file_name, main_file_path):
     files_added = []
     build_output = []
     try:
-        # Update component.js
+        # Always use placeholder.tsx as the target file
+        target_path = "/app/components/dynamic/placeholder.tsx"
+        logger.info(f"Writing component to path: {target_path}")
+
+        # Write component code
         encoded_code = base64.b64encode(code.encode()).decode()
         max_attempts = 3
         for attempt in range(max_attempts):
             try:
                 exec_result = container.exec_run([
                     "sh", "-c",
-                    f"echo {encoded_code} | base64 -d > /app/components/DynamicComponent.js"
-                ],
-                    user='root')
+                    f"echo {encoded_code} | base64 -d > {target_path}"
+                ], user='node')
+
                 if exec_result.exit_code != 0:
-                    raise Exception(f"Failed to update DynamicComponent.js in container: {exec_result.output.decode()}")
-                files_added.append('/app/components/DynamicComponent.js')
+                    raise Exception(f"Failed to write component to {target_path}: {exec_result.output.decode()}")
+
+                files_added.append(target_path)
+                logger.info(f"Successfully wrote component to {target_path}")
                 break
             except docker.errors.APIError as e:
                 if attempt == max_attempts - 1:
@@ -251,96 +260,22 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                 logger.warning(f"API error on attempt {attempt + 1}, retrying: {str(e)}")
                 time.sleep(1)
 
-        logger.info(f"Updated DynamicComponent.js in container with content from {file_name} at path {main_file_path}")
-        logger.info(f"Processing for user: {user}")
-
-        # Get the directory of the main file
-        base_path = os.path.dirname(main_file_path)
-        logger.info(f"Base path derived from main file: {base_path}")
-
-        # Handle all imports (CSS, JS, TS, JSON, etc.)
-        import_pattern = r"import\s+(?:(?:{\s*[\w\s,]+\s*})|(?:[\w]+)|\*\s+as\s+[\w]+)\s+from\s+['\"](.+?)['\"]|import\s+['\"](.+?)['\"]"
-        imports = re.findall(import_pattern, code)
-
-        for import_match in imports:
-            import_path = import_match[0] or import_match[1]  # Get the non-empty group
-            if import_path:
-                logger.info(f"Attempting to retrieve content for imported file: {import_path}")
-                file_content = FileStructureConsumer.get_file_content_for_container(user, import_path, base_path)
-                if file_content is not None:
-                    logger.info(f"Retrieved content for file: {import_path}")
-                    encoded_content = base64.b64encode(file_content.encode()).decode()
-                    container_path = f"/app/components/{import_path}"
-                    exec_result = container.exec_run([
-                        "sh", "-c",
-                        f"mkdir -p $(dirname {container_path}) && echo {encoded_content} | base64 -d > {container_path}"
-                    ])
-                    if exec_result.exit_code != 0:
-                        raise Exception(f"Failed to update {import_path} in container: {exec_result.output.decode()}")
-                    logger.info(f"Updated {import_path} in container")
-                    files_added.append(container_path)
-                else:
-                    logger.warning(f"File {import_path} not found or empty. Creating empty file in container.")
-                    container_path = f"/app/components/{import_path}"
-                    exec_result = container.exec_run([
-                        "sh", "-c",
-                        f"mkdir -p $(dirname {container_path}) && touch {container_path}"
-                    ])
-                    if exec_result.exit_code != 0:
-                        logger.error(
-                            f"Failed to create empty file {import_path} in container: {exec_result.output.decode()}")
-                    else:
-                        logger.info(f"Created empty file {import_path} in container")
-                        files_added.append(container_path)
-
-        # Check for non-standard imports
-        non_standard_imports = check_non_standard_imports(code)
-        if non_standard_imports:
-            logger.info(f"Detected non-standard imports: {', '.join(non_standard_imports)}")
-            installed_packages, failed_packages = install_packages(container, non_standard_imports)
-
-            if failed_packages:
-                logger.warning(f"Some packages failed to install: {', '.join(failed_packages)}")
-
-            # You might want to decide here if you want to continue or raise an exception if some packages failed to install
-
-        else:
-            logger.info("No non-standard imports detected")
-
-        # Start the development server
-        logger.info("Starting the development server with 'yarn dev'")
-        exec_result = exec_command_with_retry(container, ["sh", "-c", "cd /app && yarn dev"])
-
-        # Process the output
-        output_lines = exec_result.decode().split('\n')
-        build_output = output_lines
+        # Get container logs to check compilation status
+        logs = container.logs(tail=100).decode('utf-8')
         compilation_status = ContainerStatus.COMPILING
 
-        logger.info("Analyzing build output...")
-        for line in output_lines:
-            if "Compiled successfully" in line:
-                compilation_status = ContainerStatus.READY
-                logger.info("Compilation successful")
-                break
-            elif "Compiled with warnings" in line:
-                compilation_status = ContainerStatus.WARNING
-                logger.warning("Compilation completed with warnings")
-                break
-            elif "Failed to compile" in line:
-                compilation_status = ContainerStatus.COMPILATION_FAILED
-                logger.error("Compilation failed")
-                break
+        # Check Next.js specific messages
+        if CompilationMessages.NEXT_READY in logs:
+            compilation_status = ContainerStatus.READY
+            logger.info("Next.js compilation successful")
+        elif CompilationMessages.NEXT_WARNING in logs:
+            compilation_status = ContainerStatus.WARNING
+            logger.warning("Next.js compilation completed with warnings")
+        elif CompilationMessages.NEXT_ERROR in logs:
+            compilation_status = ContainerStatus.COMPILATION_FAILED
+            logger.error("Next.js compilation failed")
 
-        # Save compilation status
-        exec_command_with_retry(container, ["sh", "-c", f"echo {compilation_status} > /app/compilation_status"])
-        logger.info(f"Saved compilation status: {compilation_status}")
-
-        # Log container status
-        container.reload()
-        logger.info(f"Container status after yarn dev: {container.status}")
-        logger.info(f"Container state: {container.attrs['State']}")
-
-        return "\n".join(build_output), files_added, compilation_status
+        return logs, files_added, compilation_status
 
     except Exception as e:
         logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
@@ -481,9 +416,9 @@ def check_or_create_container(request):
     data = request.data
     code = data.get('main_code')
     language = data.get('language')
-    user_id = data.get('user_id', '0')
-    file_name = data.get('file_name', 'test-component.js')
-    main_file_path = data.get('main_file_path')
+    user_id = "0"  # Always use "0" as user_id
+    file_name = "placeholder.tsx"  # Always use placeholder.tsx
+    main_file_path = "/components/dynamic/placeholder.tsx"  # Fixed path
 
     detailed_logger.log('info',
                         f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
@@ -494,7 +429,26 @@ def check_or_create_container(request):
         # Try to get existing container
         container = client.containers.get(container_name)
         container.reload()
-        # ... rest of existing container handling
+
+        # Update code in existing container
+        try:
+            logs, files_added, compilation_status = update_code_internal(
+                container, code, user_id, file_name, main_file_path
+            )
+
+            port_mapping = container.ports.get('3001/tcp')
+            if port_mapping:
+                host_port = port_mapping[0]['HostPort']
+                return JsonResponse({
+                    'status': 'success',
+                    'container_id': container.id,
+                    'url': f"https://{host_port}.{HOST_URL}",
+                    'detailed_logs': detailed_logger.get_logs()
+                })
+
+        except Exception as e:
+            detailed_logger.log('error', f"Failed to update code in existing container: {str(e)}")
+            raise
 
     except docker.errors.NotFound:
         detailed_logger.log('info', f"Container {container_name} not found. Creating new container.")
@@ -502,11 +456,11 @@ def check_or_create_container(request):
         detailed_logger.log('info', f"Selected port {host_port} for new container")
 
         try:
-            # Create container with minimal setup since most is done in Dockerfile
+            # Create container with minimal setup
             container = client.containers.run(
                 'react_renderer_next',
                 command=["sh", "-c", "yarn dev"],
-                user='node',  # Already set up in Dockerfile
+                user='node',
                 detach=True,
                 name=container_name,
                 environment={
@@ -515,10 +469,9 @@ def check_or_create_container(request):
                     'FILE_NAME': file_name
                 },
                 volumes={
-                    # Only mount dynamic content directories
+                    # Only mount dynamic content directory
                     os.path.join(react_renderer_path, 'components/dynamic'): {'bind': '/app/components/dynamic',
-                                                                              'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'styles/dynamic'): {'bind': '/app/styles/dynamic', 'mode': 'rw'}
+                                                                              'mode': 'rw'}
                 },
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',
@@ -527,15 +480,10 @@ def check_or_create_container(request):
             )
             detailed_logger.log('info', f"New container created: {container_name}")
 
-            # Write the component code
-            encoded_code = base64.b64encode(code.encode()).decode()
-            exec_result = container.exec_run([
-                "sh", "-c",
-                f"echo {encoded_code} | base64 -d > /app/components/dynamic/component.tsx"
-            ])
-
-            if exec_result.exit_code != 0:
-                raise Exception(f"Failed to write component code: {exec_result.output.decode()}")
+            # Write initial component code
+            logs, files_added, compilation_status = update_code_internal(
+                container, code, user_id, file_name, main_file_path
+            )
 
             return JsonResponse({
                 'status': 'success',
@@ -721,269 +669,4 @@ def container_exists(container_id):
         return True
     except docker.errors.NotFound:
         return False
-
-
-import re
-from django.views.decorators.csrf import csrf_exempt
-from django.utils.decorators import method_decorator
-from django.views import View
-from django.http import JsonResponse
-import logging
-import docker
-import json
-from django.conf import settings
-from django.views.generic import TemplateView
-from channels.layers import get_channel_layer
-
-logger = logging.getLogger(__name__)
-
-NGINX_SITES_PATH = '/etc/nginx/sites-available'
-NGINX_SITES_ENABLED_PATH = '/etc/nginx/sites-enabled'
-REACT_APPS_ROOT = '/var/www/react-apps'
-
-
-def update_index_html(file_path):
-    with open(file_path, 'r') as file:
-        content = file.read()
-
-    # Update script components and link href to use relative paths
-    content = re.sub(r'(components|href)="/static/', r'\1="./static/', content)
-
-    with open(file_path, 'w') as file:
-        file.write(content)
-
-
-@method_decorator(csrf_exempt, name='dispatch')
-class DeployToProductionView_dev(View):
-    def options(self, request, *args, **kwargs):
-        response = JsonResponse({})
-        response["Access-Control-Allow-Origin"] = "http://localhost:3000"
-        response["Access-Control-Allow-Methods"] = "POST, OPTIONS"
-        response["Access-Control-Allow-Headers"] = "X-Requested-With, Content-Type"
-        return response
-
-    def post(self, request, *args, **kwargs):
-        try:
-            data = json.loads(request.body)
-            container_id = data.get('container_id')
-            user_id = data.get('user_id')
-            file_name = data.get('file_name')
-
-            if not all([container_id, user_id, file_name]):
-                return JsonResponse({'error': 'Missing required data'}, status=400)
-
-            # 1. Run npm build in the container
-            client = docker.from_env()
-            container = client.containers.get(container_id)
-            exec_result = container.exec_run("npm run build")
-            if exec_result.exit_code != 0:
-                raise Exception(f"Build failed: {exec_result.output.decode()}")
-
-            # 2. Copy the build files from the container to a local directory
-            app_name = f"{user_id}_{file_name.replace('.', '-')}"
-            production_dir = os.path.join(settings.BASE_DIR, 'deployed_apps', app_name)
-
-            # Remove existing directory if it exists
-            if os.path.exists(production_dir):
-                shutil.rmtree(production_dir)
-
-            os.makedirs(production_dir, exist_ok=True)
-
-            # Use docker cp to copy files from container to host
-            os.system(f"docker cp {container_id}:/app/build/. {production_dir}")
-
-            # Update index.html to use relative paths
-            index_path = os.path.join(production_dir, 'index.html')
-            update_index_html(index_path)
-
-            # Print directory contents for debugging
-            print(f"Contents of {production_dir}:")
-            for root, dirs, files in os.walk(production_dir):
-                level = root.replace(production_dir, '').count(os.sep)
-                indent = ' ' * 4 * (level)
-                print(f"{indent}{os.path.basename(root)}/")
-                subindent = ' ' * 4 * (level + 1)
-                for f in files:
-                    print(f"{subindent}{f}")
-
-            # 3. In a local environment, we'll skip Nginx configuration
-            # Instead, we'll assume we're serving these files directly through Django
-
-            # 4. Return the new URL to the client
-            production_url = f"http://{request.get_host()}/deployed_apps/{app_name}/"
-            return JsonResponse({
-                'status': 'success',
-                'message': 'Application deployed locally',
-                'production_url': production_url
-            })
-
-        except Exception as e:
-            logger.error(f"Error in local deployment: {str(e)}")
-            return JsonResponse({'error': str(e)}, status=500)
-
-
-class ServeReactApp(TemplateView):
-    template_name = 'index.html'
-
-    def get_template_names(self):
-        app_name = self.kwargs['app_name']
-        template_path = f'{settings.DEPLOYED_COMPONENTS_ROOT}/{app_name}/index.html'
-        return [template_path]
-
-
-import os
-import json
-import asyncio
-import shutil
-import logging
-import traceback
-import subprocess
-from django.conf import settings
-from django.http import JsonResponse
-from django.views import View
-from channels.layers import get_channel_layer
-from asgiref.sync import async_to_sync
-from docker import from_env as docker_from_env
-import threading
-
-
-@method_decorator(csrf_exempt, name='dispatch')
-class DeployToProductionView_prod(View):
-    def post(self, request, *args, **kwargs):
-        try:
-            data = json.loads(request.body)
-            container_id = data.get('container_id')
-            user_id = data.get('user_id')
-            file_name = data.get('file_name')
-
-            if not all([container_id, user_id, file_name]):
-                return JsonResponse({"status": "error", "message": "Missing required data"}, status=400)
-
-            task_id = f"deploy_{user_id}_{file_name}"
-
-            # Start the deployment process in a separate thread
-            threading.Thread(target=self.deploy_async, args=(container_id, user_id, file_name, task_id)).start()
-
-            return JsonResponse({
-                "status": "processing",
-                "task_id": task_id,
-                "message": "Deployment started"
-            })
-        except Exception as e:
-            logger.error(f"Error initiating deployment: {str(e)}")
-            return JsonResponse({"status": "error", "message": str(e)}, status=500)
-
-    def deploy_async(self, container_id, user_id, file_name, task_id):
-        channel_layer = get_channel_layer()
-        try:
-            self.send_update(channel_layer, task_id, "Starting deployment process...")
-            container = client.containers.get(container_id)
-            app_name = f"{user_id}_{file_name.replace('.', '-')}"
-            production_dir = os.path.join(settings.DEPLOYED_COMPONENTS_ROOT, app_name)
-            production_url = f"https://8000.brainpower-ai.net/{app_name}/"
-            if container.status != 'running':
-                raise Exception(f"Container {container_id} is not running.")
-
-            self.send_update(channel_layer, task_id, "Production build process started...", production_url)
-            build_command = f"""
-            export NODE_OPTIONS="--max-old-space-size=8192" && \
-            export GENERATE_SOURCEMAP=false && \
-            export PUBLIC_URL="/{app_name}" && \
-            yarn build
-            """
-            exec_result = container.exec_run(["sh", "-c", build_command], demux=True)
-            stdout, stderr = exec_result.output
-            if exec_result.exit_code != 0:
-                error_message = stderr.decode() if stderr else 'Unknown error'
-                raise Exception(f"Build failed: {error_message}")
-
-            # Remove existing directory if it exists
-            self.send_update(channel_layer, task_id, "Production build process completed. Copying build files...",
-                             production_url)
-            subprocess.run(f"sudo rm -rf {production_dir}", shell=True, check=True)
-
-            # Create production directory
-            subprocess.run(f"sudo mkdir -p {production_dir}", shell=True, check=True)
-
-            # Copy files from container to host
-            copy_command = f"sudo docker cp {container_id}:/app/build/. {production_dir}"
-            copy_result = subprocess.run(copy_command, shell=True, capture_output=True, text=True)
-            if copy_result.returncode != 0:
-                logger.error(f"Error copying files: {copy_result.stderr}")
-                raise Exception(f"Failed to copy build files: {copy_result.stderr}")
-            logger.info("Files copied successfully")
-
-            # Update index.html to use correct static file paths
-            update_index_command = f"""
-                sudo sed -i 's|"/static/|"/{app_name}/static/|g' {os.path.join(production_dir, 'index.html')}
-            """
-            update_index_result = subprocess.run(update_index_command, shell=True, check=True)
-            if copy_result.returncode != 0:
-                logger.error(f"Error copying files: {update_index_result.stderr}")
-                raise Exception(f"Failed to copy build files: {update_index_result.stderr}")
-            logger.info("Index updated successfully")
-
-            self.send_update(channel_layer, task_id, "Verifying deployed files...", production_url=production_url)
-            list_command = f"ls -R {production_dir}"
-            result = subprocess.run(list_command, shell=True, capture_output=True, text=True)
-            # self.send_update(channel_layer, task_id, f"Deployed files:\n{result.stdout}", production_url)
-
-            # # Update other static files (JS, CSS)
-            # self.send_update(channel_layer, task_id, "Updating static file paths...")
-            # update_static_files_command = f"""
-            #         sudo find {production_dir} -type f \( -name '*.js' -o -name '*.css' \) -exec sudo sed -i 's|/static/|/{app_name}/static/|g' {{}} +
-            #         """
-            # subprocess.run(update_static_files_command, shell=True, check=True)
-            # logger.info("Static file paths updated")
-
-            # Set correct permissions
-            self.send_update(channel_layer, task_id, "Setting correct permissions...", production_url=production_url)
-            subprocess.run(f"sudo chown -R ubuntu:ubuntu {production_dir}", shell=True, check=True)
-            subprocess.run(f"sudo chmod -R 755 {production_dir}", shell=True, check=True)
-
-            index_path = os.path.join(production_dir, 'index.html')
-            if os.path.exists(index_path):
-                logger.info(f"Deployment completed. Production URL: {production_url}")
-                self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)
-
-                # Perform health check
-                self.send_update(channel_layer, task_id, "Performing health check...", production_url=production_url)
-                try:
-                    host_response = requests.get(production_url, timeout=10)
-                    logger.info(f"Server response: {host_response}")
-                    if host_response.status_code == 200:
-                        self.send_update(channel_layer, task_id, "Health check passed", production_url=production_url)
-                    else:
-                        raise Exception(f"Health check failed. Status code: {host_response.status_code}")
-                except requests.RequestException as e:
-                    raise Exception(f"Health check failed. Error: {str(e)}")
-
-                self.send_update(channel_layer, task_id, "DEPLOYMENT_COMPLETE", production_url=production_url)
-            else:
-                raise Exception(f"Deployment failed: index.html not found at {index_path}")
-
-        except Exception as e:
-            logger.error(f"Error in deployment: {str(e)}")
-            self.send_update(channel_layer, task_id, f"Error: {str(e)}", error_trace=traceback.format_exc())
-
-    def send_update(self, channel_layer, task_id, message, production_url=None, error_trace=None):
-        logger.info(f"deployment url: {production_url}")
-        update = {
-            "type": "deployment_update",
-            "message": message,
-            "production_url": production_url,
-        }
-        if production_url:
-            update["production_url"] = production_url
-        if error_trace:
-            update["error_trace"] = error_trace
-
-        logger.info(f"Sending update: {update}")
-        async_to_sync(channel_layer.group_send)(f"deployment_{task_id}", update)
-        logger.info(f"Sent update for task {task_id}: {message}")
-
-
-
-
-
 

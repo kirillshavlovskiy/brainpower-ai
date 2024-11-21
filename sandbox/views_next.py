@@ -192,47 +192,177 @@ def check_container(request):
 
 
 def set_container_permissions(container):
-    """Set proper permissions for container directories with read-only handling"""
+    """Set proper permissions and initialize shadcn configuration at runtime"""
     try:
-        # Check if directories exist
-        check_commands = [
-            "test -d /app/components/dynamic || mkdir -p /app/components/dynamic",
-            "test -d /app/src || mkdir -p /app/src"
-        ]
+        # Initialize shadcn configuration files
+        shadcn_files = {
+            "/app/components.json": """{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "default",
+  "rsc": true,
+  "tsx": true,
+  "tailwind": {
+    "config": "tailwind.config.ts",
+    "css": "src/app/globals.css",
+    "baseColor": "slate",
+    "cssVariables": true
+  },
+  "aliases": {
+    "components": "@/components",
+    "utils": "@/lib/utils"
+  }
+}""",
+            "/app/src/app/globals.css": """@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-        for cmd in check_commands:
-            check_result = container.exec_run(cmd, user='root')
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 222.2 47.4% 11.2%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 215 20.2% 65.1%;
+    --radius: 0.5rem;
+  }
+}
 
-        # Set permissions for writable directories
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}""",
+            "/app/src/lib/utils.ts": """import { type ClassValue, clsx } from "clsx";
+import { twMerge } from "tailwind-merge";
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}""",
+            "/app/tailwind.config.ts": """import type { Config } from "tailwindcss";
+
+export default {
+  darkMode: ["class"],
+  content: [
+    "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
+    "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
+    "./components/dynamic/**/*.{js,ts,jsx,tsx,mdx}",
+    "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
+  ],
+  theme: {
+    extend: {
+      colors: {
+        border: "hsl(var(--border))",
+        input: "hsl(var(--input))",
+        ring: "hsl(var(--ring))",
+        background: "hsl(var(--background))",
+        foreground: "hsl(var(--foreground))",
+        primary: {
+          DEFAULT: "hsl(var(--primary))",
+          foreground: "hsl(var(--primary-foreground))",
+        },
+        secondary: {
+          DEFAULT: "hsl(var(--secondary))",
+          foreground: "hsl(var(--secondary-foreground))",
+        },
+        destructive: {
+          DEFAULT: "hsl(var(--destructive))",
+          foreground: "hsl(var(--destructive-foreground))",
+        },
+        muted: {
+          DEFAULT: "hsl(var(--muted))",
+          foreground: "hsl(var(--muted-foreground))",
+        },
+        accent: {
+          DEFAULT: "hsl(var(--accent))",
+          foreground: "hsl(var(--accent-foreground))",
+        },
+        popover: {
+          DEFAULT: "hsl(var(--popover))",
+          foreground: "hsl(var(--popover-foreground))",
+        },
+        card: {
+          DEFAULT: "hsl(var(--card))",
+          foreground: "hsl(var(--card-foreground))",
+        },
+      },
+      borderRadius: {
+        lg: "var(--radius)",
+        md: "calc(var(--radius) - 2px)",
+        sm: "calc(var(--radius) - 4px)",
+      },
+      keyframes: {
+        "accordion-down": {
+          from: { height: "0" },
+          to: { height: "var(--radix-accordion-content-height)" },
+        },
+        "accordion-up": {
+          from: { height: "var(--radix-accordion-content-height)" },
+          to: { height: "0" },
+        },
+      },
+      animation: {
+        "accordion-down": "accordion-down 0.2s ease-out",
+        "accordion-up": "accordion-up 0.2s ease-out",
+      },
+    },
+  },
+  plugins: [require("tailwindcss-animate")],
+} satisfies Config;"""
+        }
+
+        # Create directories and write files
+        for file_path, content in shadcn_files.items():
+            # Create directory if needed
+            dir_path = os.path.dirname(file_path)
+            container.exec_run(f"mkdir -p {dir_path}", user='root')
+
+            # Write file content
+            encoded_content = base64.b64encode(content.encode()).decode()
+            container.exec_run(
+                ["sh", "-c", f"echo {encoded_content} | base64 -d > {file_path}"],
+                user='root'
+            )
+            logger.info(f"Created file: {file_path}")
+
+        # Set permissions
         commands = [
             "chown -R node:node /app/components/dynamic",
             "chmod -R 755 /app/components/dynamic",
-            "chmod -R g+w /app/components/dynamic",
             "chown -R node:node /app/src",
             "chmod -R 755 /app/src",
-            "chmod -R g+w /app/src",
-            "touch /app/compilation_status",
-            "chown node:node /app/compilation_status",
-            "chmod 644 /app/compilation_status"
+            "chown -R node:node /app/components.json",
+            "chmod 644 /app/components.json",
+            "chown -R node:node /app/tailwind.config.ts",
+            "chmod 644 /app/tailwind.config.ts"
         ]
 
         for cmd in commands:
-            try:
-                exec_result = container.exec_run(
-                    ["sh", "-c", cmd],
-                    user='root'
-                )
-                if exec_result.exit_code != 0:
-                    logger.warning(f"Command {cmd} failed with: {exec_result.output.decode()}")
-            except Exception as cmd_error:
-                logger.warning(f"Error executing {cmd}: {str(cmd_error)}")
-                continue
+            exec_result = container.exec_run(["sh", "-c", cmd], user='root')
+            if exec_result.exit_code != 0:
+                logger.warning(f"Command {cmd} failed with: {exec_result.output.decode()}")
 
-        logger.info("Container permissions set successfully for writable directories")
+        logger.info("Container files and permissions set successfully")
         return True
 
     except Exception as e:
-        logger.error(f"Error setting container permissions: {str(e)}")
+        logger.error(f"Error setting container files and permissions: {str(e)}")
         return False
 
 
@@ -420,6 +550,7 @@ def check_or_create_container(request):
                         f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
 
     container_name = f'react_renderer_next_{user_id}_{file_name}'
+    base_path = "/home/ubuntu/brainpower-ai/react_renderer_next"
 
     try:
         # Try to get existing container
@@ -468,19 +599,23 @@ def check_or_create_container(request):
                     'HOSTNAME': '0.0.0.0'
                 },
                 volumes={
-                    os.path.join(react_renderer_path, 'components/dynamic'): {'bind': '/app/components/dynamic',
-                                                                              'mode': 'rw'}
+                    f"{base_path}/components/dynamic": {'bind': '/app/components/dynamic', 'mode': 'rw'},
+                    f"{base_path}/tailwind.config.ts": {'bind': '/app/tailwind.config.ts', 'mode': 'ro'},
+                    f"{base_path}/postcss.config.js": {'bind': '/app/postcss.config.js', 'mode': 'ro'},
+                    f"{base_path}/src/app/globals.css": {'bind': '/app/src/app/globals.css', 'mode': 'ro'},
+                    f"{base_path}/src/app/layout.tsx": {'bind': '/app/src/app/layout.tsx', 'mode': 'ro'},
+                    f"{base_path}/components.json": {'bind': '/app/components.json', 'mode': 'ro'}
                 },
-                ports={'3001/tcp': 3001},  # Fixed port mapping to 3001
+                ports={'3001/tcp': 3001},
                 mem_limit='8g',
                 memswap_limit='16g',
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
             detailed_logger.log('info', f"New container created: {container_name}")
 
-            # Set permissions before writing code
+            # Set permissions
             if not set_container_permissions(container):
-                raise Exception("Failed to set container permissions for new container")
+                raise Exception("Failed to set container permissions")
 
             # Write initial component code
             logs, files_added, compilation_status = update_code_internal(
@@ -490,7 +625,7 @@ def check_or_create_container(request):
             return JsonResponse({
                 'status': 'success',
                 'container_id': container.id,
-                'url': 'https://3001.brainpower-ai.net',  # Fixed URL
+                'url': 'https://3001.brainpower-ai.net',
                 'detailed_logs': detailed_logger.get_logs()
             })
 

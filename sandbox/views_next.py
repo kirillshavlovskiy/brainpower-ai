@@ -452,11 +452,9 @@ def check_or_create_container(request):
 
     except docker.errors.NotFound:
         detailed_logger.log('info', f"Container {container_name} not found. Creating new container.")
-        host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
-        detailed_logger.log('info', f"Selected port {host_port} for new container")
 
         try:
-            # Create container with minimal setup
+            # Create container with fixed port 3001
             container = client.containers.run(
                 'react_renderer_next',
                 command=["sh", "-c", "yarn dev"],
@@ -470,11 +468,10 @@ def check_or_create_container(request):
                     'HOSTNAME': '0.0.0.0'
                 },
                 volumes={
-                    # Only mount dynamic content directory
                     os.path.join(react_renderer_path, 'components/dynamic'): {'bind': '/app/components/dynamic',
                                                                               'mode': 'rw'}
                 },
-                ports={'3001/tcp': ('0.0.0.0', 3001)},
+                ports={'3001/tcp': 3001},  # Fixed port mapping to 3001
                 mem_limit='8g',
                 memswap_limit='16g',
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
@@ -493,7 +490,7 @@ def check_or_create_container(request):
             return JsonResponse({
                 'status': 'success',
                 'container_id': container.id,
-                'url': f"https://{host_port}.{HOST_URL}",
+                'url': 'https://3001.brainpower-ai.net',  # Fixed URL
                 'detailed_logs': detailed_logger.get_logs()
             })
 

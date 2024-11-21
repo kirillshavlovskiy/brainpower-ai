@@ -426,6 +426,10 @@ def check_or_create_container(request):
         container = client.containers.get(container_name)
         container.reload()
 
+        # Set permissions before updating code
+        if not set_container_permissions(container):
+            raise Exception("Failed to set container permissions for existing container")
+
         # Update code in existing container
         try:
             logs, files_added, compilation_status = update_code_internal(
@@ -475,6 +479,10 @@ def check_or_create_container(request):
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
             detailed_logger.log('info', f"New container created: {container_name}")
+
+            # Set permissions before writing code
+            if not set_container_permissions(container):
+                raise Exception("Failed to set container permissions for new container")
 
             # Write initial component code
             logs, files_added, compilation_status = update_code_internal(

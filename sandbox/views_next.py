@@ -234,31 +234,21 @@ def update_code_internal(container, code, user, file_name, main_file_path):
     files_added = []
     build_output = []
     try:
-        # Always use placeholder.tsx as the target file
+        # Write component code directly - directory already exists
         target_path = "/app/components/dynamic/placeholder.tsx"
         logger.info(f"Writing component to path: {target_path}")
 
-        # Write component code
         encoded_code = base64.b64encode(code.encode()).decode()
-        max_attempts = 3
-        for attempt in range(max_attempts):
-            try:
-                exec_result = container.exec_run([
-                    "sh", "-c",
-                    f"echo {encoded_code} | base64 -d > {target_path}"
-                ], user='node')
+        exec_result = container.exec_run([
+            "sh", "-c",
+            f"echo {encoded_code} | base64 -d > {target_path}"
+        ], user='node')
 
-                if exec_result.exit_code != 0:
-                    raise Exception(f"Failed to write component to {target_path}: {exec_result.output.decode()}")
+        if exec_result.exit_code != 0:
+            raise Exception(f"Failed to write component to {target_path}: {exec_result.output.decode()}")
 
-                files_added.append(target_path)
-                logger.info(f"Successfully wrote component to {target_path}")
-                break
-            except docker.errors.APIError as e:
-                if attempt == max_attempts - 1:
-                    raise
-                logger.warning(f"API error on attempt {attempt + 1}, retrying: {str(e)}")
-                time.sleep(1)
+        files_added.append(target_path)
+        logger.info(f"Successfully wrote component to {target_path}")
 
         # Get container logs to check compilation status
         logs = container.logs(tail=100).decode('utf-8')

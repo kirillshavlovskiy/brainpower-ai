@@ -79,7 +79,10 @@ USER node
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV WATCHPACK_POLLING=true
 ENV CHOKIDAR_USEPOLLING=true
+ENV NODE_ENV=development
 ENV PORT=3001
+ENV HOST=0.0.0.0
+ENV NODE_OPTIONS="--max-old-space-size=8192"
 
 # Start development server
 CMD ["sh", "-c", "PORT=3001 yarn dev & node watch-components.js"]

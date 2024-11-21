@@ -464,16 +464,17 @@ def check_or_create_container(request):
                 detach=True,
                 name=container_name,
                 environment={
-                    'PORT': str(3001),
+                    'PORT': '3001',
                     'USER_ID': user_id,
-                    'FILE_NAME': file_name
+                    'FILE_NAME': file_name,
+                    'HOSTNAME': '0.0.0.0'
                 },
                 volumes={
                     # Only mount dynamic content directory
                     os.path.join(react_renderer_path, 'components/dynamic'): {'bind': '/app/components/dynamic',
                                                                               'mode': 'rw'}
                 },
-                ports={'3001/tcp': host_port},
+                ports={'3001/tcp': ('0.0.0.0', 3001)},
                 mem_limit='8g',
                 memswap_limit='16g',
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}

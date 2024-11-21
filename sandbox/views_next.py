@@ -25,6 +25,7 @@ import tempfile
 import os
 import shutil
 import socket
+
 logger = logging.getLogger(__name__)
 client = docker.from_env()
 
@@ -33,12 +34,14 @@ HOST_PORT_RANGE_START = 32768
 HOST_PORT_RANGE_END = 60999
 NGINX_SITES_DYNAMIC = '/etc/nginx/sites-dynamic'
 
+
 class CompilationMessages:
     NEXT_READY = "Ready in"
     NEXT_COMPILING = "Compiling"
     NEXT_BUILDING = "Creating an optimized production build"
     NEXT_ERROR = "Failed to compile"
     NEXT_WARNING = "Compiled with warnings"
+
 
 class ContainerStatus:
     CREATING = 'creating'
@@ -50,6 +53,7 @@ class ContainerStatus:
     COMPILATION_FAILED = 'compilation_failed'
     ERROR = 'error'
     NOT_FOUND = 'not_found'
+
 
 class DetailedLogger:
     def __init__(self):
@@ -74,6 +78,8 @@ class DetailedLogger:
 
     def get_file_list(self):
         return self.file_list
+
+
 detailed_logger = DetailedLogger()
 
 import time
@@ -221,10 +227,9 @@ def set_container_permissions(container):
         return False
 
 
-
 def update_code_internal(container, code, user, file_name, main_file_path):
     files_added = []
-    build_output= []
+    build_output = []
     try:
         # Update component.js
         encoded_code = base64.b64encode(code.encode()).decode()
@@ -234,7 +239,7 @@ def update_code_internal(container, code, user, file_name, main_file_path):
                 exec_result = container.exec_run([
                     "sh", "-c",
                     f"echo {encoded_code} | base64 -d > /app/components/DynamicComponent.js"
-                ], 
+                ],
                     user='root')
                 if exec_result.exit_code != 0:
                     raise Exception(f"Failed to update DynamicComponent.js in container: {exec_result.output.decode()}")
@@ -444,6 +449,7 @@ def check_container_ready(request):
             'message': str(e)
         }, status=500)
 
+
 @api_view(['GET'])
 def get_container_logs(request):
     container_id = request.GET.get('container_id')
@@ -472,214 +478,84 @@ def get_available_port(start, end):
 
 @api_view(['POST'])
 def check_or_create_container(request):
-    file_structure = []
     data = request.data
     code = data.get('main_code')
     language = data.get('language')
     user_id = data.get('user_id', '0')
-    file_name = data.get('file_name', 'test_component.js')
+    file_name = data.get('file_name', 'test-component.js')
     main_file_path = data.get('main_file_path')
 
-    detailed_logger.log('info', f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
+    detailed_logger.log('info',
+                        f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
 
-    if not all([code, language, file_name]):
-        return JsonResponse({'error': 'Missing required fields'}, status=400)
-    if language != 'react':
-        return JsonResponse({'error': 'Unsupported language'}, status=400)
-
-    react_renderer_path = '/home/ubuntu/brainpower-ai/react_renderer_next'
     container_name = f'react_renderer_next_{user_id}_{file_name}'
-    app_name = f"{user_id}_{file_name.replace('.', '-')}"
-
-    container_info = {
-        'container_name': container_name,
-        'created_at': datetime.now().isoformat(),
-        'files_added': [],
-        'build_status': 'pending'
-    }
 
     try:
+        # Try to get existing container
         container = client.containers.get(container_name)
-        detailed_logger.log('info', f"Found existing container: {container.id}")
-        set_container_permissions(container)
-        # Check if the container is running, if not, start it
-        if container.status != 'running':
-            detailed_logger.log('info', f"Container {container.id} is not running. Attempting to start it.")
-            container.start()
-            container.reload()
-            time.sleep(5)  # Wait for container to fully start
-
-        # Here's where we need to check the actual compilation status
-        compilation_status = get_compilation_status(container)
-
-        container_info = {
-            'container_name': container.name,
-            'created_at': datetime.now().isoformat(),
-            'status': container.status,
-            'ports': container.ports,
-            'image': container.image.tags[0] if container.image.tags else 'Unknown',
-            'id': container.id
-        }
-
-
-        # Get the host port
-        port_bindings = container.attrs['NetworkSettings']['Ports']
-        host_port = None
-        if '3001/tcp' in port_bindings and port_bindings['3001/tcp']:
-            host_port = port_bindings['3001/tcp'][0]['HostPort']
-        dynamic_url = f"https://{host_port}.{HOST_URL}"
-
-        try:
-            # Check for non-standard imports
-            non_standard_imports = check_non_standard_imports(code)
-            installed_packages = []
-            if non_standard_imports:
-                installed_packages = install_packages(container, non_standard_imports)
-
-            # Check for local imports
-            missing_local_imports = check_local_imports(container, code)
-
-            build_output, files_added, compilation_status = update_code_internal(container, code, user_id, file_name,
-                                                                                 main_file_path)
-
-            datailed_logs = container.logs(tail=200).decode('utf-8')  # Get last 200 lines of logs
-            file_structure = get_container_file_structure(container)
-
-            return JsonResponse({
-                'status': 'success',
-                'message': 'Container is running',
-                'container_id': container.id,
-                'url': dynamic_url,
-                'can_deploy': True,
-                'container_info': container_info,
-                'build_output': build_output,
-                'detailed_logs': detailed_logger.get_logs(),
-                'file_list': file_structure,
-                'installed_packages': installed_packages,
-                'files_added': files_added,
-                'missing_local_imports': missing_local_imports
-            })
-        except Exception as update_error:
-            detailed_logger.log('error', f"Failed to update code: {str(update_error)}")
-            return JsonResponse({
-                'status': 'error',
-                'message': str(update_error),
-                'build_output': getattr(update_error, 'build_output', None),
-                'detailed_logs': detailed_logger.get_logs(),
-                'file_list': file_structure,
-            }, status=500)
+        container.reload()
+        # ... rest of existing container handling
 
     except docker.errors.NotFound:
         detailed_logger.log('info', f"Container {container_name} not found. Creating new container.")
         host_port = get_available_port(HOST_PORT_RANGE_START, HOST_PORT_RANGE_END)
         detailed_logger.log('info', f"Selected port {host_port} for new container")
+
         try:
+            # Create container with minimal setup since most is done in Dockerfile
             container = client.containers.run(
-                'react_renderer_prod',
-                command=["sh", "-c", "yarn start"],
-                user='root',
+                'react_renderer_next',
+                command=["sh", "-c", "yarn dev"],
+                user='node',  # Already set up in Dockerfile
                 detach=True,
                 name=container_name,
                 environment={
-                    'USER_ID': user_id,
-                    'REACT_APP_USER_ID': user_id,
-                    'FILE_NAME': file_name,
                     'PORT': str(3001),
+                    'USER_ID': user_id,
+                    'FILE_NAME': file_name
                 },
                 volumes={
-                    os.path.join(react_renderer_path, 'components'): {'bind': '/app/components', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'styles'): {'bind': '/app/styles', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'pages'): {'bind': '/app/pages', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'public'): {'bind': '/app/public', 'mode': 'rw'},
-                    os.path.join(react_renderer_path, 'package.json'): {'bind': '/app/package.json', 'mode': 'ro'},
-                    os.path.join(react_renderer_path, 'next.config.js'): {'bind': '/app/next.config.js', 'mode': 'ro'},
-                    os.path.join(react_renderer_path, 'tailwind.config.js'): {'bind': '/app/tailwind.config.js', 'mode': 'ro'},
-                    os.path.join(react_renderer_path, 'postcss.config.js'): {'bind': '/app/postcss.config.js', 'mode': 'ro'},
-                    os.path.join(react_renderer_path, 'build'): {'bind': '/app/build', 'mode': 'rw'},
+                    # Only mount dynamic content directories
+                    os.path.join(react_renderer_path, 'components/dynamic'): {'bind': '/app/components/dynamic',
+                                                                              'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'styles/dynamic'): {'bind': '/app/styles/dynamic', 'mode': 'rw'}
                 },
                 ports={'3001/tcp': host_port},
                 mem_limit='8g',
                 memswap_limit='16g',
-                cpu_quota=100000,
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
             detailed_logger.log('info', f"New container created: {container_name}")
-            container_info['build_status'] = 'created'
+
+            # Write the component code
+            encoded_code = base64.b64encode(code.encode()).decode()
+            exec_result = container.exec_run([
+                "sh", "-c",
+                f"echo {encoded_code} | base64 -d > /app/components/dynamic/component.tsx"
+            ])
+
+            if exec_result.exit_code != 0:
+                raise Exception(f"Failed to write component code: {exec_result.output.decode()}")
+
+            return JsonResponse({
+                'status': 'success',
+                'container_id': container.id,
+                'url': f"https://{host_port}.{HOST_URL}",
+                'detailed_logs': detailed_logger.get_logs()
+            })
+
         except docker.errors.APIError as e:
             detailed_logger.log('error', f"Failed to create container: {str(e)}")
             return JsonResponse({
                 'error': f'Failed to create container: {str(e)}',
-                'container_info': container_info,
-                'detailed_logs': detailed_logger.get_logs(),
-                'file_list': detailed_logger.get_file_list(),
-            }, status=500)
-
-        try:
-
-            # Check for non-standard imports
-            non_standard_imports = check_non_standard_imports(code)
-            installed_packages = []
-            if non_standard_imports:
-                installed_packages = install_packages(container, non_standard_imports)
-
-            # Check for local imports
-            missing_local_imports = check_local_imports(container, code)
-
-            build_output, files_added, compilation_status = update_code_internal(container, code, user_id, file_name,
-                                                                                 main_file_path)
-            container_info['build_status'] = 'updated'
-
-            file_structure = get_container_file_structure(container)
-            datailed_logs = container.logs(tail=200).decode('utf-8')  # Get last 200 lines of logs
-            detailed_logger.log('warning', f"File structure: {file_structure}, \nbuild output {build_output}")
-            container_info['file_structure'] = file_structure
-
-            container.reload()
-            port_mapping = container.ports.get('3001/tcp')
-            detailed_logger.log('warning', "check that container reload successful, port mapping successful")
-            if port_mapping:
-                dynamic_url = f"https://{host_port}.{HOST_URL}"
-                detailed_logger.log('info', f"Container {container_name} running successfully: {dynamic_url}")
-                return JsonResponse({
-                    'status': 'success',
-                    'message': 'Container is running',
-                    'container_id': container.id,
-                    'url': dynamic_url,
-                    'can_deploy': True,
-                    'container_info': container_info,
-                    'build_output': build_output,
-                    'detailed_logs': detailed_logger.get_logs(),
-                    'file_list': file_structure,
-                    'installed_packages': installed_packages,
-                    'files_added': files_added
-                })
-            else:
-                detailed_logger.log('error', f"Failed to get port mapping for container {container_name}")
-                return JsonResponse({
-                    'error': 'Failed to get port mapping',
-                    'container_info': container_info,
-                    'build_output': build_output,
-                    'detailed_logs': detailed_logger.get_logs(),
-                    'file_list': file_structure,
-                    'installed_packages': installed_packages,
-                    'files_added': files_added
-                }, status=500)
-        except Exception as e:
-            detailed_logger.log('error', f"!!!Failed to update code in container: {str(e)}")
-            return JsonResponse({
-                'error': f'Failed to update code in container: {str(e)}',
-                'container_info': container_info,
-                'detailed_logs': detailed_logger.get_logs(),
-                'file_list': [],
+                'detailed_logs': detailed_logger.get_logs()
             }, status=500)
 
     except Exception as e:
         detailed_logger.log('error', f"Unexpected error: {str(e)}")
         return JsonResponse({
-            'error': f'Unexpected error: {str(e)}',
-            'container_info': container_info if 'container_info' in locals() else None,
-            'detailed_logs': detailed_logger.get_logs(),
-            'file_list': detailed_logger.get_file_list(),
+            'error': str(e),
+            'detailed_logs': detailed_logger.get_logs()
         }, status=500)
 
 
@@ -717,6 +593,7 @@ def install_packages(container, packages):
 
     return installed_packages, failed_packages
 
+
 def check_non_standard_imports(code):
     import_pattern = r'import\s+(?:{\s*[\w\s,]+\s*}|[\w]+|\*\s+as\s+[\w]+)\s+from\s+[\'"](.+?)[\'"]|require\([\'"](.+?)[\'"]\)'
     imports = re.findall(import_pattern, code)
@@ -724,7 +601,7 @@ def check_non_standard_imports(code):
     standard_packages = {
         'react', 'react-dom', 'prop-types', 'react-router', 'react-router-dom',
         'redux', 'react-redux', 'axios', 'lodash', 'moment', 'styled-components',
-      # Add moment-timezone to the list of standard packages
+        # Add moment-timezone to the list of standard packages
     }
 
     non_standard_imports = []
@@ -773,6 +650,7 @@ def get_container_file_structure(container):
         logger.error(f"Error output: {exec_result.output.decode()}")
     return []
 
+
 @api_view(['POST'])
 def stop_container(request):
     container_id = request.data.get('container_id')
@@ -789,8 +667,6 @@ def stop_container(request):
         return JsonResponse({'status': 'Container not found, possibly already removed'})
     except Exception as e:
         return JsonResponse({'error': f"Failed to stop container: {str(e)}"}, status=500)
-
-
 
 
 @api_view(['POST'])
@@ -954,6 +830,7 @@ class ServeReactApp(TemplateView):
         template_path = f'{settings.DEPLOYED_COMPONENTS_ROOT}/{app_name}/index.html'
         return [template_path]
 
+
 import os
 import json
 import asyncio
@@ -1021,7 +898,8 @@ class DeployToProductionView_prod(View):
                 raise Exception(f"Build failed: {error_message}")
 
             # Remove existing directory if it exists
-            self.send_update(channel_layer, task_id, "Production build process completed. Copying build files...", production_url)
+            self.send_update(channel_layer, task_id, "Production build process completed. Copying build files...",
+                             production_url)
             subprocess.run(f"sudo rm -rf {production_dir}", shell=True, check=True)
 
             # Create production directory

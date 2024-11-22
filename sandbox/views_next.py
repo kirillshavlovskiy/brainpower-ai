@@ -192,43 +192,62 @@ def check_container(request):
 
 
 def set_container_permissions(container):
-    """Set proper permissions for container directories with read-only handling"""
+    """Set proper permissions for container directories"""
     try:
-        # Check if directories exist
-        check_commands = [
-            "test -d /app/components/dynamic || mkdir -p /app/components/dynamic",
-            "test -d /app/src || mkdir -p /app/src"
+        # First, ensure the container is running
+        container.reload()
+        if container.status != 'running':
+            logger.error(f"Container not running, status: {container.status}")
+            return False
+
+        # Create directories first as root
+        init_commands = [
+            "mkdir -p /app/components/dynamic",
+            "mkdir -p /app/src",
+            "mkdir -p /app/src/app",
+            "touch /app/compilation_status"
         ]
 
-        for cmd in check_commands:
-            check_result = container.exec_run(cmd, user='root')
+        for cmd in init_commands:
+            result = container.exec_run(
+                cmd,
+                user='root'
+            )
+            if result.exit_code != 0:
+                logger.error(f"Failed to execute {cmd}: {result.output.decode()}")
+                return False
 
-        # Set permissions for writable directories
-        commands = [
-            "chown -R node:node /app/components/dynamic",
-            "chmod -R 755 /app/components/dynamic",
-            "chmod -R g+w /app/components/dynamic",
+        # Set ownership and permissions
+        perm_commands = [
+            "chown -R node:node /app/components",
             "chown -R node:node /app/src",
-            "chmod -R 755 /app/src",
-            "chmod -R g+w /app/src",
-            "touch /app/compilation_status",
             "chown node:node /app/compilation_status",
+            "chmod -R 755 /app/components",
+            "chmod -R 755 /app/src",
             "chmod 644 /app/compilation_status"
         ]
 
-        for cmd in commands:
-            try:
-                exec_result = container.exec_run(
-                    ["sh", "-c", cmd],
-                    user='root'
-                )
-                if exec_result.exit_code != 0:
-                    logger.warning(f"Command {cmd} failed with: {exec_result.output.decode()}")
-            except Exception as cmd_error:
-                logger.warning(f"Error executing {cmd}: {str(cmd_error)}")
-                continue
+        for cmd in perm_commands:
+            result = container.exec_run(
+                cmd,
+                user='root'
+            )
+            if result.exit_code != 0:
+                logger.error(f"Failed to execute {cmd}: {result.output.decode()}")
+                return False
 
-        logger.info("Container permissions set successfully for writable directories")
+        # Verify permissions
+        verify_commands = [
+            "ls -la /app/components/dynamic",
+            "ls -la /app/src",
+            "ls -la /app/compilation_status"
+        ]
+
+        for cmd in verify_commands:
+            result = container.exec_run(cmd)
+            logger.info(f"Verification {cmd}: {result.output.decode()}")
+
+        logger.info("Container permissions set successfully")
         return True
 
     except Exception as e:
@@ -413,8 +432,8 @@ def check_or_create_container(request):
     code = data.get('main_code')
     language = data.get('language')
     user_id = "0"  # Always use "0" as user_id
-    file_name = "placeholder.tsx"  # Always use placeholder.tsx
-    main_file_path = "/components/dynamic/placeholder.tsx"  # Fixed path
+    file_name = "placeholder.tsx"
+    main_file_path = "/components/dynamic/placeholder.tsx"
 
     detailed_logger.log('info',
                         f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
@@ -422,84 +441,72 @@ def check_or_create_container(request):
     container_name = f'react_renderer_next_{user_id}_{file_name}'
 
     try:
-        # Try to get existing container
-        container = client.containers.get(container_name)
-        container.reload()
+        # First, check for any existing containers (including stopped ones)
+        all_containers = client.containers.list(all=True, filters={'name': container_name})
 
-        # Set permissions before updating code
+        if all_containers:
+            # Remove any existing containers
+            for container in all_containers:
+                detailed_logger.log('info',
+                                    f"Removing existing container: {container.name}, status: {container.status}")
+                try:
+                    container.remove(force=True)
+                except Exception as e:
+                    detailed_logger.log('warning', f"Error removing container {container.name}: {str(e)}")
+
+        # Create new container
+        detailed_logger.log('info', f"Creating new container: {container_name}")
+        container = client.containers.run(
+            'react_renderer_next',
+            command=["sh", "-c", "yarn dev"],
+            user='node',
+            detach=True,
+            name=container_name,
+            environment={
+                'PORT': '3001',
+                'USER_ID': user_id,
+                'FILE_NAME': file_name,
+                'HOSTNAME': '0.0.0.0'
+            },
+            volumes={
+                os.path.join(react_renderer_path, 'components/dynamic'): {'bind': '/app/components/dynamic',
+                                                                          'mode': 'rw'}
+            },
+            ports={'3001/tcp': 3001},
+            mem_limit='8g',
+            memswap_limit='16g',
+            restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
+        )
+        detailed_logger.log('info', f"New container created: {container_name}")
+
+        # Wait for container to be ready
+        max_retries = 10
+        retry_count = 0
+        while retry_count < max_retries:
+            container.reload()
+            if container.status == 'running':
+                break
+            time.sleep(1)
+            retry_count += 1
+
+        if container.status != 'running':
+            raise Exception(f"Container failed to start. Status: {container.status}")
+
+        # Set permissions for new container
         if not set_container_permissions(container):
-            raise Exception("Failed to set container permissions for existing container")
+            raise Exception("Failed to set container permissions for new container")
 
-        # Update code in existing container
-        try:
-            logs, files_added, compilation_status = update_code_internal(
-                container, code, user_id, file_name, main_file_path
-            )
+        # Write initial component code
+        logs, files_added, compilation_status = update_code_internal(
+            container, code, user_id, file_name, main_file_path
+        )
 
-            port_mapping = container.ports.get('3001/tcp')
-            if port_mapping:
-                host_port = port_mapping[0]['HostPort']
-                return JsonResponse({
-                    'status': 'success',
-                    'container_id': container.id,
-                    'url': f"https://{host_port}.{HOST_URL}",
-                    'detailed_logs': detailed_logger.get_logs()
-                })
-
-        except Exception as e:
-            detailed_logger.log('error', f"Failed to update code in existing container: {str(e)}")
-            raise
-
-    except docker.errors.NotFound:
-        detailed_logger.log('info', f"Container {container_name} not found. Creating new container.")
-
-        try:
-            # Create container with fixed port 3001
-            container = client.containers.run(
-                'react_renderer_next',
-                command=["sh", "-c", "yarn dev"],
-                user='node',
-                detach=True,
-                name=container_name,
-                environment={
-                    'PORT': '3001',
-                    'USER_ID': user_id,
-                    'FILE_NAME': file_name,
-                    'HOSTNAME': '0.0.0.0'
-                },
-                volumes={
-                    os.path.join(react_renderer_path, 'components/dynamic'): {'bind': '/app/components/dynamic',
-                                                                              'mode': 'rw'}
-                },
-                ports={'3001/tcp': 3001},  # Fixed port mapping to 3001
-                mem_limit='8g',
-                memswap_limit='16g',
-                restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
-            )
-            detailed_logger.log('info', f"New container created: {container_name}")
-
-            # Set permissions before writing code
-            if not set_container_permissions(container):
-                raise Exception("Failed to set container permissions for new container")
-
-            # Write initial component code
-            logs, files_added, compilation_status = update_code_internal(
-                container, code, user_id, file_name, main_file_path
-            )
-
-            return JsonResponse({
-                'status': 'success',
-                'container_id': container.id,
-                'url': 'https://3001.brainpower-ai.net',  # Fixed URL
-                'detailed_logs': detailed_logger.get_logs()
-            })
-
-        except docker.errors.APIError as e:
-            detailed_logger.log('error', f"Failed to create container: {str(e)}")
-            return JsonResponse({
-                'error': f'Failed to create container: {str(e)}',
-                'detailed_logs': detailed_logger.get_logs()
-            }, status=500)
+        return JsonResponse({
+            'status': 'success',
+            'container_id': container.id,
+            'url': 'https://3001.brainpower-ai.net',
+            'detailed_logs': detailed_logger.get_logs()
+        })
 
     except Exception as e:
         detailed_logger.log('error', f"Unexpected error: {str(e)}")

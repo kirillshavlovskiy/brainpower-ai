@@ -192,7 +192,7 @@ def check_container(request):
 
 
 def set_container_permissions(container):
-    """Set proper permissions for container directories"""
+    """Set proper permissions for container directories and mount style files"""
     try:
         # First, ensure the container is running
         container.reload()
@@ -200,54 +200,71 @@ def set_container_permissions(container):
             logger.error(f"Container not running, status: {container.status}")
             return False
 
-        # Create directories first as root
+        # Base path for configuration files
+        config_path = "/home/ubuntu/brainpower-ai/react_renderer_next"
+
+        # Create directories
         init_commands = [
             "mkdir -p /app/components/dynamic",
-            "mkdir -p /app/src",
             "mkdir -p /app/src/app",
+            "mkdir -p /app/src/lib",
+            "mkdir -p /app/styles",
             "touch /app/compilation_status"
         ]
 
         for cmd in init_commands:
-            result = container.exec_run(
-                cmd,
-                user='root'
-            )
+            result = container.exec_run(cmd, user='root')
             if result.exit_code != 0:
                 logger.error(f"Failed to execute {cmd}: {result.output.decode()}")
                 return False
 
-        # Set ownership and permissions
+        # Mount configuration files from working directory
+        files_to_mount = {
+            "/app/tailwind.config.ts": f"{config_path}/tailwind.config.ts",
+            "/app/postcss.config.js": f"{config_path}/postcss.config.js",
+            "/app/src/app/globals.css": f"{config_path}/src/app/globals.css",
+            "/app/src/lib/utils.ts": f"{config_path}/src/lib/utils.ts"
+        }
+
+        for container_path, host_path in files_to_mount.items():
+            try:
+                with open(host_path, 'r') as f:
+                    content = f.read()
+                    encoded_content = base64.b64encode(content.encode()).decode()
+                    result = container.exec_run(
+                        ["sh", "-c", f"echo {encoded_content} | base64 -d > {container_path}"],
+                        user='root'
+                    )
+                    if result.exit_code != 0:
+                        logger.error(f"Failed to mount {host_path} to {container_path}: {result.output.decode()}")
+                        return False
+            except Exception as e:
+                logger.error(f"Failed to read {host_path}: {str(e)}")
+                return False
+
+        # Set permissions
         perm_commands = [
             "chown -R node:node /app/components",
             "chown -R node:node /app/src",
+            "chown -R node:node /app/styles",
             "chown node:node /app/compilation_status",
+            "chown node:node /app/tailwind.config.ts",
+            "chown node:node /app/postcss.config.js",
             "chmod -R 755 /app/components",
             "chmod -R 755 /app/src",
-            "chmod 644 /app/compilation_status"
+            "chmod -R 755 /app/styles",
+            "chmod 644 /app/compilation_status",
+            "chmod 644 /app/tailwind.config.ts",
+            "chmod 644 /app/postcss.config.js"
         ]
 
         for cmd in perm_commands:
-            result = container.exec_run(
-                cmd,
-                user='root'
-            )
+            result = container.exec_run(cmd, user='root')
             if result.exit_code != 0:
                 logger.error(f"Failed to execute {cmd}: {result.output.decode()}")
                 return False
 
-        # Verify permissions
-        verify_commands = [
-            "ls -la /app/components/dynamic",
-            "ls -la /app/src",
-            "ls -la /app/compilation_status"
-        ]
-
-        for cmd in verify_commands:
-            result = container.exec_run(cmd)
-            logger.info(f"Verification {cmd}: {result.output.decode()}")
-
-        logger.info("Container permissions set successfully")
+        logger.info("Container files and permissions set successfully")
         return True
 
     except Exception as e:

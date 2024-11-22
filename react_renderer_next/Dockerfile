@@ -62,17 +62,6 @@ COPY lib ./lib
 RUN chown -R node:node /app && \
     chmod -R 755 /app
 
-# Create volumes for dynamic content
-VOLUME /app/components/dynamic
-VOLUME /app/components/ui
-VOLUME /app/src
-
-# Expose port 3001
-EXPOSE 3001
-
-# Switch to non-root user
-USER node
-
 # Set essential environment variables
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=development
@@ -80,6 +69,17 @@ ENV PORT=3001
 ENV HOST=0.0.0.0
 ENV WATCHPACK_POLLING=true
 ENV CHOKIDAR_USEPOLLING=true
+ENV NEXT_WEBPACK_POLLING=1000
+ENV NEXT_HMR_POLLING_INTERVAL=1000
 
-# Start both Next.js and the watch script
-CMD ["sh", "-c", "yarn dev & node watch-components.js"]
+# Create volumes with proper permissions for file watching
+VOLUME [ "/app/components/dynamic", "/app/components/ui", "/app/src" ]
+
+# Expose port 3001
+EXPOSE 3001
+
+# Switch to non-root user
+USER node
+
+# Start both Next.js and the watch script with proper polling
+CMD ["sh", "-c", "WATCHPACK_POLLING=true yarn dev --port 3001 & CHOKIDAR_USEPOLLING=true node watch-components.js"]

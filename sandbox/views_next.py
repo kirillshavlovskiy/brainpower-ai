@@ -25,6 +25,7 @@ import tempfile
 import os
 import shutil
 import socket
+import json
 
 logger = logging.getLogger(__name__)
 client = docker.from_env()
@@ -486,16 +487,14 @@ def check_or_create_container(request):
         file_name = "placeholder.tsx"
         main_file_path = "/components/dynamic/placeholder.tsx"
 
+        # Add request logging
+        logger.info(f"Received request: {json.dumps(data, indent=2)}")
+
         if not code:
             return JsonResponse({
                 'error': 'No code provided',
-                'detailed_logs': []
+                'detailed_logs': detailed_logger.get_logs()
             }, status=400)
-
-        detailed_logger.log('info',
-                            f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
-
-        container_name = f'react_renderer_next_{user_id}_{file_name}'
 
         try:
             # First, check for any existing containers (including stopped ones)
@@ -504,15 +503,14 @@ def check_or_create_container(request):
             if all_containers:
                 # Remove any existing containers
                 for container in all_containers:
-                    detailed_logger.log('info',
-                                        f"Removing existing container: {container.name}, status: {container.status}")
+                    logger.info(f"Removing existing container: {container.name}, status: {container.status}")
                     try:
                         container.remove(force=True)
                     except Exception as e:
-                        detailed_logger.log('warning', f"Error removing container {container.name}: {str(e)}")
+                        logger.warning(f"Error removing container {container.name}: {str(e)}")
 
             # Create new container
-            detailed_logger.log('info', f"Creating new container: {container_name}")
+            logger.info(f"Creating new container: {container_name}")
             container = client.containers.run(
                 'react_renderer_next',
                 command=["sh", "-c", "yarn dev"],
@@ -544,6 +542,7 @@ def check_or_create_container(request):
                     break
                 time.sleep(1)
                 retry_count += 1
+                logger.info(f"Waiting for container... Status: {container.status}")
 
             if container.status != 'running':
                 return JsonResponse({
@@ -563,24 +562,29 @@ def check_or_create_container(request):
                 container, code, user_id, file_name, main_file_path
             )
 
-            return JsonResponse({
+            response_data = {
                 'status': 'success',
                 'container_id': container.id,
                 'url': 'https://3001.brainpower-ai.net',
                 'detailed_logs': detailed_logger.get_logs()
-            })
+            }
+
+            logger.info(f"Returning response: {json.dumps(response_data, indent=2)}")
+            return JsonResponse(response_data)
 
         except docker.errors.APIError as e:
-            detailed_logger.log('error', f"Docker API error: {str(e)}")
+            error_msg = f'Docker API error: {str(e)}'
+            logger.error(error_msg)
             return JsonResponse({
-                'error': f'Docker API error: {str(e)}',
+                'error': error_msg,
                 'detailed_logs': detailed_logger.get_logs()
             }, status=500)
 
     except Exception as e:
-        detailed_logger.log('error', f"Unexpected error: {str(e)}")
+        error_msg = f'Unexpected error: {str(e)}'
+        logger.error(error_msg)
         return JsonResponse({
-            'error': str(e),
+            'error': error_msg,
             'detailed_logs': detailed_logger.get_logs()
         }, status=500)
 

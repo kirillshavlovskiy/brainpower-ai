@@ -200,9 +200,6 @@ def set_container_permissions(container):
             logger.error(f"Container not running, status: {container.status}")
             return False
 
-        # Base path for configuration files
-        config_path = "/home/ubuntu/brainpower-ai/react_renderer_next"
-
         # Create directories
         init_commands = [
             "mkdir -p /app/components/dynamic",
@@ -226,20 +223,40 @@ def set_container_permissions(container):
             "/app/src/lib/utils.ts": f"{config_path}/src/lib/utils.ts"
         }
 
+        # Mount and verify each file
         for container_path, host_path in files_to_mount.items():
             try:
+                # Read host file
                 with open(host_path, 'r') as f:
                     content = f.read()
                     encoded_content = base64.b64encode(content.encode()).decode()
-                    result = container.exec_run(
-                        ["sh", "-c", f"echo {encoded_content} | base64 -d > {container_path}"],
-                        user='root'
-                    )
-                    if result.exit_code != 0:
-                        logger.error(f"Failed to mount {host_path} to {container_path}: {result.output.decode()}")
-                        return False
+
+                # Write to container
+                result = container.exec_run(
+                    ["sh", "-c", f"echo {encoded_content} | base64 -d > {container_path}"],
+                    user='root'
+                )
+                if result.exit_code != 0:
+                    logger.error(f"Failed to mount {host_path} to {container_path}: {result.output.decode()}")
+                    return False
+
+                # Verify file content in container
+                verify_result = container.exec_run(f"cat {container_path}")
+                if verify_result.exit_code != 0:
+                    logger.error(f"Failed to verify {container_path}: {verify_result.output.decode()}")
+                    return False
+
+                container_content = verify_result.output.decode().strip()
+                if container_content != content.strip():
+                    logger.error(f"Content mismatch in {container_path}")
+                    logger.error(f"Expected: {content.strip()}")
+                    logger.error(f"Got: {container_content}")
+                    return False
+
+                logger.info(f"Successfully mounted and verified {container_path}")
+
             except Exception as e:
-                logger.error(f"Failed to read {host_path}: {str(e)}")
+                logger.error(f"Failed to process {host_path}: {str(e)}")
                 return False
 
         # Set permissions
@@ -263,6 +280,22 @@ def set_container_permissions(container):
             if result.exit_code != 0:
                 logger.error(f"Failed to execute {cmd}: {result.output.decode()}")
                 return False
+
+        # Final verification of all mounted files
+        logger.info("Verifying all mounted files in container:")
+        verify_commands = [
+            "ls -la /app/components/dynamic",
+            "ls -la /app/src/app",
+            "ls -la /app/src/lib",
+            "ls -la /app/tailwind.config.ts",
+            "ls -la /app/postcss.config.js",
+            "ls -la /app/src/app/globals.css",
+            "ls -la /app/src/lib/utils.ts"
+        ]
+
+        for cmd in verify_commands:
+            result = container.exec_run(cmd)
+            logger.info(f"{cmd}: {result.output.decode()}")
 
         logger.info("Container files and permissions set successfully")
         return True

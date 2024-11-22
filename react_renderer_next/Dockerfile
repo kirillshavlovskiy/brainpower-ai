@@ -67,7 +67,6 @@ COPY public ./public
 # Set proper permissions
 RUN chown -R node:node /app && \
     chmod -R 755 /app
- \
 
 VOLUME /app/components/dynamic
 VOLUME /app/components/ui

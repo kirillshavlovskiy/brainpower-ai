@@ -428,85 +428,104 @@ def get_available_port(start, end):
 
 @api_view(['POST'])
 def check_or_create_container(request):
-    data = request.data
-    code = data.get('main_code')
-    language = data.get('language')
-    user_id = "0"  # Always use "0" as user_id
-    file_name = "placeholder.tsx"
-    main_file_path = "/components/dynamic/placeholder.tsx"
-
-    detailed_logger.log('info',
-                        f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
-
-    container_name = f'react_renderer_next_{user_id}_{file_name}'
-
     try:
-        # First, check for any existing containers (including stopped ones)
-        all_containers = client.containers.list(all=True, filters={'name': container_name})
+        data = request.data
+        code = data.get('main_code')
+        language = data.get('language')
+        user_id = "0"  # Always use "0" as user_id
+        file_name = "placeholder.tsx"
+        main_file_path = "/components/dynamic/placeholder.tsx"
 
-        if all_containers:
-            # Remove any existing containers
-            for container in all_containers:
-                detailed_logger.log('info',
-                                    f"Removing existing container: {container.name}, status: {container.status}")
-                try:
-                    container.remove(force=True)
-                except Exception as e:
-                    detailed_logger.log('warning', f"Error removing container {container.name}: {str(e)}")
+        if not code:
+            return JsonResponse({
+                'error': 'No code provided',
+                'detailed_logs': []
+            }, status=400)
 
-        # Create new container
-        detailed_logger.log('info', f"Creating new container: {container_name}")
-        container = client.containers.run(
-            'react_renderer_next',
-            command=["sh", "-c", "yarn dev"],
-            user='node',
-            detach=True,
-            name=container_name,
-            environment={
-                'PORT': '3001',
-                'USER_ID': user_id,
-                'FILE_NAME': file_name,
-                'HOSTNAME': '0.0.0.0'
-            },
-            volumes={
-                os.path.join(react_renderer_path, 'components/dynamic'): {'bind': '/app/components/dynamic',
-                                                                          'mode': 'rw'}
-            },
-            ports={'3001/tcp': 3001},
-            mem_limit='8g',
-            memswap_limit='16g',
-            restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
-        )
-        detailed_logger.log('info', f"New container created: {container_name}")
+        detailed_logger.log('info',
+                            f"Received request to check or create container for user {user_id}, file {file_name}, file path {main_file_path}")
 
-        # Wait for container to be ready
-        max_retries = 10
-        retry_count = 0
-        while retry_count < max_retries:
-            container.reload()
-            if container.status == 'running':
-                break
-            time.sleep(1)
-            retry_count += 1
+        container_name = f'react_renderer_next_{user_id}_{file_name}'
 
-        if container.status != 'running':
-            raise Exception(f"Container failed to start. Status: {container.status}")
+        try:
+            # First, check for any existing containers (including stopped ones)
+            all_containers = client.containers.list(all=True, filters={'name': container_name})
 
-        # Set permissions for new container
-        if not set_container_permissions(container):
-            raise Exception("Failed to set container permissions for new container")
+            if all_containers:
+                # Remove any existing containers
+                for container in all_containers:
+                    detailed_logger.log('info',
+                                        f"Removing existing container: {container.name}, status: {container.status}")
+                    try:
+                        container.remove(force=True)
+                    except Exception as e:
+                        detailed_logger.log('warning', f"Error removing container {container.name}: {str(e)}")
 
-        # Write initial component code
-        logs, files_added, compilation_status = update_code_internal(
-            container, code, user_id, file_name, main_file_path
-        )
+            # Create new container
+            detailed_logger.log('info', f"Creating new container: {container_name}")
+            container = client.containers.run(
+                'react_renderer_next',
+                command=["sh", "-c", "yarn dev"],
+                user='node',
+                detach=True,
+                name=container_name,
+                environment={
+                    'PORT': '3001',
+                    'USER_ID': user_id,
+                    'FILE_NAME': file_name,
+                    'HOSTNAME': '0.0.0.0'
+                },
+                volumes={
+                    os.path.join(react_renderer_path, 'components/dynamic'): {'bind': '/app/components/dynamic',
+                                                                              'mode': 'rw'}
+                },
+                ports={'3001/tcp': 3001},
+                mem_limit='8g',
+                memswap_limit='16g',
+                restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
+            )
 
-        return JsonResponse({
-            'status': 'success',
-            'container_id': container.id,
-            'url': 'https://3001.brainpower-ai.net',
-            'detailed_logs': detailed_logger.get_logs()
-        })
+            # Wait for container to be ready
+            max_retries = 10
+            retry_count = 0
+            while retry_count < max_retries:
+                container.reload()
+                if container.status == 'running':
+                    break
+                time.sleep(1)
+                retry_count += 1
+
+            if container.status != 'running':
+                return JsonResponse({
+                    'error': f'Container failed to start. Status: {container.status}',
+                    'detailed_logs': detailed_logger.get_logs()
+                }, status=500)
+
+            # Set permissions for new container
+            if not set_container_permissions(container):
+                return JsonResponse({
+                    'error': 'Failed to set container permissions for new container',
+                    'detailed_logs': detailed_logger.get_logs()
+                }, status=500)
+
+            # Write initial component code
+            logs, files_added, compilation_status = update_code_internal(
+                container, code, user_id, file_name, main_file_path
+            )
+
+            return JsonResponse({
+                'status': 'success',
+                'container_id': container.id,
+                'url': 'https://3001.brainpower-ai.net',
+                'detailed_logs': detailed_logger.get_logs()
+            })
+
+        except docker.errors.APIError as e:
+            detailed_logger.log('error', f"Docker API error: {str(e)}")
+            return JsonResponse({
+                'error': f'Docker API error: {str(e)}',
+                'detailed_logs': detailed_logger.get_logs()
+            }, status=500)
 
     except Exception as e:
         detailed_logger.log('error', f"Unexpected error: {str(e)}")

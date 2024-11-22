@@ -51,7 +51,9 @@ COPY next.config.js ./
 COPY tsconfig.json ./
 
 # Copy source files and directories
-COPY src ./src
+COPY src/app/globals.css ./src/app/
+COPY src/app/layout.tsx ./src/app/
+COPY src/app/page.tsx ./src/app/
 COPY components ./components
 COPY styles ./styles
 COPY lib ./lib

@@ -68,8 +68,9 @@ COPY public ./public
 RUN chown -R node:node /app && \
     chmod -R 755 /app
 
-# Create volume only for dynamic content
 VOLUME /app/components/dynamic
+VOLUME /app/components/ui
+VOLUME /app/src
 
 # Expose port 3001
 EXPOSE 3001

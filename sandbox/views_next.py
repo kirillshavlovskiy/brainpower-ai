@@ -526,7 +526,8 @@ def check_or_create_container(request):
 
             container = client.containers.run(
                 'react_renderer_next',
-                command=["sh", "-c", "yarn dev & node watch-components.js"],
+                command=["sh", "-c",
+                         "WATCHPACK_POLLING=true yarn dev --port 3001 & CHOKIDAR_USEPOLLING=true node watch-components.js"],
                 user='node',
                 detach=True,
                 name=container_name,
@@ -534,13 +535,28 @@ def check_or_create_container(request):
                     'PORT': '3001',
                     'USER_ID': user_id,
                     'FILE_NAME': file_name,
-                    'HOSTNAME': '0.0.0.0'
+                    'HOSTNAME': '0.0.0.0',
+                    'WATCHPACK_POLLING': 'true',
+                    'CHOKIDAR_USEPOLLING': 'true',
+                    'NEXT_WEBPACK_POLLING': '1000',
+                    'NEXT_HMR_POLLING_INTERVAL': '1000'
                 },
                 volumes={
-                    # Only mount directories, not individual files
-                    os.path.join(base_path, 'components/dynamic'): {'bind': '/app/components/dynamic', 'mode': 'rw'},
-                    os.path.join(base_path, 'components/ui'): {'bind': '/app/components/ui', 'mode': 'rw'},
-                    os.path.join(base_path, 'src'): {'bind': '/app/src', 'mode': 'rw'}
+                    os.path.join(react_renderer_path, 'components/dynamic'): {
+                        'bind': '/app/components/dynamic',
+                        'mode': 'rw',
+                        'consistency': 'consistent'
+                    },
+                    os.path.join(react_renderer_path, 'components/ui'): {
+                        'bind': '/app/components/ui',
+                        'mode': 'rw',
+                        'consistency': 'consistent'
+                    },
+                    os.path.join(react_renderer_path, 'src'): {
+                        'bind': '/app/src',
+                        'mode': 'rw',
+                        'consistency': 'consistent'
+                    }
                 },
                 ports={'3001/tcp': 3001},
                 mem_limit='8g',

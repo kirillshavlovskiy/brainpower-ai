@@ -47,27 +47,25 @@ COPY components.json ./
 COPY tailwind.config.ts ./
 COPY postcss.config.js ./
 COPY watch-components.js ./
-
-# Copy shadcn components
-COPY components/ui ./components/ui
-
-# Copy source files with shadcn setup
-COPY src ./src
-COPY lib ./lib
-
-# Copy other configuration files
 COPY next.config.js ./
 COPY tsconfig.json ./
 
-# Copy remaining directories
-COPY components/[!ui]* ./components/
+# Create essential Next.js files
+RUN echo '"use client";\nimport React from "react";\nimport "./globals.css";\n\nexport default function RootLayout({ children }) {\n  return (\n    <html lang="en">\n      <head>\n        <meta charSet="utf-8" />\n        <meta name="viewport" content="width=device-width, initial-scale=1" />\n      </head>\n      <body suppressHydrationWarning={true}>\n        <div id="dynamic-component-root">\n          {children}\n        </div>\n      </body>\n    </html>\n  );\n}' > /app/src/app/layout.tsx
+
+RUN echo '"use client";\nimport dynamic from "next/dynamic";\n\nconst DynamicComponent = dynamic(() => import("/app/components/dynamic/placeholder"), {\n  ssr: false,\n  loading: () => <div>Loading...</div>\n});\n\nexport default function Home() {\n  return (\n    <main className="flex min-h-screen flex-col items-center justify-between p-24">\n      <div className="w-full max-w-5xl">\n        <DynamicComponent />\n      </div>\n    </main>\n  );\n}' > /app/src/app/page.tsx
+
+# Copy source directories
+COPY src ./src
+COPY components ./components
 COPY styles ./styles
-COPY public ./public
+COPY lib ./lib
 
 # Set proper permissions
 RUN chown -R node:node /app && \
     chmod -R 755 /app
 
+# Create volumes for dynamic content
 VOLUME /app/components/dynamic
 VOLUME /app/components/ui
 VOLUME /app/src

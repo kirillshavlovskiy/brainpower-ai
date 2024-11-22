@@ -523,7 +523,7 @@ def check_or_create_container(request):
             logger.info(f"Creating new container: {container_name}")
             container = client.containers.run(
                 'react_renderer_next',
-                command=["sh", "-c", "yarn dev"],
+                command=["sh", "-c", "yarn dev & node watch-components.js"],
                 user='node',
                 detach=True,
                 name=container_name,
@@ -534,8 +534,12 @@ def check_or_create_container(request):
                     'HOSTNAME': '0.0.0.0'
                 },
                 volumes={
+                    # Mount all necessary directories
                     os.path.join(react_renderer_path, 'components/dynamic'): {'bind': '/app/components/dynamic',
-                                                                              'mode': 'rw'}
+                                                                              'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'components/ui'): {'bind': '/app/components/ui', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'src'): {'bind': '/app/src', 'mode': 'rw'},
+                    os.path.join(react_renderer_path, 'next.config.js'): {'bind': '/app/next.config.js', 'mode': 'ro'}
                 },
                 ports={'3001/tcp': 3001},
                 mem_limit='8g',

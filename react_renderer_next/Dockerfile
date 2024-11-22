@@ -1,88 +1,89 @@
-# Development environment
-FROM node:18-alpine
+# Use slim version for smaller image size
+FROM node:18-slim
 
 WORKDIR /app
 
-# Install necessary tools and configure environment
-RUN apk add --no-cache git curl python3 make g++ && \
-    yarn config set network-timeout 600000 && \
-    yarn config set network-concurrency 1 && \
-    yarn config set registry https://registry.npmjs.org/
+# Install only essential tools
+RUN apt-get update && apt-get install -y \
+    python3 \
+    make \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy package files first
+# Copy package files
 COPY package.json ./
 
-# Install dependencies with improved error handling and logging
-RUN touch yarn.lock && \
-    for i in 1 2 3; do \
-      echo "Attempt $i/3 to install dependencies..." && \
-      yarn install --network-timeout 600000 --prefer-offline \
-        --ignore-optional \
-        --ignore-engines \
-        --ignore-platform \
-        --no-progress \
-        --silent \
-        2>&1 | grep -v "warning" || \
-      { \
-        echo "Retry $i/3 failed. Waiting before retry..." && \
-        sleep 30; \
-        continue; \
-      }; \
-      echo "Dependencies installed successfully!" && break; \
-    done
+# Install shadcn dependencies first
+RUN yarn add @radix-ui/react-dialog \
+    @radix-ui/react-slot \
+    @radix-ui/react-toast \
+    class-variance-authority \
+    clsx \
+    tailwind-merge \
+    tailwindcss-animate
+
+# Install other dependencies
+RUN yarn install \
+    --production \
+    --frozen-lockfile \
+    --network-timeout 600000 \
+    --ignore-optional \
+    --ignore-platform \
+    --no-progress
+
+# Pre-download SWC binaries to avoid runtime downloads
+RUN yarn add @next/swc-linux-x64-gnu @next/swc-linux-x64-musl
 
 # Create necessary directories
-RUN mkdir -p /app/src/app \
+RUN mkdir -p \
     /app/components/dynamic \
-    /app/styles/dynamic \
-    /app/lib/templates \
-    /app/public/previews
+    /app/components/ui \
+    /app/src/app \
+    /app/src/lib \
+    /app/styles
 
 # Copy configuration files
+COPY components.json ./
+COPY tailwind.config.ts ./
+COPY postcss.config.js ./
+COPY watch-components.js ./
+
+# Copy shadcn components
+COPY components/ui ./components/ui
+
+# Copy source files with shadcn setup
+COPY src ./src
+COPY lib ./lib
+
+# Copy other configuration files
 COPY next.config.js ./
 COPY tsconfig.json ./
-COPY tailwind.config.ts ./
-COPY postcss.config.mjs ./
 
-# Create default .env.local
-RUN echo "DOCKER_HOST=localhost\n\
-DOCKER_PORT=3001\n\
-NEXT_PUBLIC_API_URL=http://localhost:3001\n\
-NEXT_PUBLIC_DOCKER_API_URL=http://localhost:3001\n\
-WATCHPACK_POLLING=true\n\
-CHOKIDAR_USEPOLLING=true" > .env.local
-
-# Copy source files
-COPY src ./src
-COPY components ./components
-COPY lib ./lib
-COPY public ./public
+# Copy remaining directories
+COPY components/[!ui]* ./components/
 COPY styles ./styles
-COPY watch-components.js ./
+COPY public ./public
 
 # Set proper permissions
 RUN chown -R node:node /app && \
     chmod -R 755 /app
 
-# Create volume for dynamic content
+# Create volume only for dynamic content
 VOLUME /app/components/dynamic
-VOLUME /app/styles/dynamic
-VOLUME /app/public/previews
 
-# Expose port 3001 for Next.js
+# Expose port 3001
 EXPOSE 3001
 
 # Switch to non-root user
 USER node
 
-# Set environment variables
+# Set essential environment variables
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV WATCHPACK_POLLING=true
-ENV CHOKIDAR_USEPOLLING=true
 ENV NODE_ENV=development
 ENV PORT=3001
 ENV HOST=0.0.0.0
-ENV NODE_OPTIONS="--max-old-space-size=8192"
+ENV WATCHPACK_POLLING=true
+ENV CHOKIDAR_USEPOLLING=true
 
-# Start development server
-CMD ["sh", "-c", "PORT=3001 yarn dev & node watch-components.js"]
+# Start both Next.js and the watch script
+CMD ["sh", "-c", "yarn dev & node watch-components.js"]

@@ -50,12 +50,7 @@ COPY watch-components.js ./
 COPY next.config.js ./
 COPY tsconfig.json ./
 
-# Create essential Next.js files
-RUN echo '"use client";\nimport React from "react";\nimport "./globals.css";\n\nexport default function RootLayout({ children }) {\n  return (\n    <html lang="en">\n      <head>\n        <meta charSet="utf-8" />\n        <meta name="viewport" content="width=device-width, initial-scale=1" />\n      </head>\n      <body suppressHydrationWarning={true}>\n        <div id="dynamic-component-root">\n          {children}\n        </div>\n      </body>\n    </html>\n  );\n}' > /app/src/app/layout.tsx
-
-RUN echo '"use client";\nimport dynamic from "next/dynamic";\n\nconst DynamicComponent = dynamic(() => import("/app/components/dynamic/placeholder"), {\n  ssr: false,\n  loading: () => <div>Loading...</div>\n});\n\nexport default function Home() {\n  return (\n    <main className="flex min-h-screen flex-col items-center justify-between p-24">\n      <div className="w-full max-w-5xl">\n        <DynamicComponent />\n      </div>\n    </main>\n  );\n}' > /app/src/app/page.tsx
-
-# Copy source directories
+# Copy source files and directories
 COPY src ./src
 COPY components ./components
 COPY styles ./styles

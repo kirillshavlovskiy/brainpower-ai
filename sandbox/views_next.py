@@ -539,28 +539,28 @@ def check_or_create_container(request):
                     'WATCHPACK_POLLING': 'true',
                     'CHOKIDAR_USEPOLLING': 'true',
                     'NEXT_WEBPACK_POLLING': '1000',
-                    'NEXT_HMR_POLLING_INTERVAL': '1000'
+                    'NEXT_HMR_POLLING_INTERVAL': '1000',
+                    'NODE_OPTIONS': '--max-old-space-size=512'
                 },
                 volumes={
                     os.path.join(react_renderer_path, 'components/dynamic'): {
                         'bind': '/app/components/dynamic',
-                        'mode': 'rw',
-                        'consistency': 'consistent'
+                        'mode': 'rw'
                     },
                     os.path.join(react_renderer_path, 'components/ui'): {
                         'bind': '/app/components/ui',
-                        'mode': 'rw',
-                        'consistency': 'consistent'
+                        'mode': 'rw'
                     },
                     os.path.join(react_renderer_path, 'src'): {
                         'bind': '/app/src',
-                        'mode': 'rw',
-                        'consistency': 'consistent'
+                        'mode': 'rw'
                     }
                 },
                 ports={'3001/tcp': 3001},
-                mem_limit='8g',
-                memswap_limit='16g',
+                mem_limit='1g',
+                memswap_limit='2g',
+                cpu_period=100000,
+                cpu_quota=50000,
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
 

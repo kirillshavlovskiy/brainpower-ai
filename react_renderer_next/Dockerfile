@@ -75,6 +75,7 @@ ENV NEXT_HMR_POLLING_INTERVAL=1000
 # Create volumes with proper permissions for file watching
 VOLUME [ "/app/components/dynamic", "/app/components/ui", "/app/src" ]
 
+
 # Expose port 3001
 EXPOSE 3001
 

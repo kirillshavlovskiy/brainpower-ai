@@ -487,8 +487,12 @@ def check_or_create_container(request):
         file_name = "placeholder.tsx"
         main_file_path = "/components/dynamic/placeholder.tsx"
 
+        # Define container name
+        container_name = f'react_renderer_next_{user_id}_{file_name}'
+
         # Add request logging
-        logger.info(f"Received request: {json.dumps(data, indent=2)}")
+        logger.info(f"Received request for container: {container_name}")
+        logger.info(f"Request data: {json.dumps(data, indent=2)}")
 
         if not code:
             return JsonResponse({

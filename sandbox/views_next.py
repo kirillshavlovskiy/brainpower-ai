@@ -129,67 +129,62 @@ def check_container(request):
         container = client.containers.get(container_name)
         container.reload()
 
-        # Basic container info that's always available
-        container_info = {
-            'container_name': container.name,
-            'created_at': container.attrs.get('Created', 'N/A'),
-            'status': container.status,
-            'id': container.id
-        }
-
-        # Optional container info
-        try:
-            container_info.update({
-                'ports': container.ports or {},
-                'image': container.image.tags[0] if container.image.tags else 'Unknown'
-            })
-        except Exception as e:
-            logger.warning(f"Non-critical container info error: {str(e)}")
-
-        if container.status == 'running':
-            port_mapping = container.ports.get('3001/tcp')
-            file_structure = get_container_file_structure(container)
-
-            if port_mapping:
-                host_port = port_mapping[0]['HostPort']
-                return JsonResponse({
-                    'status': 'ready',
-                    'container_id': container.id,
-                    'container_info': container_info,
-                    'url': f"https://{host_port}.{HOST_URL}",
-                    'file_list': file_structure or [],
-                    'detailed_logs': container.logs(tail=50).decode('utf-8')
-                })
-            else:
-                return JsonResponse({
-                    'status': 'not_ready',
-                    'container_id': container.id,
-                    'container_info': container_info
-                })
-        else:
+        # Check if container is actually running
+        if container.status != 'running':
+            logger.error(f"Container {container_name} is not running. Status: {container.status}")
             return JsonResponse({
-                'status': 'not_ready',
-                'container_id': container.id,
-                'container_info': container_info
-            })
+                'status': 'error',
+                'message': f'Container is not running. Status: {container.status}'
+            }, status=500)
+
+        # Check if port is properly mapped
+        port_mapping = container.ports.get('3001/tcp')
+        if not port_mapping:
+            logger.error(f"No port mapping found for container {container_name}")
+            return JsonResponse({
+                'status': 'error',
+                'message': 'No port mapping found'
+            }, status=500)
+
+        host_port = port_mapping[0]['HostPort']
+
+        # Test the connection to the container
+        try:
+            response = requests.get(f"http://localhost:{host_port}", timeout=5)
+            if response.status_code != 200:
+                logger.error(f"Container health check failed. Status code: {response.status_code}")
+                return JsonResponse({
+                    'status': 'error',
+                    'message': f'Container health check failed. Status code: {response.status_code}'
+                }, status=500)
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to connect to container: {str(e)}")
+            return JsonResponse({
+                'status': 'error',
+                'message': f'Failed to connect to container: {str(e)}'
+            }, status=500)
+
+        return JsonResponse({
+            'status': 'ready',
+            'container_id': container.id,
+            'url': f"https://{host_port}.{HOST_URL}",
+            'container_info': {
+                'status': container.status,
+                'ports': container.ports,
+                'name': container.name
+            }
+        })
 
     except docker.errors.NotFound:
         return JsonResponse({
             'status': 'not_found',
-            'container_info': {
-                'container_name': container_name,
-                'status': 'not_found'
-            }
-        })
+            'message': f'Container {container_name} not found'
+        }, status=404)
     except Exception as e:
         logger.error(f"Error checking container: {str(e)}")
         return JsonResponse({
             'status': 'error',
-            'error': str(e),
-            'container_info': {
-                'container_name': container_name,
-                'status': 'error'
-            }
+            'message': str(e)
         }, status=500)
 
 
@@ -321,6 +316,10 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         target_path = "/app/components/dynamic/placeholder.tsx"
         logger.info(f"Writing component to path: {target_path}")
 
+        # Decode any escaped characters
+        code = code.encode().decode('unicode_escape')
+
+        # Write the code directly using echo and base64 to preserve formatting
         encoded_code = base64.b64encode(code.encode()).decode()
         exec_result = container.exec_run([
             "sh", "-c",
@@ -329,6 +328,10 @@ def update_code_internal(container, code, user, file_name, main_file_path):
 
         if exec_result.exit_code != 0:
             raise Exception(f"Failed to write component to {target_path}: {exec_result.output.decode()}")
+
+        # Verify the file contents
+        verify_result = container.exec_run(["cat", target_path])
+        logger.info(f"Written file contents: {verify_result.output.decode()}")
 
         files_added.append(target_path)
         logger.info(f"Successfully wrote component to {target_path}")
@@ -536,6 +539,22 @@ def check_or_create_container(request):
         # Define container name
         container_name = f'react_renderer_next_{user_id}_{file_name}'
 
+        # Check if container with same name exists
+        try:
+            existing_container = client.containers.get(container_name)
+            logger.info(f"Found existing container {container_name}. Removing it...")
+
+            # Stop and remove the existing container
+            try:
+                existing_container.stop(timeout=10)
+                existing_container.remove(force=True)
+                logger.info(f"Successfully removed existing container {container_name}")
+            except Exception as e:
+                logger.error(f"Error removing existing container: {str(e)}")
+                # Continue anyway as the next steps will attempt to create a new container
+        except docker.errors.NotFound:
+            logger.info(f"No existing container found with name {container_name}")
+
         # Calculate resource limits
         CONTAINER_LIMITS = {
             'memory': '512m',  # 512MB RAM
@@ -544,6 +563,7 @@ def check_or_create_container(request):
             'cpu_period': 100000
         }
 
+        # Create new container
         container = client.containers.run(
             'react_renderer_next',
             command=["yarn", "dev"],
@@ -561,24 +581,42 @@ def check_or_create_container(request):
                     'mode': 'rw'
                 }
             },
-            ports={'3001/tcp': 3001},
+            ports={'3001/tcp': None},  # Let Docker assign a random port
             mem_limit=CONTAINER_LIMITS['memory'],
             memswap_limit=CONTAINER_LIMITS['memory_swap'],
             cpu_period=CONTAINER_LIMITS['cpu_period'],
             cpu_quota=CONTAINER_LIMITS['cpu_quota']
         )
 
+        # Wait for container to start and get the assigned port
+        max_retries = 10
+        for attempt in range(max_retries):
+            container.reload()
+            port_mapping = container.ports.get('3001/tcp')
+            if port_mapping:
+                host_port = port_mapping[0]['HostPort']
+                logger.info(f"Container {container_name} started successfully on port {host_port}")
+                break
+            if attempt < max_retries - 1:
+                time.sleep(1)
+        else:
+            raise Exception("Container failed to start properly - no port mapping found")
+
+        # Set up container permissions and files
+        if not set_container_permissions(container):
+            raise Exception("Failed to set container permissions")
+
         logger.info(f"Container created with limits: {CONTAINER_LIMITS}")
 
         return JsonResponse({
             'status': 'success',
             'container_id': container.id,
-            'url': 'https://3001.brainpower-ai.net',
+            'url': f'https://{host_port}.{HOST_URL}',
             'resource_limits': CONTAINER_LIMITS
         })
 
     except Exception as e:
-        logger.error(f"Container creation error: {str(e)}")
+        logger.error(f"Container creation error: {str(e)}", exc_info=True)
         return JsonResponse({
             'error': str(e),
             'detailed_logs': []

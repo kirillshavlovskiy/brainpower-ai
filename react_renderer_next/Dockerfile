@@ -3,14 +3,15 @@ FROM node:18-slim
 
 WORKDIR /app
 
-# Install only essential tools
+# Install only essential tools and clean up in the same layer
 RUN apt-get update && apt-get install -y \
     python3 \
     make \
     g++ \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-# Create only the dynamic components directory and set permissions
+# Create directories and set permissions
 RUN mkdir -p /app/components/dynamic /app/src/app /app/styles && \
     chown -R 1000:1000 /app && \
     chmod -R 755 /app
@@ -18,36 +19,24 @@ RUN mkdir -p /app/components/dynamic /app/src/app /app/styles && \
 # Switch to non-root user early
 USER node
 
-# Copy package files
+# Copy package files and install dependencies in one layer
 COPY --chown=node:node package.json ./
-
-# Install shadcn dependencies first
-RUN yarn add \
-    @radix-ui/react-dialog \
-    @radix-ui/react-slot \
-    @radix-ui/react-toast \
-    @radix-ui/react-label \
-    @radix-ui/react-select \
-    @radix-ui/react-separator \
-    @radix-ui/react-switch \
-    @radix-ui/react-tabs \
-    @radix-ui/react-hover-card \
-    class-variance-authority \
-    clsx \
-    tailwind-merge \
-    tailwindcss-animate \
-    lucide-react
-
-# Install other dependencies
 RUN yarn install \
     --production \
     --frozen-lockfile \
     --network-timeout 600000 \
     --prefer-offline \
-    --no-progress
-
-# Pre-download SWC binaries
-RUN yarn add @next/swc-linux-x64-gnu @next/swc-linux-x64-musl
+    --no-progress \
+    && yarn add \
+    @radix-ui/react-dialog \
+    @radix-ui/react-slot \
+    @radix-ui/react-toast \
+    class-variance-authority \
+    clsx \
+    tailwind-merge \
+    tailwindcss-animate \
+    && yarn add @next/swc-linux-x64-gnu @next/swc-linux-x64-musl \
+    && yarn cache clean
 
 # Copy exact files in exact locations
 COPY --chown=node:node next.config.js ./
@@ -60,7 +49,6 @@ COPY --chown=node:node src/app/page.tsx ./src/app/
 COPY --chown=node:node src/app/layout.tsx ./src/app/
 COPY --chown=node:node src/app/not-found.tsx ./src/app/
 COPY --chown=node:node src/app/globals.css ./src/app/
-COPY --chown=node:node styles/* ./styles/
 
 # Set essential environment variables
 ENV NEXT_TELEMETRY_DISABLED=1 \

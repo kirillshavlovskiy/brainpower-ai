@@ -499,16 +499,13 @@ def check_system_resources():
 def check_or_create_container(request):
     try:
         data = request.data
-        code = data.get('main_code')  # Get code from request
+        code = data.get('main_code')
         language = data.get('language')
-        user_id = "0"  # Always use "0" as user_id
+        user_id = "0"
         file_name = "placeholder.tsx"
         main_file_path = "/components/dynamic/placeholder.tsx"
 
-        # Define container name
         container_name = f'react_renderer_next_{user_id}_{file_name}'
-
-        # Add request logging
         logger.info(f"Received request for container: {container_name}")
         logger.info(f"Request data: {json.dumps(data, indent=2)}")
 
@@ -519,37 +516,17 @@ def check_or_create_container(request):
             }, status=400)
 
         try:
-            # First, check for any existing containers (including stopped ones)
+            # Remove existing containers
             all_containers = client.containers.list(all=True, filters={'name': container_name})
+            for container in all_containers:
+                logger.info(f"Removing existing container: {container.name}")
+                container.remove(force=True)
 
-            if all_containers:
-                # Remove any existing containers
-                for container in all_containers:
-                    logger.info(f"Removing existing container: {container.name}, status: {container.status}")
-                    try:
-                        container.remove(force=True)
-                    except Exception as e:
-                        logger.warning(f"Error removing container {container.name}: {str(e)}")
-
-            # Create new container with file watching enabled
+            # Create new container
             container = client.containers.run(
                 'react_renderer_next',
-                command=["sh", "-c",
-                         "WATCHPACK_POLLING=true yarn dev --port 3001 & CHOKIDAR_USEPOLLING=true node watch-components.js"],
-                user='node',
                 detach=True,
                 name=container_name,
-                environment={
-                    'PORT': '3001',
-                    'USER_ID': user_id,
-                    'FILE_NAME': file_name,
-                    'HOSTNAME': '0.0.0.0',
-                    'WATCHPACK_POLLING': 'true',
-                    'CHOKIDAR_USEPOLLING': 'true',
-                    'NEXT_WEBPACK_POLLING': '1000',
-                    'NEXT_HMR_POLLING_INTERVAL': '1000',
-                    'NODE_OPTIONS': '--max-old-space-size=512'
-                },
                 volumes={
                     os.path.join(react_renderer_path, 'components/dynamic'): {
                         'bind': '/app/components/dynamic',
@@ -572,29 +549,18 @@ def check_or_create_container(request):
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
 
-            # Wait for container to be ready and write initial code
+            # Wait for container to be ready
             max_retries = 10
-            retry_count = 0
-            while retry_count < max_retries:
+            for attempt in range(max_retries):
                 container.reload()
                 if container.status == 'running':
+                    time.sleep(2)  # Wait for Next.js to start
                     break
                 time.sleep(1)
-                retry_count += 1
                 logger.info(f"Waiting for container... Status: {container.status}")
 
             if container.status != 'running':
-                return JsonResponse({
-                    'error': f'Container failed to start. Status: {container.status}',
-                    'detailed_logs': detailed_logger.get_logs()
-                }, status=500)
-
-            # Set permissions and write code
-            if not set_container_permissions(container):
-                return JsonResponse({
-                    'error': 'Failed to set container permissions',
-                    'detailed_logs': detailed_logger.get_logs()
-                }, status=500)
+                raise Exception(f"Container failed to start. Status: {container.status}")
 
             # Write initial component code
             logs, files_added, compilation_status = update_code_internal(

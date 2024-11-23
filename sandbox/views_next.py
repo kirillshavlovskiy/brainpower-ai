@@ -331,14 +331,24 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         target_path = "/app/components/dynamic/placeholder.tsx"
         logger.info(f"Writing component to path: {target_path}")
 
-        encoded_code = base64.b64encode(code.encode()).decode()
+        # Clean up the code - remove escaped quotes and ensure proper formatting
+        clean_code = code.replace('\\"', '"')  # Replace escaped quotes
+        clean_code = clean_code.replace('\\n', '\n')  # Replace escaped newlines
+
+        # Write the code using a heredoc to preserve formatting
         exec_result = container.exec_run([
             "sh", "-c",
-            f"echo {encoded_code} | base64 -d > {target_path}"
+            f"""cat << 'EOL' > {target_path}
+{clean_code}
+EOL"""
         ], user='node')
 
         if exec_result.exit_code != 0:
             raise Exception(f"Failed to write component to {target_path}: {exec_result.output.decode()}")
+
+        # Verify the written code
+        verify_result = container.exec_run(["cat", target_path])
+        logger.info(f"Written file contents:\n{verify_result.output.decode()}")
 
         files_added.append(target_path)
         logger.info(f"Successfully wrote component to {target_path}")
@@ -561,7 +571,12 @@ def check_or_create_container(request):
                 environment={
                     'PORT': '3001',
                     'NODE_ENV': 'development',
-                    'HOST': '0.0.0.0'
+                    'HOST': '0.0.0.0',
+                    'WATCHPACK_POLLING': 'true',
+                    'CHOKIDAR_USEPOLLING': 'true',
+                    'NEXT_WEBPACK_POLLING': '1000',
+                    'NEXT_HMR_POLLING_INTERVAL': '1000',
+                    'FAST_REFRESH': 'true'
                 },
                 volumes={
                     os.path.join(react_renderer_path, 'components/dynamic'): {
@@ -821,7 +836,6 @@ def cleanup_old_images():
                     client.images.remove(image.id, force=True)
                 except Exception as e:
                     logger.warning(f"Failed to remove image {image.id}: {str(e)}")
-
 
         # Remove any dangling images
         client.images.prune()

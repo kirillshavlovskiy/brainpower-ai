@@ -486,138 +486,73 @@ def get_available_port(start, end):
 @api_view(['POST'])
 def check_or_create_container(request):
     try:
+        # Clean up old containers first
+        cleanup_old_containers()
+
         data = request.data
-        code = data.get('main_code')
-        language = data.get('language')
-        user_id = "0"  # Always use "0" as user_id
-        file_name = "placeholder.tsx"
-        main_file_path = "/components/dynamic/placeholder.tsx"
+        container_name = f'react_renderer_next_0_placeholder.tsx'
 
-        # Define container name
-        container_name = f'react_renderer_next_{user_id}_{file_name}'
-
-        # Add request logging
-        logger.info(f"Received request for container: {container_name}")
-        logger.info(f"Request data: {json.dumps(data, indent=2)}")
-
-        if not code:
-            return JsonResponse({
-                'error': 'No code provided',
-                'detailed_logs': detailed_logger.get_logs()
-            }, status=400)
-
+        # Remove existing container if any
         try:
-            # First, check for any existing containers (including stopped ones)
-            all_containers = client.containers.list(all=True, filters={'name': container_name})
+            old_container = client.containers.get(container_name)
+            old_container.remove(force=True)
+        except docker.errors.NotFound:
+            pass
 
-            if all_containers:
-                # Remove any existing containers
-                for container in all_containers:
-                    logger.info(f"Removing existing container: {container.name}, status: {container.status}")
-                    try:
-                        container.remove(force=True)
-                    except Exception as e:
-                        logger.warning(f"Error removing container {container.name}: {str(e)}")
+        # Create container with minimal resources
+        container = client.containers.run(
+            'react_renderer_next',
+            command=["yarn", "dev"],
+            user='node',
+            detach=True,
+            name=container_name,
+            environment={
+                'PORT': '3001',
+                'NODE_ENV': 'development',
+                'NODE_OPTIONS': '--max-old-space-size=512'
+            },
+            volumes={
+                os.path.join(react_renderer_path, 'components/dynamic'): {
+                    'bind': '/app/components/dynamic',
+                    'mode': 'rw'
+                }
+            },
+            ports={'3001/tcp': 3001},
+            mem_limit='512m',
+            memswap_limit='1g',
+            cpu_period=100000,
+            cpu_quota=50000,
+            storage_opt={'size': '1G'}
+        )
 
-            # Create new container
-            logger.info(f"Creating new container: {container_name}")
-            # Base path for mounted files
-            base_path = "/home/ubuntu/brainpower-ai/react_renderer_next"
-
-            container = client.containers.run(
-                'react_renderer_next',
-                command=["sh", "-c",
-                         "WATCHPACK_POLLING=true yarn dev --port 3001 & CHOKIDAR_USEPOLLING=true node watch-components.js"],
-                user='node',
-                detach=True,
-                name=container_name,
-                environment={
-                    'PORT': '3001',
-                    'USER_ID': user_id,
-                    'FILE_NAME': file_name,
-                    'HOSTNAME': '0.0.0.0',
-                    'WATCHPACK_POLLING': 'true',
-                    'CHOKIDAR_USEPOLLING': 'true',
-                    'NEXT_WEBPACK_POLLING': '1000',
-                    'NEXT_HMR_POLLING_INTERVAL': '1000',
-                    'NODE_OPTIONS': '--max-old-space-size=512'
-                },
-                volumes={
-                    os.path.join(react_renderer_path, 'components/dynamic'): {
-                        'bind': '/app/components/dynamic',
-                        'mode': 'rw'
-                    },
-                    os.path.join(react_renderer_path, 'components/ui'): {
-                        'bind': '/app/components/ui',
-                        'mode': 'rw'
-                    },
-                    os.path.join(react_renderer_path, 'src'): {
-                        'bind': '/app/src',
-                        'mode': 'rw'
-                    }
-                },
-                ports={'3001/tcp': 3001},
-                mem_limit='1g',
-                memswap_limit='2g',
-                cpu_period=100000,
-                cpu_quota=50000,
-                restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
-            )
-
-            # Wait for container to be ready
-            max_retries = 10
-            retry_count = 0
-            while retry_count < max_retries:
-                container.reload()
-                if container.status == 'running':
-                    break
-                time.sleep(1)
-                retry_count += 1
-                logger.info(f"Waiting for container... Status: {container.status}")
-
-            if container.status != 'running':
-                return JsonResponse({
-                    'error': f'Container failed to start. Status: {container.status}',
-                    'detailed_logs': detailed_logger.get_logs()
-                }, status=500)
-
-            # Set permissions for new container
-            if not set_container_permissions(container):
-                return JsonResponse({
-                    'error': 'Failed to set container permissions for new container',
-                    'detailed_logs': detailed_logger.get_logs()
-                }, status=500)
-
-            # Write initial component code
-            logs, files_added, compilation_status = update_code_internal(
-                container, code, user_id, file_name, main_file_path
-            )
-
-            response_data = {
-                'status': 'success',
-                'container_id': container.id,
-                'url': 'https://3001.brainpower-ai.net',
-                'detailed_logs': detailed_logger.get_logs()
-            }
-
-            logger.info(f"Returning response: {json.dumps(response_data, indent=2)}")
-            return JsonResponse(response_data)
-
-        except docker.errors.APIError as e:
-            error_msg = f'Docker API error: {str(e)}'
-            logger.error(error_msg)
-            return JsonResponse({
-                'error': error_msg,
-                'detailed_logs': detailed_logger.get_logs()
-            }, status=500)
+        return JsonResponse({
+            'status': 'success',
+            'container_id': container.id,
+            'url': 'https://3001.brainpower-ai.net'
+        })
 
     except Exception as e:
-        error_msg = f'Unexpected error: {str(e)}'
-        logger.error(error_msg)
-        return JsonResponse({
-            'error': error_msg,
-            'detailed_logs': detailed_logger.get_logs()
-        }, status=500)
+        logger.error(f"Container creation error: {str(e)}")
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+def cleanup_old_containers():
+    """Clean up old containers and unused images"""
+    try:
+        # Remove stopped containers
+        containers = client.containers.list(all=True)
+        for container in containers:
+            if container.status == 'exited':
+                container.remove()
+
+        # Remove unused images
+        client.images.prune()
+
+        # Remove unused volumes
+        client.volumes.prune()
+
+    except Exception as e:
+        logger.error(f"Cleanup error: {str(e)}")
 
 
 def install_packages(container, packages):

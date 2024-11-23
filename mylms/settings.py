@@ -223,6 +223,10 @@ CONTAINER_OPERATION_TIMEOUT = 30  # seconds
 STATUS_CHECK_INTERVAL = 2  # seconds
 MAX_STATUS_CHECKS = 60  # maximum number of status checks
 
+# Add error handlers
+handler500 = 'EC2_server.views.handler500'
+handler404 = 'EC2_server.views.handler404'
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,

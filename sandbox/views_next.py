@@ -500,26 +500,17 @@ def check_system_resources():
         MEMORY_THRESHOLD = 80  # 80% memory usage
         DISK_THRESHOLD = 80  # 80% disk usage
 
-        resource_status = {
-            'cpu_available': cpu_percent < CPU_THRESHOLD,
-            'memory_available': memory.percent < MEMORY_THRESHOLD,
-            'disk_available': disk.percent < DISK_THRESHOLD,
-            'metrics': {
-                'cpu_percent': cpu_percent,
-                'memory_percent': memory.percent,
-                'disk_percent': disk.percent,
-                'memory_available_mb': memory.available / (1024 * 1024),
-                'disk_available_gb': disk.free / (1024 * 1024 * 1024)
-            }
-        }
+        # Simple status check
+        if cpu_percent > CPU_THRESHOLD or \
+                memory.percent > MEMORY_THRESHOLD or \
+                disk.percent > DISK_THRESHOLD:
+            return False
 
-        logger.info(f"System resources: {resource_status}")
-
-        return resource_status
+        return True
 
     except Exception as e:
         logger.error(f"Error checking system resources: {str(e)}")
-        return None
+        return False
 
 
 @api_view(['POST'])
@@ -836,136 +827,4 @@ def cleanup_old_images():
 
     except Exception as e:
         logger.error(f"Error cleaning up old images: {str(e)}")
-
-
-def monitor_ec2_resources():
-    """Monitor detailed EC2 resources and return metrics"""
-    try:
-        # CPU metrics
-        cpu_count = psutil.cpu_count()
-        cpu_percent = psutil.cpu_percent(interval=1, percpu=True)
-        cpu_freq = psutil.cpu_freq()
-
-        # Memory metrics
-        memory = psutil.virtual_memory()
-        swap = psutil.swap_memory()
-
-        # Disk metrics
-        disk = psutil.disk_usage('/')
-
-        # Network metrics
-        net_io = psutil.net_io_counters()
-
-        # Docker specific metrics
-        docker_stats = {}
-        for container in client.containers.list():
-            stats = container.stats(stream=False)
-            docker_stats[container.name] = {
-                'cpu_percent': stats['cpu_stats']['cpu_usage']['total_usage'],
-                'memory_usage': stats['memory_stats']['usage'],
-                'network_rx': stats['networks']['eth0']['rx_bytes'],
-                'network_tx': stats['networks']['eth0']['tx_bytes']
-            }
-
-        metrics = {
-            'cpu': {
-                'count': cpu_count,
-                'percent_per_cpu': cpu_percent,
-                'frequency': {
-                    'current': cpu_freq.current,
-                    'min': cpu_freq.min,
-                    'max': cpu_freq.max
-                }
-            },
-            'memory': {
-                'total': memory.total,
-                'available': memory.available,
-                'percent': memory.percent,
-                'swap_total': swap.total,
-                'swap_used': swap.used
-            },
-            'disk': {
-                'total': disk.total,
-                'used': disk.used,
-                'free': disk.free,
-                'percent': disk.percent
-            },
-            'network': {
-                'bytes_sent': net_io.bytes_sent,
-                'bytes_recv': net_io.bytes_recv
-            },
-            'docker': docker_stats,
-            'container_count': len(client.containers.list())
-        }
-
-        logger.info(f"EC2 resource metrics: {json.dumps(metrics, indent=2)}")
-        return metrics
-
-    except Exception as e:
-        logger.error(f"Error monitoring EC2 resources: {str(e)}")
-        return None
-
-
-def calculate_container_limits(metrics):
-    """Calculate container resource limits based on system metrics"""
-    try:
-        available_memory = metrics['memory']['available']
-        total_memory = metrics['memory']['total']
-        cpu_count = metrics['cpu']['count']
-        current_containers = metrics['container_count']
-
-        # Calculate memory limit per container
-        # Leave 20% memory for system
-        usable_memory = available_memory * 0.8
-        memory_per_container = min(
-            1024 * 1024 * 1024,  # 1GB max
-            usable_memory // (current_containers + 1)
-        )
-
-        # Calculate CPU quota
-        # Leave 1 CPU core for system
-        available_cpu = max(1, cpu_count - 1)
-        cpu_quota = (available_cpu * 100000) // (current_containers + 1)
-
-        limits = {
-            'mem_limit': f'{memory_per_container // (1024 * 1024)}m',
-            'memswap_limit': f'{(memory_per_container * 2) // (1024 * 1024)}m',
-            'cpu_period': 100000,
-            'cpu_quota': cpu_quota,
-            'pids_limit': 100,
-            'storage_opt': {'size': '10G'}
-        }
-
-        logger.info(f"Calculated container limits: {json.dumps(limits, indent=2)}")
-        return limits
-
-    except Exception as e:
-        logger.error(f"Error calculating container limits: {str(e)}")
-        return None
-
-
-def periodic_cleanup():
-    """Periodic cleanup of resources"""
-    try:
-        metrics = monitor_ec2_resources()
-        if metrics['memory']['percent'] > 80 or metrics['cpu']['percent_per_cpu'][0] > 80:
-            logger.warning("High resource usage detected, initiating cleanup")
-
-            # Remove idle containers
-            for container in client.containers.list():
-                stats = container.stats(stream=False)
-                if stats['cpu_stats']['cpu_usage']['total_usage'] < 1000000:  # Very low CPU usage
-                    logger.info(f"Removing idle container: {container.name}")
-                    container.remove(force=True)
-
-            # Clean up images
-            cleanup_old_images()
-
-            # Clean up volumes
-            client.volumes.prune()
-
-        logger.info("Periodic cleanup completed")
-
-    except Exception as e:
-        logger.error(f"Error during periodic cleanup: {str(e)}")
 

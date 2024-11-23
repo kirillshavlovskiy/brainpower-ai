@@ -528,85 +528,55 @@ def check_or_create_container(request):
     try:
         # Check system resources first
         resources = check_system_resources()
-        if not resources:
-            return JsonResponse({
-                'error': 'Failed to check system resources',
-                'detailed_logs': []
-            }, status=500)
 
-        # Check if we have enough resources
-        if not all([
-            resources['cpu_available'],
-            resources['memory_available'],
-            resources['disk_available']
-        ]):
-            return JsonResponse({
-                'error': 'Insufficient system resources',
-                'detailed_logs': [
-                    f"CPU Usage: {resources['metrics']['cpu_percent']}%",
-                    f"Memory Usage: {resources['metrics']['memory_percent']}%",
-                    f"Disk Usage: {resources['metrics']['disk_percent']}%"
-                ]
-            }, status=503)  # Service Unavailable
+        # Calculate storage limits
+        CONTAINER_LIMITS = {
+            'memory': '512m',  # 512MB RAM
+            'memory_swap': '1g',  # 1GB swap
+            'storage': '2G',  # 2GB storage for container
+            'cpu_quota': 50000,  # 50% of CPU
+            'cpu_period': 100000
+        }
 
-        data = request.data
-        code = data.get('main_code')
-        language = data.get('language')
-        user_id = "0"
-        file_name = "placeholder.tsx"
-        main_file_path = "/components/dynamic/placeholder.tsx"
+        container = client.containers.run(
+            'react_renderer_next',
+            command=["yarn", "dev"],
+            user='node',
+            detach=True,
+            name=container_name,
+            environment={
+                'PORT': '3001',
+                'NODE_ENV': 'development',
+                'NODE_OPTIONS': '--max-old-space-size=512'  # Limit Node.js memory
+            },
+            volumes={
+                os.path.join(react_renderer_path, 'components/dynamic'): {
+                    'bind': '/app/components/dynamic',
+                    'mode': 'rw'
+                }
+            },
+            ports={'3001/tcp': 3001},
+            mem_limit=CONTAINER_LIMITS['memory'],
+            memswap_limit=CONTAINER_LIMITS['memory_swap'],
+            cpu_period=CONTAINER_LIMITS['cpu_period'],
+            cpu_quota=CONTAINER_LIMITS['cpu_quota'],
+            storage_opt={
+                'size': CONTAINER_LIMITS['storage']
+            }
+        )
 
-        container_name = f'react_renderer_next_{user_id}_{file_name}'
+        # Log container resource allocation
+        logger.info(f"Container created with limits: {CONTAINER_LIMITS}")
 
-        # Calculate container limits based on available resources
-        available_memory_mb = resources['metrics']['memory_available_mb']
-        container_memory_limit = min(512, int(available_memory_mb * 0.3))  # 30% of available memory or 512MB
-
-        try:
-            # Create container with calculated limits
-            container = client.containers.run(
-                'react_renderer_next',
-                command=["yarn", "dev"],
-                user='node',
-                detach=True,
-                name=container_name,
-                environment={
-                    'PORT': '3001',
-                    'NODE_ENV': 'development',
-                    'NODE_OPTIONS': f'--max-old-space-size={container_memory_limit}'
-                },
-                volumes={
-                    os.path.join(react_renderer_path, 'components/dynamic'): {
-                        'bind': '/app/components/dynamic',
-                        'mode': 'rw'
-                    }
-                },
-                ports={'3001/tcp': 3001},
-                mem_limit=f'{container_memory_limit}m',
-                memswap_limit=f'{container_memory_limit * 2}m',
-                cpu_period=100000,
-                cpu_quota=50000,  # Limit to 50% of one CPU
-                storage_opt={'size': '1G'}
-            )
-
-            logger.info(f"Container created with limits: Memory={container_memory_limit}MB, CPU=50%, Storage=1GB")
-
-            return JsonResponse({
-                'status': 'success',
-                'container_id': container.id,
-                'url': 'https://3001.brainpower-ai.net',
-                'resource_metrics': resources['metrics']
-            })
-
-        except docker.errors.APIError as e:
-            logger.error(f"Docker API error: {str(e)}")
-            return JsonResponse({
-                'error': f'Docker API error: {str(e)}',
-                'detailed_logs': []
-            }, status=500)
+        return JsonResponse({
+            'status': 'success',
+            'container_id': container.id,
+            'url': 'https://3001.brainpower-ai.net',
+            'resource_limits': CONTAINER_LIMITS
+        })
 
     except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
+        logger.error(f"Container creation error: {str(e)}")
         return JsonResponse({
             'error': str(e),
             'detailed_logs': []

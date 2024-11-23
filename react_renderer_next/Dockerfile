@@ -64,7 +64,8 @@ ENV NEXT_TELEMETRY_DISABLED=1 \
     WATCHPACK_POLLING=true \
     CHOKIDAR_USEPOLLING=true \
     NEXT_WEBPACK_POLLING=1000 \
-    NEXT_HMR_POLLING_INTERVAL=1000
+    NEXT_HMR_POLLING_INTERVAL=1000 \
+    FAST_REFRESH=true
 
 # Create volume only for dynamic components
 VOLUME [ "/app/components/dynamic" ]

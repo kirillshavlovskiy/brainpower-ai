@@ -9,10 +9,11 @@ RUN apt-get update && apt-get install -y \
     make \
     g++ \
     && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+    && apt-get clean \
+    && apt-get autoremove -y
 
-# Create directories and set permissions
-RUN mkdir -p /app/components/dynamic /app/src/app /app/styles && \
+# Create minimal directory structure
+RUN mkdir -p /app/components/dynamic /app/src/app && \
     chown -R 1000:1000 /app && \
     chmod -R 755 /app
 
@@ -36,19 +37,24 @@ RUN yarn install \
     tailwind-merge \
     tailwindcss-animate \
     && yarn add @next/swc-linux-x64-gnu @next/swc-linux-x64-musl \
-    && yarn cache clean
+    && yarn cache clean \
+    && rm -rf /app/.yarn-cache
 
 # Copy exact files in exact locations
-COPY --chown=node:node next.config.js ./
-COPY --chown=node:node tsconfig.json ./
-COPY --chown=node:node postcss.config.js ./
-COPY --chown=node:node tailwind.config.ts ./
-COPY --chown=node:node components.json ./
-COPY --chown=node:node watch-components.js ./
-COPY --chown=node:node src/app/page.tsx ./src/app/
-COPY --chown=node:node src/app/layout.tsx ./src/app/
-COPY --chown=node:node src/app/not-found.tsx ./src/app/
-COPY --chown=node:node src/app/globals.css ./src/app/
+COPY --chown=node:node next.config.js \
+    tsconfig.json \
+    postcss.config.js \
+    tailwind.config.ts \
+    components.json \
+    watch-components.js \
+    ./
+
+# Copy app files
+COPY --chown=node:node src/app/page.tsx \
+    src/app/layout.tsx \
+    src/app/not-found.tsx \
+    src/app/globals.css \
+    ./src/app/
 
 # Set essential environment variables
 ENV NEXT_TELEMETRY_DISABLED=1 \

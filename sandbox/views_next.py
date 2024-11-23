@@ -304,10 +304,6 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         target_path = "/app/components/dynamic/placeholder.tsx"
         logger.info(f"Writing component to path: {target_path}")
 
-        # Log the code before writing
-        logger.info(f"Code to write:\n{code}")
-
-        # Write the code directly using base64 to preserve formatting
         encoded_code = base64.b64encode(code.encode()).decode()
         exec_result = container.exec_run([
             "sh", "-c",
@@ -317,17 +313,14 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         if exec_result.exit_code != 0:
             raise Exception(f"Failed to write component to {target_path}: {exec_result.output.decode()}")
 
-        # Verify what was written
-        verify_result = container.exec_run(["cat", target_path])
-        logger.info(f"Written file contents:\n{verify_result.output.decode()}")
-
         files_added.append(target_path)
         logger.info(f"Successfully wrote component to {target_path}")
 
         # Get container logs
         logs = container.logs(tail=100).decode('utf-8')
+        compilation_status = ContainerStatus.COMPILING
 
-        return logs, files_added, 'ready'
+        return logs, files_added, compilation_status
 
     except Exception as e:
         logger.error(f"Error updating code in container: {str(e)}")
@@ -505,105 +498,128 @@ def check_system_resources():
 @api_view(['POST'])
 def check_or_create_container(request):
     try:
-        # Check system resources first
-        resources = check_system_resources()
-
         data = request.data
-        user_id = "0"
+        code = data.get('main_code')  # Get code from request
+        language = data.get('language')
+        user_id = "0"  # Always use "0" as user_id
         file_name = "placeholder.tsx"
+        main_file_path = "/components/dynamic/placeholder.tsx"
 
-        # Update container name format to match
-        container_name = f'react_renderer_next_{user_id}_{file_name}'  # Added '_next'
+        # Define container name
+        container_name = f'react_renderer_next_{user_id}_{file_name}'
 
-        # Check if container with same name exists
+        # Add request logging
+        logger.info(f"Received request for container: {container_name}")
+        logger.info(f"Request data: {json.dumps(data, indent=2)}")
+
+        if not code:
+            return JsonResponse({
+                'error': 'No code provided',
+                'detailed_logs': detailed_logger.get_logs()
+            }, status=400)
+
         try:
-            existing_container = client.containers.get(container_name)
-            logger.info(f"Found existing container {container_name}. Removing it...")
+            # First, check for any existing containers (including stopped ones)
+            all_containers = client.containers.list(all=True, filters={'name': container_name})
 
-            # Stop and remove the existing container
-            try:
-                existing_container.stop(timeout=10)
-                existing_container.remove(force=True)
-                logger.info(f"Successfully removed existing container {container_name}")
-            except Exception as e:
-                logger.error(f"Error removing existing container: {str(e)}")
-                # Continue anyway as the next steps will attempt to create a new container
-        except docker.errors.NotFound:
-            logger.info(f"No existing container found with name {container_name}")
+            if all_containers:
+                # Remove any existing containers
+                for container in all_containers:
+                    logger.info(f"Removing existing container: {container.name}, status: {container.status}")
+                    try:
+                        container.remove(force=True)
+                    except Exception as e:
+                        logger.warning(f"Error removing container {container.name}: {str(e)}")
 
-        # Calculate resource limits
-        CONTAINER_LIMITS = {
-            'memory': '512m',  # 512MB RAM
-            'memory_swap': '1g',  # 1GB swap
-            'cpu_quota': 50000,  # 50% of CPU
-            'cpu_period': 100000
-        }
+            # Create new container with file watching enabled
+            container = client.containers.run(
+                'react_renderer_next',
+                command=["sh", "-c",
+                         "WATCHPACK_POLLING=true yarn dev --port 3001 & CHOKIDAR_USEPOLLING=true node watch-components.js"],
+                user='node',
+                detach=True,
+                name=container_name,
+                environment={
+                    'PORT': '3001',
+                    'USER_ID': user_id,
+                    'FILE_NAME': file_name,
+                    'HOSTNAME': '0.0.0.0',
+                    'WATCHPACK_POLLING': 'true',
+                    'CHOKIDAR_USEPOLLING': 'true',
+                    'NEXT_WEBPACK_POLLING': '1000',
+                    'NEXT_HMR_POLLING_INTERVAL': '1000',
+                    'NODE_OPTIONS': '--max-old-space-size=512'
+                },
+                volumes={
+                    os.path.join(react_renderer_path, 'components/dynamic'): {
+                        'bind': '/app/components/dynamic',
+                        'mode': 'rw'
+                    },
+                    os.path.join(react_renderer_path, 'components/ui'): {
+                        'bind': '/app/components/ui',
+                        'mode': 'rw'
+                    },
+                    os.path.join(react_renderer_path, 'src'): {
+                        'bind': '/app/src',
+                        'mode': 'rw'
+                    }
+                },
+                ports={'3001/tcp': 3001},
+                mem_limit='1g',
+                memswap_limit='2g',
+                cpu_period=100000,
+                cpu_quota=50000,
+                restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
+            )
 
-        # Create new container with fixed port 3001
-        container = client.containers.run(
-            'react_renderer_next',
-            command=["yarn", "dev"],  # Simplified command
-            user='node',
-            detach=True,
-            name=container_name,
-            environment={
-                'PORT': '3001',
-                'NODE_ENV': 'development',
-                'NODE_OPTIONS': '--max-old-space-size=512',
-                'HOSTNAME': '0.0.0.0'
-            },
-            volumes={
-                os.path.join(react_renderer_path, 'components/dynamic'): {
-                    'bind': '/app/components/dynamic',
-                    'mode': 'rw'
-                }
-            },
-            ports={'3001/tcp': 3001},  # Simplified port mapping
-            mem_limit=CONTAINER_LIMITS['memory'],
-            memswap_limit=CONTAINER_LIMITS['memory_swap'],
-            cpu_period=CONTAINER_LIMITS['cpu_period'],
-            cpu_quota=CONTAINER_LIMITS['cpu_quota'],
-            network_mode="bridge",
-            extra_hosts={'host.docker.internal': 'host-gateway'}  # Add this for better host connectivity
-        )
+            # Wait for container to be ready and write initial code
+            max_retries = 10
+            retry_count = 0
+            while retry_count < max_retries:
+                container.reload()
+                if container.status == 'running':
+                    break
+                time.sleep(1)
+                retry_count += 1
+                logger.info(f"Waiting for container... Status: {container.status}")
 
-        # Add a longer wait for container startup
-        max_retries = 15  # Increased from 10
-        for attempt in range(max_retries):
-            container.reload()
-            if container.status == 'running':
-                # Add additional check for port availability
-                time.sleep(2)  # Give Next.js time to bind to the port
-                try:
-                    response = requests.get('http://localhost:3001', timeout=1)
-                    if response.status_code == 200:
-                        logger.info(f"Container {container_name} is fully ready")
-                        break
-                except:
-                    pass
-            if attempt < max_retries - 1:
-                time.sleep(2)  # Increased from 1
-        else:
-            raise Exception("Container failed to start properly")
+            if container.status != 'running':
+                return JsonResponse({
+                    'error': f'Container failed to start. Status: {container.status}',
+                    'detailed_logs': detailed_logger.get_logs()
+                }, status=500)
 
-        # Set up container permissions and files
-        if not set_container_permissions(container):
-            raise Exception("Failed to set container permissions")
+            # Set permissions and write code
+            if not set_container_permissions(container):
+                return JsonResponse({
+                    'error': 'Failed to set container permissions',
+                    'detailed_logs': detailed_logger.get_logs()
+                }, status=500)
 
-        logger.info(f"Container created with limits: {CONTAINER_LIMITS}")
+            # Write initial component code
+            logs, files_added, compilation_status = update_code_internal(
+                container, code, user_id, file_name, main_file_path
+            )
 
-        return JsonResponse({
-            'status': 'success',
-            'container_id': container.id,
-            'url': 'https://3001.brainpower-ai.net',
-            'resource_limits': CONTAINER_LIMITS
-        })
+            return JsonResponse({
+                'status': 'success',
+                'container_id': container.id,
+                'url': 'https://3001.brainpower-ai.net',
+                'detailed_logs': detailed_logger.get_logs()
+            })
+
+        except Exception as e:
+            logger.error(f"Error: {str(e)}")
+            return JsonResponse({
+                'error': str(e),
+                'detailed_logs': detailed_logger.get_logs()
+            }, status=500)
 
     except Exception as e:
-        logger.error(f"Container creation error: {str(e)}", exc_info=True)
+        logger.error(f"Unexpected error: {str(e)}")
         return JsonResponse({
             'error': str(e),
-            'detailed_logs': []
+            'detailed_logs': detailed_logger.get_logs()
         }, status=500)
 
 

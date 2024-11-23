@@ -1,46 +1,86 @@
-# Use alpine for smaller image size
-FROM node:18-alpine
+# Use slim version for smaller image size
+FROM node:18-slim
 
 WORKDIR /app
 
-# Install minimal dependencies in a single layer
-RUN apk add --no-cache python3 make g++ \
-    && yarn config set cache-folder /tmp/yarn-cache
+# Install only essential tools
+RUN apt-get update && apt-get install -y \
+    python3 \
+    make \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy only necessary files
+# Copy package files
 COPY package.json ./
 
-# Install deps with cleanup in same layer
+# Install shadcn dependencies first
+RUN yarn add \
+    @radix-ui/react-dialog \
+    @radix-ui/react-slot \
+    @radix-ui/react-toast \
+    @radix-ui/react-label \
+    @radix-ui/react-select \
+    @radix-ui/react-separator \
+    @radix-ui/react-switch \
+    @radix-ui/react-tabs \
+    @radix-ui/react-hover-card \
+    class-variance-authority \
+    clsx \
+    tailwind-merge \
+    tailwindcss-animate \
+    lucide-react
+
+# Install other dependencies
 RUN yarn install \
     --production \
     --frozen-lockfile \
-    --prefer-offline \
-    && yarn cache clean \
-    && rm -rf /tmp/yarn-cache
+    --network-timeout 600000 \
+    --ignore-optional \
+    --ignore-platform \
+    --no-progress
 
-# Create minimal directory structure
+# Pre-download SWC binaries
+RUN yarn add @next/swc-linux-x64-gnu @next/swc-linux-x64-musl
+
+# Create necessary directories
 RUN mkdir -p \
     /app/components/dynamic \
-    /app/src/app
+    /app/components/ui \
+    /app/src/app \
+    /app/src/lib \
+    /app/styles
 
-# Copy only essential files
-COPY src/app/globals.css ./src/app/
-COPY src/app/layout.tsx ./src/app/
-COPY src/app/page.tsx ./src/app/
-COPY next.config.js tailwind.config.ts postcss.config.js ./
+# Copy configuration files
+COPY components.json ./
+COPY tailwind.config.ts ./
+COPY postcss.config.js ./
+COPY next.config.js ./
+COPY tsconfig.json ./
 
-# Set permissions
+# Copy source files
+COPY src ./src
+COPY components ./components
+COPY styles ./styles
+COPY lib ./lib
+
+# Set proper permissions
 RUN chown -R node:node /app && \
     chmod -R 755 /app
 
-# Use bind mounts instead of volumes
+# Create volume for dynamic content
+VOLUME /app/components/dynamic
+
+# Expose port 3001
 EXPOSE 3001
+
+# Switch to non-root user
 USER node
 
-# Minimal env vars
-ENV NODE_ENV=development \
-    PORT=3001 \
-    HOST=0.0.0.0 \
-    NODE_OPTIONS="--max-old-space-size=512"
+# Set essential environment variables
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=development
+ENV PORT=3001
+ENV HOST=0.0.0.0
 
+# Start development server
 CMD ["yarn", "dev"]

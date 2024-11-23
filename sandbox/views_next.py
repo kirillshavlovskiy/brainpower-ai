@@ -26,6 +26,7 @@ import os
 import shutil
 import socket
 import json
+import psutil
 
 logger = logging.getLogger(__name__)
 client = docker.from_env()
@@ -483,57 +484,133 @@ def get_available_port(start, end):
             return port
 
 
+def check_system_resources():
+    """Check if system has enough resources to create a new container"""
+    try:
+        # Check CPU usage
+        cpu_percent = psutil.cpu_percent(interval=1)
+
+        # Check memory
+        memory = psutil.virtual_memory()
+
+        # Check disk space
+        disk = psutil.disk_usage('/')
+
+        # Define thresholds
+        CPU_THRESHOLD = 80  # 80% CPU usage
+        MEMORY_THRESHOLD = 80  # 80% memory usage
+        DISK_THRESHOLD = 80  # 80% disk usage
+
+        resource_status = {
+            'cpu_available': cpu_percent < CPU_THRESHOLD,
+            'memory_available': memory.percent < MEMORY_THRESHOLD,
+            'disk_available': disk.percent < DISK_THRESHOLD,
+            'metrics': {
+                'cpu_percent': cpu_percent,
+                'memory_percent': memory.percent,
+                'disk_percent': disk.percent,
+                'memory_available_mb': memory.available / (1024 * 1024),
+                'disk_available_gb': disk.free / (1024 * 1024 * 1024)
+            }
+        }
+
+        logger.info(f"System resources: {resource_status}")
+
+        return resource_status
+
+    except Exception as e:
+        logger.error(f"Error checking system resources: {str(e)}")
+        return None
+
+
 @api_view(['POST'])
 def check_or_create_container(request):
     try:
-        # Clean up old containers first
-        cleanup_old_containers()
+        # Check system resources first
+        resources = check_system_resources()
+        if not resources:
+            return JsonResponse({
+                'error': 'Failed to check system resources',
+                'detailed_logs': []
+            }, status=500)
+
+        # Check if we have enough resources
+        if not all([
+            resources['cpu_available'],
+            resources['memory_available'],
+            resources['disk_available']
+        ]):
+            return JsonResponse({
+                'error': 'Insufficient system resources',
+                'detailed_logs': [
+                    f"CPU Usage: {resources['metrics']['cpu_percent']}%",
+                    f"Memory Usage: {resources['metrics']['memory_percent']}%",
+                    f"Disk Usage: {resources['metrics']['disk_percent']}%"
+                ]
+            }, status=503)  # Service Unavailable
 
         data = request.data
-        container_name = f'react_renderer_next_0_placeholder.tsx'
+        code = data.get('main_code')
+        language = data.get('language')
+        user_id = "0"
+        file_name = "placeholder.tsx"
+        main_file_path = "/components/dynamic/placeholder.tsx"
 
-        # Remove existing container if any
+        container_name = f'react_renderer_next_{user_id}_{file_name}'
+
+        # Calculate container limits based on available resources
+        available_memory_mb = resources['metrics']['memory_available_mb']
+        container_memory_limit = min(512, int(available_memory_mb * 0.3))  # 30% of available memory or 512MB
+
         try:
-            old_container = client.containers.get(container_name)
-            old_container.remove(force=True)
-        except docker.errors.NotFound:
-            pass
+            # Create container with calculated limits
+            container = client.containers.run(
+                'react_renderer_next',
+                command=["yarn", "dev"],
+                user='node',
+                detach=True,
+                name=container_name,
+                environment={
+                    'PORT': '3001',
+                    'NODE_ENV': 'development',
+                    'NODE_OPTIONS': f'--max-old-space-size={container_memory_limit}'
+                },
+                volumes={
+                    os.path.join(react_renderer_path, 'components/dynamic'): {
+                        'bind': '/app/components/dynamic',
+                        'mode': 'rw'
+                    }
+                },
+                ports={'3001/tcp': 3001},
+                mem_limit=f'{container_memory_limit}m',
+                memswap_limit=f'{container_memory_limit * 2}m',
+                cpu_period=100000,
+                cpu_quota=50000,  # Limit to 50% of one CPU
+                storage_opt={'size': '1G'}
+            )
 
-        # Create container with minimal resources
-        container = client.containers.run(
-            'react_renderer_next',
-            command=["yarn", "dev"],
-            user='node',
-            detach=True,
-            name=container_name,
-            environment={
-                'PORT': '3001',
-                'NODE_ENV': 'development',
-                'NODE_OPTIONS': '--max-old-space-size=512'
-            },
-            volumes={
-                os.path.join(react_renderer_path, 'components/dynamic'): {
-                    'bind': '/app/components/dynamic',
-                    'mode': 'rw'
-                }
-            },
-            ports={'3001/tcp': 3001},
-            mem_limit='512m',
-            memswap_limit='1g',
-            cpu_period=100000,
-            cpu_quota=50000,
-            storage_opt={'size': '1G'}
-        )
+            logger.info(f"Container created with limits: Memory={container_memory_limit}MB, CPU=50%, Storage=1GB")
 
-        return JsonResponse({
-            'status': 'success',
-            'container_id': container.id,
-            'url': 'https://3001.brainpower-ai.net'
-        })
+            return JsonResponse({
+                'status': 'success',
+                'container_id': container.id,
+                'url': 'https://3001.brainpower-ai.net',
+                'resource_metrics': resources['metrics']
+            })
+
+        except docker.errors.APIError as e:
+            logger.error(f"Docker API error: {str(e)}")
+            return JsonResponse({
+                'error': f'Docker API error: {str(e)}',
+                'detailed_logs': []
+            }, status=500)
 
     except Exception as e:
-        logger.error(f"Container creation error: {str(e)}")
-        return JsonResponse({'error': str(e)}, status=500)
+        logger.error(f"Unexpected error: {str(e)}")
+        return JsonResponse({
+            'error': str(e),
+            'detailed_logs': []
+        }, status=500)
 
 
 def cleanup_old_containers():

@@ -31,30 +31,23 @@ RUN yarn install \
     --ignore-platform \
     --no-progress
 
-# Pre-download SWC binaries to avoid runtime downloads
+# Pre-download SWC binaries
 RUN yarn add @next/swc-linux-x64-gnu @next/swc-linux-x64-musl
 
-# Create necessary directories
-RUN mkdir -p \
-    /app/components/dynamic \
-    /app/components/ui \
-    /app/src/app \
-    /app/src/lib \
-    /app/styles
+# Create only the dynamic components directory
+RUN mkdir -p /app/components/dynamic
 
-# Copy configuration files
-COPY components.json ./
-COPY tailwind.config.ts ./
-COPY postcss.config.js ./
-COPY watch-components.js ./
+# Copy exact files in exact locations
 COPY next.config.js ./
 COPY tsconfig.json ./
-
-# Copy source files and directories
-COPY src ./src
-COPY components ./components
-COPY styles ./styles
-COPY lib ./lib
+COPY postcss.config.js ./
+COPY tailwind.config.ts ./
+COPY components.json ./
+COPY watch-components.js ./
+COPY src/app/page.tsx ./src/app/
+COPY src/app/layout.tsx ./src/app/
+COPY src/app/not-found.tsx ./src/app/
+COPY src/app/globals.css ./src/app/
 
 # Set proper permissions
 RUN chown -R node:node /app && \
@@ -70,8 +63,8 @@ ENV CHOKIDAR_USEPOLLING=true
 ENV NEXT_WEBPACK_POLLING=1000
 ENV NEXT_HMR_POLLING_INTERVAL=1000
 
-# Create volumes with proper permissions for file watching
-VOLUME [ "/app/components/dynamic", "/app/components/ui", "/app/src" ]
+# Create volume only for dynamic components
+VOLUME [ "/app/components/dynamic" ]
 
 # Expose port 3001
 EXPOSE 3001
@@ -79,5 +72,5 @@ EXPOSE 3001
 # Switch to non-root user
 USER node
 
-# Start both Next.js and the watch script with proper polling
+# Start both Next.js and the watch script
 CMD ["sh", "-c", "WATCHPACK_POLLING=true yarn dev --port 3001 & CHOKIDAR_USEPOLLING=true node watch-components.js"]

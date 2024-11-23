@@ -14,21 +14,13 @@ RUN apt-get update && apt-get install -y \
 COPY package.json ./
 
 # Install shadcn dependencies first
-RUN yarn add \
-    @radix-ui/react-dialog \
+RUN yarn add @radix-ui/react-dialog \
     @radix-ui/react-slot \
     @radix-ui/react-toast \
-    @radix-ui/react-label \
-    @radix-ui/react-select \
-    @radix-ui/react-separator \
-    @radix-ui/react-switch \
-    @radix-ui/react-tabs \
-    @radix-ui/react-hover-card \
     class-variance-authority \
     clsx \
     tailwind-merge \
-    tailwindcss-animate \
-    lucide-react
+    tailwindcss-animate
 
 # Install other dependencies
 RUN yarn install \
@@ -39,7 +31,7 @@ RUN yarn install \
     --ignore-platform \
     --no-progress
 
-# Pre-download SWC binaries
+# Pre-download SWC binaries to avoid runtime downloads
 RUN yarn add @next/swc-linux-x64-gnu @next/swc-linux-x64-musl
 
 # Create necessary directories
@@ -51,27 +43,38 @@ RUN mkdir -p \
     /app/styles
 
 # Copy configuration files
-COPY next.config.js ./
 COPY components.json ./
 COPY tailwind.config.ts ./
 COPY postcss.config.js ./
+COPY watch-components.js ./
+COPY next.config.js ./
 COPY tsconfig.json ./
 
-# Explicitly copy CSS files
+# Copy source files and directories
 COPY src/app/globals.css ./src/app/
-COPY styles/* ./styles/
-
-# Copy source files
-COPY src ./src
+COPY src/app/layout.tsx ./src/app/
+COPY src/app/page.tsx ./src/app/
 COPY components ./components
+COPY styles ./styles
 COPY lib ./lib
 
 # Set proper permissions
 RUN chown -R node:node /app && \
     chmod -R 755 /app
 
-# Create volume for dynamic content
-VOLUME /app/components/dynamic
+# Set essential environment variables
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=development
+ENV PORT=3001
+ENV HOST=0.0.0.0
+ENV WATCHPACK_POLLING=true
+ENV CHOKIDAR_USEPOLLING=true
+ENV NEXT_WEBPACK_POLLING=1000
+ENV NEXT_HMR_POLLING_INTERVAL=1000
+
+# Create volumes with proper permissions for file watching
+VOLUME [ "/app/components/dynamic", "/app/components/ui", "/app/src" ]
+
 
 # Expose port 3001
 EXPOSE 3001
@@ -79,11 +82,5 @@ EXPOSE 3001
 # Switch to non-root user
 USER node
 
-# Set essential environment variables
-ENV NEXT_TELEMETRY_DISABLED=1
-ENV NODE_ENV=development
-ENV PORT=3001
-ENV HOST=0.0.0.0
-
-# Start development server
-CMD ["yarn", "dev", "--port", "3001", "--hostname", "0.0.0.0"]
+# Start both Next.js and the watch script with proper polling
+CMD ["sh", "-c", "WATCHPACK_POLLING=true yarn dev --port 3001 & CHOKIDAR_USEPOLLING=true node watch-components.js"]

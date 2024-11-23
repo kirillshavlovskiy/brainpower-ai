@@ -526,44 +526,34 @@ def check_system_resources():
 @api_view(['POST'])
 def check_or_create_container(request):
     try:
-        # Check disk space before proceeding
-        disk = psutil.disk_usage('/')
-        if disk.percent > 80:
-            logger.warning(f"Disk space critical: {disk.percent}%. Cleaning up...")
-            cleanup_old_containers()
-            cleanup_old_images()
-            client.volumes.prune()
-
-            # Check space again
-            disk = psutil.disk_usage('/')
-            if disk.percent > 80:
-                raise Exception(f"Insufficient disk space: {disk.percent}% used")
-
         data = request.data
         code = data.get('main_code')
-        language = data.get('language')
         user_id = "0"
         file_name = "placeholder.tsx"
         main_file_path = "/components/dynamic/placeholder.tsx"
 
         container_name = f'react_renderer_next_{user_id}_{file_name}'
-        logger.info(f"Received request for container: {container_name}")
-        logger.info(f"Request data: {json.dumps(data, indent=2)}")
-
-        if not code:
-            return JsonResponse({
-                'error': 'No code provided',
-                'detailed_logs': detailed_logger.get_logs()
-            }, status=400)
+        logger.info(f"Checking container: {container_name}")
 
         try:
-            # Remove existing containers
-            all_containers = client.containers.list(all=True, filters={'name': container_name})
-            for container in all_containers:
-                logger.info(f"Removing existing container: {container.name}")
-                container.remove(force=True)
+            # Try to get existing container
+            container = client.containers.get(container_name)
+            container.reload()
 
-            # Create new container
+            if container.status != 'running':
+                logger.info(f"Container exists but not running. Starting it...")
+                container.start()
+
+            # Update code in existing container
+            logs, files_added, compilation_status = update_code_internal(
+                container, code, user_id, file_name, main_file_path
+            )
+
+            logger.info(f"Updated code in existing container: {container.id}")
+
+        except docker.errors.NotFound:
+            logger.info(f"Container not found, creating new one...")
+            # Only create new container if one doesn't exist
             container = client.containers.run(
                 'react_renderer_next',
                 detach=True,
@@ -571,12 +561,7 @@ def check_or_create_container(request):
                 environment={
                     'PORT': '3001',
                     'NODE_ENV': 'development',
-                    'HOST': '0.0.0.0',
-                    'WATCHPACK_POLLING': 'true',
-                    'CHOKIDAR_USEPOLLING': 'true',
-                    'NEXT_WEBPACK_POLLING': '1000',
-                    'NEXT_HMR_POLLING_INTERVAL': '1000',
-                    'FAST_REFRESH': 'true'
+                    'HOST': '0.0.0.0'
                 },
                 volumes={
                     os.path.join(react_renderer_path, 'components/dynamic'): {
@@ -592,47 +577,23 @@ def check_or_create_container(request):
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
 
-            # Monitor disk space after container creation
-            disk = psutil.disk_usage('/')
-            logger.info(f"Disk space after container creation: {disk.percent}% used")
-
-            # Wait for container to be ready
-            max_retries = 10
-            for attempt in range(max_retries):
-                container.reload()
-                if container.status == 'running':
-                    time.sleep(2)  # Wait for Next.js to start
-                    break
-                time.sleep(1)
-                logger.info(f"Waiting for container... Status: {container.status}")
-
-            if container.status != 'running':
-                raise Exception(f"Container failed to start. Status: {container.status}")
-
-            # Write initial component code
+            # Write initial code
             logs, files_added, compilation_status = update_code_internal(
                 container, code, user_id, file_name, main_file_path
             )
 
-            return JsonResponse({
-                'status': 'success',
-                'container_id': container.id,
-                'url': 'https://3001.brainpower-ai.net',
-                'detailed_logs': detailed_logger.get_logs()
-            })
-
-        except Exception as e:
-            logger.error(f"Error: {str(e)}")
-            return JsonResponse({
-                'error': str(e),
-                'detailed_logs': detailed_logger.get_logs()
-            }, status=500)
+        return JsonResponse({
+            'status': 'success',
+            'container_id': container.id,
+            'url': 'https://3001.brainpower-ai.net',
+            'detailed_logs': logs
+        })
 
     except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
+        logger.error(f"Error: {str(e)}")
         return JsonResponse({
             'error': str(e),
-            'detailed_logs': detailed_logger.get_logs()
+            'detailed_logs': []
         }, status=500)
 
 

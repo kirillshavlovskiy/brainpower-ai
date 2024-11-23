@@ -772,39 +772,24 @@ def update_code(request):
     user_id = request.data.get('user_id')
     file_name = request.data.get('file_name')
     main_file_path = request.data.get('main_file_path', "Root/Project")
-    logger.info(
-        f"Received update request from user {user_id} for container: {container_id}, original file: {file_name}, main file path: {main_file_path}, file code{main_code}")
-
-    if not all([container_id, main_code, user_id, main_file_path]):
-        logger.warning("Missing required data in update request")
-        return JsonResponse({'error': 'Missing required data'}, status=400)
 
     try:
         container = client.containers.get(container_id)
 
-        # Check if the container is running
-        container.reload()
-        if container.status != 'running':
-            logger.info(f"Container {container_id} is not running. Attempting to start it.")
-            container.start()
-            container.reload()
+        # Update code without restarting container
+        logs, files_added, compilation_status = update_code_internal(
+            container, main_code, user_id, file_name, main_file_path
+        )
 
-            # Wait for the container to be in the running state
-            max_attempts = 10
-            for _ in range(max_attempts):
-                if container.status == 'running':
-                    break
-                time.sleep(1)
-                container.reload()
-
-            if container.status != 'running':
-                raise Exception(f"Failed to start container {container_id}")
-
-        update_code_internal(container, main_code, user_id, file_name, main_file_path)
-        return JsonResponse({'status': 'Code updated successfully'})
+        return JsonResponse({
+            'status': 'success',
+            'container_id': container_id,
+            'url': 'https://3001.brainpower-ai.net',
+            'compilation_status': compilation_status,
+            'logs': logs
+        })
 
     except docker.errors.NotFound:
-        logger.error(f"Container not found: {container_id}")
         return JsonResponse({'error': 'Container not found'}, status=404)
     except Exception as e:
         logger.error(f"Error updating code: {str(e)}", exc_info=True)

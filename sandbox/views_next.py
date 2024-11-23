@@ -137,20 +137,9 @@ def check_container(request):
                 'message': f'Container is not running. Status: {container.status}'
             }, status=500)
 
-        # Check if port is properly mapped
-        port_mapping = container.ports.get('3001/tcp')
-        if not port_mapping:
-            logger.error(f"No port mapping found for container {container_name}")
-            return JsonResponse({
-                'status': 'error',
-                'message': 'No port mapping found'
-            }, status=500)
-
-        host_port = port_mapping[0]['HostPort']
-
         # Test the connection to the container
         try:
-            response = requests.get(f"http://localhost:{host_port}", timeout=5)
+            response = requests.get('http://localhost:3001', timeout=5)
             if response.status_code != 200:
                 logger.error(f"Container health check failed. Status code: {response.status_code}")
                 return JsonResponse({
@@ -167,7 +156,7 @@ def check_container(request):
         return JsonResponse({
             'status': 'ready',
             'container_id': container.id,
-            'url': f"https://{host_port}.{HOST_URL}",
+            'url': 'https://3001.brainpower-ai.net',
             'container_info': {
                 'status': container.status,
                 'ports': container.ports,
@@ -563,7 +552,7 @@ def check_or_create_container(request):
             'cpu_period': 100000
         }
 
-        # Create new container
+        # Create new container with fixed port 3001
         container = client.containers.run(
             'react_renderer_next',
             command=["yarn", "dev"],
@@ -581,26 +570,24 @@ def check_or_create_container(request):
                     'mode': 'rw'
                 }
             },
-            ports={'3001/tcp': None},  # Let Docker assign a random port
+            ports={'3001/tcp': 3001},  # Fixed port mapping to 3001
             mem_limit=CONTAINER_LIMITS['memory'],
             memswap_limit=CONTAINER_LIMITS['memory_swap'],
             cpu_period=CONTAINER_LIMITS['cpu_period'],
             cpu_quota=CONTAINER_LIMITS['cpu_quota']
         )
 
-        # Wait for container to start and get the assigned port
+        # Wait for container to start
         max_retries = 10
         for attempt in range(max_retries):
             container.reload()
-            port_mapping = container.ports.get('3001/tcp')
-            if port_mapping:
-                host_port = port_mapping[0]['HostPort']
-                logger.info(f"Container {container_name} started successfully on port {host_port}")
+            if container.status == 'running':
+                logger.info(f"Container {container_name} started successfully on port 3001")
                 break
             if attempt < max_retries - 1:
                 time.sleep(1)
         else:
-            raise Exception("Container failed to start properly - no port mapping found")
+            raise Exception("Container failed to start properly")
 
         # Set up container permissions and files
         if not set_container_permissions(container):
@@ -611,7 +598,7 @@ def check_or_create_container(request):
         return JsonResponse({
             'status': 'success',
             'container_id': container.id,
-            'url': f'https://{host_port}.{HOST_URL}',
+            'url': 'https://3001.brainpower-ai.net',
             'resource_limits': CONTAINER_LIMITS
         })
 

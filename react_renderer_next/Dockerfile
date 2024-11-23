@@ -51,10 +51,10 @@ RUN mkdir -p \
     /app/styles
 
 # Copy configuration files
+COPY next.config.js ./
 COPY components.json ./
 COPY tailwind.config.ts ./
 COPY postcss.config.js ./
-COPY next.config.js ./
 COPY tsconfig.json ./
 
 # Explicitly copy CSS files
@@ -65,9 +65,6 @@ COPY styles/* ./styles/
 COPY src ./src
 COPY components ./components
 COPY lib ./lib
-
-# Verify globals.css exists
-RUN ls -la /app/src/app/globals.css || echo "globals.css not found"
 
 # Set proper permissions
 RUN chown -R node:node /app && \
@@ -89,4 +86,4 @@ ENV PORT=3001
 ENV HOST=0.0.0.0
 
 # Start development server
-CMD ["yarn", "dev"]
+CMD ["yarn", "dev", "--port", "3001", "--hostname", "0.0.0.0"]

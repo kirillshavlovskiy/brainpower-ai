@@ -304,6 +304,9 @@ def update_code_internal(container, code, user, file_name, main_file_path):
         target_path = "/app/components/dynamic/placeholder.tsx"
         logger.info(f"Writing component to path: {target_path}")
 
+        # Log the code before writing
+        logger.info(f"Code to write:\n{code}")
+
         # Write the code directly using base64 to preserve formatting
         encoded_code = base64.b64encode(code.encode()).decode()
         exec_result = container.exec_run([
@@ -313,6 +316,10 @@ def update_code_internal(container, code, user, file_name, main_file_path):
 
         if exec_result.exit_code != 0:
             raise Exception(f"Failed to write component to {target_path}: {exec_result.output.decode()}")
+
+        # Verify what was written
+        verify_result = container.exec_run(["cat", target_path])
+        logger.info(f"Written file contents:\n{verify_result.output.decode()}")
 
         files_added.append(target_path)
         logger.info(f"Successfully wrote component to {target_path}")
@@ -535,14 +542,15 @@ def check_or_create_container(request):
         # Create new container with fixed port 3001
         container = client.containers.run(
             'react_renderer_next',
-            command=["yarn", "dev"],
+            command=["yarn", "dev"],  # Simplified command
             user='node',
             detach=True,
             name=container_name,
             environment={
                 'PORT': '3001',
                 'NODE_ENV': 'development',
-                'NODE_OPTIONS': '--max-old-space-size=512'
+                'NODE_OPTIONS': '--max-old-space-size=512',
+                'HOSTNAME': '0.0.0.0'
             },
             volumes={
                 os.path.join(react_renderer_path, 'components/dynamic'): {
@@ -550,22 +558,31 @@ def check_or_create_container(request):
                     'mode': 'rw'
                 }
             },
-            ports={'3001/tcp': 3001},  # Fixed port mapping to 3001
+            ports={'3001/tcp': 3001},  # Simplified port mapping
             mem_limit=CONTAINER_LIMITS['memory'],
             memswap_limit=CONTAINER_LIMITS['memory_swap'],
             cpu_period=CONTAINER_LIMITS['cpu_period'],
-            cpu_quota=CONTAINER_LIMITS['cpu_quota']
+            cpu_quota=CONTAINER_LIMITS['cpu_quota'],
+            network_mode="bridge",
+            extra_hosts={'host.docker.internal': 'host-gateway'}  # Add this for better host connectivity
         )
 
-        # Wait for container to start
-        max_retries = 10
+        # Add a longer wait for container startup
+        max_retries = 15  # Increased from 10
         for attempt in range(max_retries):
             container.reload()
             if container.status == 'running':
-                logger.info(f"Container {container_name} started successfully on port 3001")
-                break
+                # Add additional check for port availability
+                time.sleep(2)  # Give Next.js time to bind to the port
+                try:
+                    response = requests.get('http://localhost:3001', timeout=1)
+                    if response.status_code == 200:
+                        logger.info(f"Container {container_name} is fully ready")
+                        break
+                except:
+                    pass
             if attempt < max_retries - 1:
-                time.sleep(1)
+                time.sleep(2)  # Increased from 1
         else:
             raise Exception("Container failed to start properly")
 

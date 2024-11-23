@@ -536,11 +536,10 @@ def check_or_create_container(request):
         # Define container name
         container_name = f'react_renderer_next_{user_id}_{file_name}'
 
-        # Calculate storage limits
+        # Calculate resource limits
         CONTAINER_LIMITS = {
             'memory': '512m',  # 512MB RAM
             'memory_swap': '1g',  # 1GB swap
-            'storage': '2G',  # 2GB storage for container
             'cpu_quota': 50000,  # 50% of CPU
             'cpu_period': 100000
         }
@@ -550,7 +549,7 @@ def check_or_create_container(request):
             command=["yarn", "dev"],
             user='node',
             detach=True,
-            name=container_name,  # Now container_name is defined
+            name=container_name,
             environment={
                 'PORT': '3001',
                 'NODE_ENV': 'development',
@@ -566,10 +565,7 @@ def check_or_create_container(request):
             mem_limit=CONTAINER_LIMITS['memory'],
             memswap_limit=CONTAINER_LIMITS['memory_swap'],
             cpu_period=CONTAINER_LIMITS['cpu_period'],
-            cpu_quota=CONTAINER_LIMITS['cpu_quota'],
-            storage_opt={
-                'size': CONTAINER_LIMITS['storage']
-            }
+            cpu_quota=CONTAINER_LIMITS['cpu_quota']
         )
 
         logger.info(f"Container created with limits: {CONTAINER_LIMITS}")

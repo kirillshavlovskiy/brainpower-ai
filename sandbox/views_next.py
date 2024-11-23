@@ -529,6 +529,13 @@ def check_or_create_container(request):
         # Check system resources first
         resources = check_system_resources()
 
+        data = request.data
+        user_id = "0"
+        file_name = "placeholder.tsx"
+
+        # Define container name
+        container_name = f'react_renderer_next_{user_id}_{file_name}'
+
         # Calculate storage limits
         CONTAINER_LIMITS = {
             'memory': '512m',  # 512MB RAM
@@ -543,11 +550,11 @@ def check_or_create_container(request):
             command=["yarn", "dev"],
             user='node',
             detach=True,
-            name=container_name,
+            name=container_name,  # Now container_name is defined
             environment={
                 'PORT': '3001',
                 'NODE_ENV': 'development',
-                'NODE_OPTIONS': '--max-old-space-size=512'  # Limit Node.js memory
+                'NODE_OPTIONS': '--max-old-space-size=512'
             },
             volumes={
                 os.path.join(react_renderer_path, 'components/dynamic'): {
@@ -565,7 +572,6 @@ def check_or_create_container(request):
             }
         )
 
-        # Log container resource allocation
         logger.info(f"Container created with limits: {CONTAINER_LIMITS}")
 
         return JsonResponse({

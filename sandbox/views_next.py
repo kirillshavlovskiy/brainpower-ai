@@ -190,7 +190,7 @@ def set_container_permissions(container):
         config_path = "/home/ubuntu/brainpower-ai/react_renderer_next"
         logger.info(f"Using config path: {config_path}")
 
-        # Create directories
+        # Create directories and initial files
         init_commands = [
             "mkdir -p /app/components/dynamic",
             "mkdir -p /app/src/app",
@@ -204,6 +204,33 @@ def set_container_permissions(container):
             if result.exit_code != 0:
                 logger.error(f"Failed to execute {cmd}: {result.output.decode()}")
                 return False
+
+        # Create page.tsx with proper dynamic import
+        page_content = '''
+import dynamic from 'next/dynamic'
+
+const DynamicComponent = dynamic(() => import('../../components/dynamic/placeholder'), {
+  loading: () => <p>Loading...</p>,
+  ssr: false
+})
+
+export default function Home() {
+  return (
+    <div className="min-h-screen p-4">
+      <DynamicComponent />
+    </div>
+  )
+}
+'''
+        # Write page.tsx
+        encoded_page = base64.b64encode(page_content.encode()).decode()
+        result = container.exec_run(
+            ["sh", "-c", f"echo {encoded_page} | base64 -d > /app/src/app/page.tsx"],
+            user='root'
+        )
+        if result.exit_code != 0:
+            logger.error(f"Failed to write page.tsx: {result.output.decode()}")
+            return False
 
         # Mount configuration files from working directory
         files_to_mount = {
@@ -498,6 +525,20 @@ def check_system_resources():
 @api_view(['POST'])
 def check_or_create_container(request):
     try:
+        # Monitor current resources
+        metrics = monitor_ec2_resources()
+        if not metrics:
+            raise Exception("Failed to get resource metrics")
+
+        # Check if we have enough resources
+        if metrics['memory']['percent'] > 90 or metrics['cpu']['percent_per_cpu'][0] > 90:
+            raise Exception("System resources critically low")
+
+        # Calculate container limits
+        limits = calculate_container_limits(metrics)
+        if not limits:
+            raise Exception("Failed to calculate container limits")
+
         data = request.data
         code = data.get('main_code')
         language = data.get('language')
@@ -522,11 +563,23 @@ def check_or_create_container(request):
                 logger.info(f"Removing existing container: {container.name}")
                 container.remove(force=True)
 
-            # Create new container
+            # Create new container with API configurations
             container = client.containers.run(
                 'react_renderer_next',
                 detach=True,
                 name=container_name,
+                environment={
+                    'PORT': '3001',
+                    'NODE_ENV': 'development',
+                    'HOST': '0.0.0.0',
+                    # Add API configurations from settings
+                    'ELASTIC_API_URL': settings.ELASTIC_API_URL,
+                    'ELASTIC_API_KEY': settings.ELASTIC_API_KEY,
+                    'OPENAI_API_KEY': settings.OPENAI_API_KEY,
+                    'AWS_ACCESS_KEY_ID': settings.AWS_ACCESS_KEY_ID,
+                    'AWS_SECRET_ACCESS_KEY': settings.AWS_SECRET_ACCESS_KEY,
+                    'AWS_REGION': settings.AWS_REGION,
+                },
                 volumes={
                     os.path.join(react_renderer_path, 'components/dynamic'): {
                         'bind': '/app/components/dynamic',
@@ -542,10 +595,12 @@ def check_or_create_container(request):
                     }
                 },
                 ports={'3001/tcp': 3001},
-                mem_limit='1g',
-                memswap_limit='2g',
-                cpu_period=100000,
-                cpu_quota=50000,
+                mem_limit=limits['mem_limit'],
+                memswap_limit=limits['memswap_limit'],
+                cpu_period=limits['cpu_period'],
+                cpu_quota=limits['cpu_quota'],
+                pids_limit=limits['pids_limit'],
+                storage_opt=limits['storage_opt'],
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
 
@@ -770,4 +825,161 @@ def container_exists(container_id):
         return True
     except docker.errors.NotFound:
         return False
+
+
+def cleanup_old_images():
+    """Clean up old react_renderer_next images keeping only the latest"""
+    try:
+        # Get all react_renderer_next images
+        images = client.images.list(name='react_renderer_next')
+
+        # Sort by creation time (newest first)
+        sorted_images = sorted(images, key=lambda x: x.attrs['Created'], reverse=True)
+
+        # Keep the latest, remove the rest
+        if len(sorted_images) > 1:
+            for image in sorted_images[1:]:
+                try:
+                    logger.info(f"Removing old image: {image.id}")
+                    client.images.remove(image.id, force=True)
+                except Exception as e:
+                    logger.warning(f"Failed to remove image {image.id}: {str(e)}")
+
+        # Remove any dangling images
+        client.images.prune()
+
+    except Exception as e:
+        logger.error(f"Error cleaning up old images: {str(e)}")
+
+
+def monitor_ec2_resources():
+    """Monitor detailed EC2 resources and return metrics"""
+    try:
+        # CPU metrics
+        cpu_count = psutil.cpu_count()
+        cpu_percent = psutil.cpu_percent(interval=1, percpu=True)
+        cpu_freq = psutil.cpu_freq()
+
+        # Memory metrics
+        memory = psutil.virtual_memory()
+        swap = psutil.swap_memory()
+
+        # Disk metrics
+        disk = psutil.disk_usage('/')
+
+        # Network metrics
+        net_io = psutil.net_io_counters()
+
+        # Docker specific metrics
+        docker_stats = {}
+        for container in client.containers.list():
+            stats = container.stats(stream=False)
+            docker_stats[container.name] = {
+                'cpu_percent': stats['cpu_stats']['cpu_usage']['total_usage'],
+                'memory_usage': stats['memory_stats']['usage'],
+                'network_rx': stats['networks']['eth0']['rx_bytes'],
+                'network_tx': stats['networks']['eth0']['tx_bytes']
+            }
+
+        metrics = {
+            'cpu': {
+                'count': cpu_count,
+                'percent_per_cpu': cpu_percent,
+                'frequency': {
+                    'current': cpu_freq.current,
+                    'min': cpu_freq.min,
+                    'max': cpu_freq.max
+                }
+            },
+            'memory': {
+                'total': memory.total,
+                'available': memory.available,
+                'percent': memory.percent,
+                'swap_total': swap.total,
+                'swap_used': swap.used
+            },
+            'disk': {
+                'total': disk.total,
+                'used': disk.used,
+                'free': disk.free,
+                'percent': disk.percent
+            },
+            'network': {
+                'bytes_sent': net_io.bytes_sent,
+                'bytes_recv': net_io.bytes_recv
+            },
+            'docker': docker_stats,
+            'container_count': len(client.containers.list())
+        }
+
+        logger.info(f"EC2 resource metrics: {json.dumps(metrics, indent=2)}")
+        return metrics
+
+    except Exception as e:
+        logger.error(f"Error monitoring EC2 resources: {str(e)}")
+        return None
+
+
+def calculate_container_limits(metrics):
+    """Calculate container resource limits based on system metrics"""
+    try:
+        available_memory = metrics['memory']['available']
+        total_memory = metrics['memory']['total']
+        cpu_count = metrics['cpu']['count']
+        current_containers = metrics['container_count']
+
+        # Calculate memory limit per container
+        # Leave 20% memory for system
+        usable_memory = available_memory * 0.8
+        memory_per_container = min(
+            1024 * 1024 * 1024,  # 1GB max
+            usable_memory // (current_containers + 1)
+        )
+
+        # Calculate CPU quota
+        # Leave 1 CPU core for system
+        available_cpu = max(1, cpu_count - 1)
+        cpu_quota = (available_cpu * 100000) // (current_containers + 1)
+
+        limits = {
+            'mem_limit': f'{memory_per_container // (1024 * 1024)}m',
+            'memswap_limit': f'{(memory_per_container * 2) // (1024 * 1024)}m',
+            'cpu_period': 100000,
+            'cpu_quota': cpu_quota,
+            'pids_limit': 100,
+            'storage_opt': {'size': '10G'}
+        }
+
+        logger.info(f"Calculated container limits: {json.dumps(limits, indent=2)}")
+        return limits
+
+    except Exception as e:
+        logger.error(f"Error calculating container limits: {str(e)}")
+        return None
+
+
+def periodic_cleanup():
+    """Periodic cleanup of resources"""
+    try:
+        metrics = monitor_ec2_resources()
+        if metrics['memory']['percent'] > 80 or metrics['cpu']['percent_per_cpu'][0] > 80:
+            logger.warning("High resource usage detected, initiating cleanup")
+
+            # Remove idle containers
+            for container in client.containers.list():
+                stats = container.stats(stream=False)
+                if stats['cpu_stats']['cpu_usage']['total_usage'] < 1000000:  # Very low CPU usage
+                    logger.info(f"Removing idle container: {container.name}")
+                    container.remove(force=True)
+
+            # Clean up images
+            cleanup_old_images()
+
+            # Clean up volumes
+            client.volumes.prune()
+
+        logger.info("Periodic cleanup completed")
+
+    except Exception as e:
+        logger.error(f"Error during periodic cleanup: {str(e)}")
 

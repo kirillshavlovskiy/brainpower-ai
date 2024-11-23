@@ -297,49 +297,14 @@ def set_container_permissions(container):
         return False
 
 
-def update_code_internal(container, code, user, file_name, main_file_path, template_name=None):
+def update_code_internal(container, code, user, file_name, main_file_path):
     files_added = []
-    build_output = []
     try:
-        # Handle template selection if provided
-        if template_name:
-            if template_name == "Brainpower-AI-1":
-                code = '''
-"use client";
-import { Navigation } from '@/components/navigation'
-import { Hero } from '@/components/hero'
-import { Features } from '@/components/features'
-import { VideoSection } from '@/components/video-section'
-import { ChartSection } from '@/components/chart-section'
-import { Workflow } from '@/components/workflow'
-import { CTA } from '@/components/cta'
-
-export default function Home() {
-  return (
-    <div className="min-h-screen">
-      <Navigation />
-      <main>
-        <Hero />
-        <Features />
-        <VideoSection />
-        <ChartSection />
-        <Workflow />
-        <CTA />
-      </main>
-    </div>
-  )
-}
-'''
-            # Add more templates here as elif blocks
-
-        # Write component code directly - directory already exists
+        # Write component code directly
         target_path = "/app/components/dynamic/placeholder.tsx"
         logger.info(f"Writing component to path: {target_path}")
 
-        # Decode any escaped characters
-        code = code.encode().decode('unicode_escape')
-
-        # Write the code directly using echo and base64 to preserve formatting
+        # Write the code directly using base64 to preserve formatting
         encoded_code = base64.b64encode(code.encode()).decode()
         exec_result = container.exec_run([
             "sh", "-c",
@@ -349,32 +314,16 @@ export default function Home() {
         if exec_result.exit_code != 0:
             raise Exception(f"Failed to write component to {target_path}: {exec_result.output.decode()}")
 
-        # Verify the file contents
-        verify_result = container.exec_run(["cat", target_path])
-        logger.info(f"Written file contents: {verify_result.output.decode()}")
-
         files_added.append(target_path)
         logger.info(f"Successfully wrote component to {target_path}")
 
-        # Get container logs to check compilation status
+        # Get container logs
         logs = container.logs(tail=100).decode('utf-8')
-        compilation_status = ContainerStatus.COMPILING
 
-        # Check Next.js specific messages
-        if CompilationMessages.NEXT_READY in logs:
-            compilation_status = ContainerStatus.READY
-            logger.info("Next.js compilation successful")
-        elif CompilationMessages.NEXT_WARNING in logs:
-            compilation_status = ContainerStatus.WARNING
-            logger.warning("Next.js compilation completed with warnings")
-        elif CompilationMessages.NEXT_ERROR in logs:
-            compilation_status = ContainerStatus.COMPILATION_FAILED
-            logger.error("Next.js compilation failed")
-
-        return logs, files_added, compilation_status
+        return logs, files_added, 'ready'
 
     except Exception as e:
-        logger.error(f"Error updating code in container: {str(e)}", exc_info=True)
+        logger.error(f"Error updating code in container: {str(e)}")
         raise
 
 

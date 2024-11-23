@@ -57,11 +57,17 @@ COPY postcss.config.js ./
 COPY next.config.js ./
 COPY tsconfig.json ./
 
+# Explicitly copy CSS files
+COPY src/app/globals.css ./src/app/
+COPY styles/* ./styles/
+
 # Copy source files
 COPY src ./src
 COPY components ./components
-COPY styles ./styles
 COPY lib ./lib
+
+# Verify globals.css exists
+RUN ls -la /app/src/app/globals.css || echo "globals.css not found"
 
 # Set proper permissions
 RUN chown -R node:node /app && \

@@ -297,10 +297,41 @@ def set_container_permissions(container):
         return False
 
 
-def update_code_internal(container, code, user, file_name, main_file_path):
+def update_code_internal(container, code, user, file_name, main_file_path, template_name=None):
     files_added = []
     build_output = []
     try:
+        # Handle template selection if provided
+        if template_name:
+            if template_name == "Brainpower-AI-1":
+                code = '''
+"use client";
+import { Navigation } from '@/components/navigation'
+import { Hero } from '@/components/hero'
+import { Features } from '@/components/features'
+import { VideoSection } from '@/components/video-section'
+import { ChartSection } from '@/components/chart-section'
+import { Workflow } from '@/components/workflow'
+import { CTA } from '@/components/cta'
+
+export default function Home() {
+  return (
+    <div className="min-h-screen">
+      <Navigation />
+      <main>
+        <Hero />
+        <Features />
+        <VideoSection />
+        <ChartSection />
+        <Workflow />
+        <CTA />
+      </main>
+    </div>
+  )
+}
+'''
+            # Add more templates here as elif blocks
+
         # Write component code directly - directory already exists
         target_path = "/app/components/dynamic/placeholder.tsx"
         logger.info(f"Writing component to path: {target_path}")
@@ -525,8 +556,8 @@ def check_or_create_container(request):
         user_id = "0"
         file_name = "placeholder.tsx"
 
-        # Define container name
-        container_name = f'react_renderer_next_{user_id}_{file_name}'
+        # Update container name format to match
+        container_name = f'react_renderer_next_{user_id}_{file_name}'  # Added '_next'
 
         # Check if container with same name exists
         try:

@@ -822,6 +822,7 @@ def cleanup_old_images():
                 except Exception as e:
                     logger.warning(f"Failed to remove image {image.id}: {str(e)}")
 
+
         # Remove any dangling images
         client.images.prune()
 

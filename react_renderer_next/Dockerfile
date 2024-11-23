@@ -51,9 +51,7 @@ COPY next.config.js ./
 COPY tsconfig.json ./
 
 # Copy source files and directories
-COPY src/app/globals.css ./src/app/
-COPY src/app/layout.tsx ./src/app/
-COPY src/app/page.tsx ./src/app/
+COPY src ./src
 COPY components ./components
 COPY styles ./styles
 COPY lib ./lib
@@ -74,7 +72,6 @@ ENV NEXT_HMR_POLLING_INTERVAL=1000
 
 # Create volumes with proper permissions for file watching
 VOLUME [ "/app/components/dynamic", "/app/components/ui", "/app/src" ]
-
 
 # Expose port 3001
 EXPOSE 3001

@@ -26,7 +26,7 @@ USER node
 
 # Copy package files and install dependencies
 COPY --chown=node:node package.json \
-    package-lock.json \
+    yarn.lock \
     ./
 
 # Install all dependencies from package.json

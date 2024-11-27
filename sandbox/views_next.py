@@ -27,6 +27,7 @@ import shutil
 import socket
 import json
 import psutil
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 client = docker.from_env()
@@ -38,6 +39,9 @@ NGINX_SITES_DYNAMIC = '/etc/nginx/sites-dynamic'
 
 # Add this with other global variables at the top
 react_renderer_path = os.path.join(settings.BASE_DIR, 'react_renderer')
+
+REUSABLE_COMPONENTS_HOST_PATH = '/home/ubuntu/brainpower-ai/components/reusable-components'
+CONTAINER_COMPONENTS_PATH = '/app/components/reusable-components'
 
 
 class CompilationMessages:
@@ -327,15 +331,19 @@ export default function Home() {
 def update_code_internal(container, code, user, file_name, main_file_path):
     files_added = []
     try:
-        # Write component code directly
+        # First mount/update reusable components
+        logger.info("Mounting reusable components before code update")
+        mount_reusable_components(container)
+
+        # Then write component code
         target_path = "/app/components/dynamic/placeholder.tsx"
         logger.info(f"Writing component to path: {target_path}")
 
-        # Clean up the code - remove escaped quotes and ensure proper formatting
-        clean_code = code.replace('\\"', '"')  # Replace escaped quotes
-        clean_code = clean_code.replace('\\n', '\n')  # Replace escaped newlines
+        # Clean up the code
+        clean_code = code.replace('\\"', '"')
+        clean_code = clean_code.replace('\\n', '\n')
 
-        # Write the code using a heredoc to preserve formatting
+        # Write the code using heredoc
         exec_result = container.exec_run([
             "sh", "-c",
             f"""cat << 'EOL' > {target_path}
@@ -523,6 +531,51 @@ def check_system_resources():
         return False
 
 
+def mount_reusable_components(container):
+    """Mount reusable components into the container"""
+    try:
+        logger.info(f"Mounting reusable components to container {container.id}")
+
+        # Create reusable components directory in container
+        container.exec_run(f"mkdir -p {CONTAINER_COMPONENTS_PATH}", user='root')
+
+        # Copy each component file from host to container
+        host_components_dir = Path(REUSABLE_COMPONENTS_HOST_PATH)
+        for component_file in host_components_dir.glob('*.tsx'):
+            try:
+                with open(component_file, 'r') as f:
+                    content = f.read()
+                    encoded_content = base64.b64encode(content.encode()).decode()
+
+                target_path = f"{CONTAINER_COMPONENTS_PATH}/{component_file.name}"
+
+                # Write component file to container
+                result = container.exec_run(
+                    ["sh", "-c", f"echo {encoded_content} | base64 -d > {target_path}"],
+                    user='root'
+                )
+
+                if result.exit_code != 0:
+                    logger.error(f"Failed to write {component_file.name}: {result.output.decode()}")
+                    continue
+
+                # Set proper permissions
+                container.exec_run(f"chown node:node {target_path}", user='root')
+                container.exec_run(f"chmod 644 {target_path}", user='root')
+
+                logger.info(f"Successfully mounted {component_file.name}")
+
+            except Exception as e:
+                logger.error(f"Error mounting {component_file.name}: {str(e)}")
+                continue
+
+        return True
+
+    except Exception as e:
+        logger.error(f"Error mounting reusable components: {str(e)}")
+        return False
+
+
 @api_view(['POST'])
 def check_or_create_container(request):
     try:
@@ -544,7 +597,10 @@ def check_or_create_container(request):
                 logger.info(f"Container exists but not running. Starting it...")
                 container.start()
 
-            # Update code in existing container
+            # Mount reusable components first
+            mount_reusable_components(container)
+
+            # Then update code
             logs, files_added, compilation_status = update_code_internal(
                 container, code, user_id, file_name, main_file_path
             )
@@ -553,7 +609,7 @@ def check_or_create_container(request):
 
         except docker.errors.NotFound:
             logger.info(f"Container not found, creating new one...")
-            # Only create new container if one doesn't exist
+            # Create new container
             container = client.containers.run(
                 'react_renderer_next',
                 detach=True,
@@ -577,7 +633,10 @@ def check_or_create_container(request):
                 restart_policy={"Name": "on-failure", "MaximumRetryCount": 5}
             )
 
-            # Write initial code
+            # Mount reusable components first
+            mount_reusable_components(container)
+
+            # Then write initial code
             logs, files_added, compilation_status = update_code_internal(
                 container, code, user_id, file_name, main_file_path
             )
@@ -788,4 +847,25 @@ def cleanup_old_images():
 
     except Exception as e:
         logger.error(f"Error cleaning up old images: {str(e)}")
+
+
+@api_view(['POST'])
+def execute_next(request):
+    try:
+        data = request.data
+        logger.info(f"Received request data: {data}")
+
+        code = data.get('main_code')
+        logger.info(f"Extracted code: {code}")
+
+        # Log the code being written
+        logger.info(f"Writing code to placeholder.tsx: {code}")
+
+        # ... rest of the function
+    except Exception as e:
+        logger.error(f"Error in execute_next: {str(e)}")
+        return JsonResponse({
+            'error': str(e),
+            'status': 'error'
+        }, status=500)
 

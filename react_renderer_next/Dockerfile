@@ -12,51 +12,55 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && apt-get autoremove -y
 
-# Create minimal directory structure
-RUN mkdir -p /app/components/dynamic /app/src/app && \
-    chown -R 1000:1000 /app && \
+# Create all necessary directories
+RUN mkdir -p /app/components/dynamic \
+    /app/src/app \
+    /app/src/lib \
+    /app/components/ui \
+    /app/components/reusable-components \
+    && chown -R 1000:1000 /app && \
     chmod -R 755 /app
 
 # Switch to non-root user early
 USER node
 
-# Copy package files and install dependencies in one layer
-COPY --chown=node:node package.json ./
+# Copy package files and install dependencies
+COPY --chown=node:node /home/ubuntu/brainpower-ai/react_renderer_next/package.json \
+    /home/ubuntu/brainpower-ai/react_renderer_next/package-lock.json \
+    ./
+
+# Install all dependencies from package.json
 RUN yarn install \
-    --production \
+    --production=false \
     --frozen-lockfile \
     --network-timeout 600000 \
     --prefer-offline \
     --no-progress \
-    && yarn add \
-    @radix-ui/react-dialog \
-    @radix-ui/react-slot \
-    @radix-ui/react-toast \
-    class-variance-authority \
-    clsx \
-    tailwind-merge \
-    tailwindcss-animate \
-    && yarn add @next/swc-linux-x64-gnu @next/swc-linux-x64-musl \
-    && yarn cache clean \
-    && rm -rf /app/.yarn-cache
+    && yarn cache clean
 
-# Copy exact files in exact locations
-COPY --chown=node:node next.config.js \
-    tsconfig.json \
-    postcss.config.js \
-    tailwind.config.ts \
-    components.json \
-    watch-components.js \
+# Copy configuration files from react_renderer_next
+COPY --chown=node:node /home/ubuntu/brainpower-ai/react_renderer_next/next.config.js \
+    /home/ubuntu/brainpower-ai/react_renderer_next/tsconfig.json \
+    /home/ubuntu/brainpower-ai/react_renderer_next/postcss.config.js \
+    /home/ubuntu/brainpower-ai/react_renderer_next/tailwind.config.ts \
+    /home/ubuntu/brainpower-ai/react_renderer_next/components.json \
+    /home/ubuntu/brainpower-ai/react_renderer_next/watch-components.js \
     ./
 
-# Copy app files
-COPY --chown=node:node src/app/page.tsx \
-    src/app/layout.tsx \
-    src/app/not-found.tsx \
-    src/app/globals.css \
+# Copy app files from react_renderer_next
+COPY --chown=node:node /home/ubuntu/brainpower-ai/react_renderer_next/src/app/page.tsx \
+    /home/ubuntu/brainpower-ai/react_renderer_next/src/app/layout.tsx \
+    /home/ubuntu/brainpower-ai/react_renderer_next/src/app/not-found.tsx \
+    /home/ubuntu/brainpower-ai/react_renderer_next/src/app/globals.css \
     ./src/app/
 
-# Set essential environment variables
+# Copy utils.ts
+COPY --chown=node:node /home/ubuntu/brainpower-ai/react_renderer_next/src/lib/utils.ts ./src/lib/
+
+# Copy all shadcn UI components installed by CLI
+COPY --chown=node:node /home/ubuntu/brainpower-ai/react_renderer_next/components/ui/ ./components/ui/
+
+# Set environment variables
 ENV NEXT_TELEMETRY_DISABLED=1 \
     NODE_ENV=development \
     PORT=3001 \
@@ -67,11 +71,9 @@ ENV NEXT_TELEMETRY_DISABLED=1 \
     NEXT_HMR_POLLING_INTERVAL=1000 \
     FAST_REFRESH=true
 
-# Create volume only for dynamic components
-VOLUME [ "/app/components/dynamic" ]
+# Create volumes for dynamic and reusable components
+VOLUME [ "/app/components/dynamic", "/app/components/reusable-components" ]
 
-# Expose port 3001
 EXPOSE 3001
 
-# Start both Next.js and the watch script
 CMD ["sh", "-c", "WATCHPACK_POLLING=true yarn dev --port 3001 & CHOKIDAR_USEPOLLING=true node watch-components.js"]

@@ -25,8 +25,8 @@ RUN mkdir -p /app/components/dynamic \
 USER node
 
 # Copy package files and install dependencies
-COPY --chown=node:node /home/ubuntu/brainpower-ai/react_renderer_next/package.json \
-    /home/ubuntu/brainpower-ai/react_renderer_next/package-lock.json \
+COPY --chown=node:node package.json \
+    package-lock.json \
     ./
 
 # Install all dependencies from package.json
@@ -38,27 +38,27 @@ RUN yarn install \
     --no-progress \
     && yarn cache clean
 
-# Copy configuration files from react_renderer_next
-COPY --chown=node:node /home/ubuntu/brainpower-ai/react_renderer_next/next.config.js \
-    /home/ubuntu/brainpower-ai/react_renderer_next/tsconfig.json \
-    /home/ubuntu/brainpower-ai/react_renderer_next/postcss.config.js \
-    /home/ubuntu/brainpower-ai/react_renderer_next/tailwind.config.ts \
-    /home/ubuntu/brainpower-ai/react_renderer_next/components.json \
-    /home/ubuntu/brainpower-ai/react_renderer_next/watch-components.js \
+# Copy configuration files
+COPY --chown=node:node next.config.js \
+    tsconfig.json \
+    postcss.config.js \
+    tailwind.config.ts \
+    components.json \
+    watch-components.js \
     ./
 
-# Copy app files from react_renderer_next
-COPY --chown=node:node /home/ubuntu/brainpower-ai/react_renderer_next/src/app/page.tsx \
-    /home/ubuntu/brainpower-ai/react_renderer_next/src/app/layout.tsx \
-    /home/ubuntu/brainpower-ai/react_renderer_next/src/app/not-found.tsx \
-    /home/ubuntu/brainpower-ai/react_renderer_next/src/app/globals.css \
+# Copy app files
+COPY --chown=node:node src/app/page.tsx \
+    src/app/layout.tsx \
+    src/app/not-found.tsx \
+    src/app/globals.css \
     ./src/app/
 
 # Copy utils.ts
-COPY --chown=node:node /home/ubuntu/brainpower-ai/react_renderer_next/src/lib/utils.ts ./src/lib/
+COPY --chown=node:node src/lib/utils.ts ./src/lib/
 
-# Copy all shadcn UI components installed by CLI
-COPY --chown=node:node /home/ubuntu/brainpower-ai/react_renderer_next/components/ui/ ./components/ui/
+# Copy all shadcn UI components
+COPY --chown=node:node components/ui/ ./components/ui/
 
 # Set environment variables
 ENV NEXT_TELEMETRY_DISABLED=1 \

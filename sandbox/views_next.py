@@ -623,6 +623,10 @@ def check_or_create_container(request):
                     os.path.join(react_renderer_path, 'components/dynamic'): {
                         'bind': '/app/components/dynamic',
                         'mode': 'rw'
+                    },
+                    REUSABLE_COMPONENTS_HOST_PATH: {
+                        'bind': CONTAINER_COMPONENTS_PATH,
+                        'mode': 'rw'
                     }
                 },
                 ports={'3001/tcp': 3001},

@@ -40,7 +40,7 @@ NGINX_SITES_DYNAMIC = '/etc/nginx/sites-dynamic'
 # Add this with other global variables at the top
 react_renderer_path = os.path.join(settings.BASE_DIR, 'react_renderer')
 
-REUSABLE_COMPONENTS_HOST_PATH = '/home/ubuntu/brainpower-ai/components/reusable-components'
+REUSABLE_COMPONENTS_HOST_PATH = '/home/ubuntu/brainpower-ai/react_renderer_next/components/reusable-components'
 CONTAINER_COMPONENTS_PATH = '/app/components/reusable-components'
 
 

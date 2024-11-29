@@ -532,22 +532,35 @@ def check_system_resources():
 
 
 def mount_reusable_components(container):
-    """Mount reusable components into the container"""
+    """Mount all reusable components into the container"""
     try:
         logger.info(f"Mounting reusable components to container {container.id}")
 
         # Create reusable components directory in container
         container.exec_run(f"mkdir -p {CONTAINER_COMPONENTS_PATH}", user='root')
 
+        # List of all reusable components to mount
+        components = [
+            'solution-card.tsx',
+            'pricing-card.tsx',
+            'chart-widget.tsx',
+            'clock-widget.tsx',
+            'payment-form-widget.tsx'
+        ]
+
         # Copy each component file from host to container
-        host_components_dir = Path(REUSABLE_COMPONENTS_HOST_PATH)
-        for component_file in host_components_dir.glob('*.tsx'):
+        for component_name in components:
             try:
-                with open(component_file, 'r') as f:
+                component_path = os.path.join(REUSABLE_COMPONENTS_HOST_PATH, component_name)
+                if not os.path.exists(component_path):
+                    logger.warning(f"Component file not found: {component_path}")
+                    continue
+
+                with open(component_path, 'r') as f:
                     content = f.read()
                     encoded_content = base64.b64encode(content.encode()).decode()
 
-                target_path = f"{CONTAINER_COMPONENTS_PATH}/{component_file.name}"
+                target_path = f"{CONTAINER_COMPONENTS_PATH}/{component_name}"
 
                 # Write component file to container
                 result = container.exec_run(
@@ -556,17 +569,17 @@ def mount_reusable_components(container):
                 )
 
                 if result.exit_code != 0:
-                    logger.error(f"Failed to write {component_file.name}: {result.output.decode()}")
+                    logger.error(f"Failed to write {component_name}: {result.output.decode()}")
                     continue
 
                 # Set proper permissions
                 container.exec_run(f"chown node:node {target_path}", user='root')
                 container.exec_run(f"chmod 644 {target_path}", user='root')
 
-                logger.info(f"Successfully mounted {component_file.name}")
+                logger.info(f"Successfully mounted {component_name}")
 
             except Exception as e:
-                logger.error(f"Error mounting {component_file.name}: {str(e)}")
+                logger.error(f"Error mounting {component_name}: {str(e)}")
                 continue
 
         return True
